@@ -110,6 +110,9 @@ async def cmd_pay(message: types.Message):
         await message.answer("Ты в бане и не можешь переводить деньги.")
         return
 
+    if sender_data.get('is_banker', False):
+        return await message.answer("🏦 Банкирам запрещено переводить деньги напрямую! Вы можете только выдавать официальные кредиты и микрозаймы.")
+
     if not message.reply_to_message:
         await message.answer("Ответь на сообщение человека, которому хочешь перевести сыроежки.")
         return
@@ -217,6 +220,9 @@ async def cmd_work(message: types.Message):
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь работать.")
 
+    if data.get('is_banker', False):
+        return await message.answer("🏦 Вы — уважаемый Банкир. Обычная работа не для вас.")
+
     last_work = data.get('last_work_time', 0)
     current_time = time.time()
 
@@ -229,21 +235,6 @@ async def cmd_work(message: types.Message):
 
     rand = secrets.SystemRandom()
     base_earnings = rand.randint(500, 1500)
-    
-    bank_profit_msg = ""
-    if data.get('is_banker', False):
-        # Доход банкиров от работы урезан до 10-20%
-        base_earnings = int(base_earnings * 0.15)
-        if base_earnings < 1:
-            base_earnings = 1
-
-        # Банкир также приносит пользу своему банку
-        bank_contribution = rand.randint(1000, 5000)
-        from profile_bank import get_bank_info, create_or_update_bank
-        bank_data = await get_bank_info(chat_id, user_id)
-        if bank_data:
-            await create_or_update_bank(chat_id, user_id, {'capital': bank_data.get('capital', 0) + bank_contribution})
-            bank_profit_msg = f"\n🏢 Ваша работа принесла банку <b>{bank_contribution}</b> сыр. в капитал!"
 
     # --- БОНУС ПИТОМЦА ---
     pet = data.get('pet')
@@ -313,12 +304,10 @@ async def cmd_work(message: types.Message):
         "отработал смену на заводе",
         "собрал металлолом"
     ]
-    if data.get('is_banker', False):
-        jobs = ["поработал с документами", "провел встречу с инвесторами", "свел дебет с кредитом", "продал акции банка"]
 
     job = rand.choice(jobs)
 
-    await message.answer(f"💼 Ты <b>{job}</b> и заработал <b>{base_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}")
+    await message.answer(f"💼 Ты <b>{job}</b> и заработал <b>{base_earnings}</b> сыроежек!{pet_msg}{collector_msg}")
 
 @router.message(Command("crime"))
 async def cmd_crime(message: types.Message):
@@ -467,7 +456,7 @@ async def cmd_rob_bank(message: types.Message):
         steal_percent = rand.uniform(0.01, 0.05)
         stolen_amount = int(capital * steal_percent)
 
-        await create_or_update_bank(chat_id, target_banker_id, {'capital': capital - stolen_amount})
+        await create_or_update_bank(chat_id, target_banker_id, {'capital': capital - stolen_amount}, message.bot)
         await update_user_balance(chat_id, user_id, stolen_amount)
 
         await message.answer(f"🥷 <b>УСПЕШНОЕ ОГРАБЛЕНИЕ!</b>\n\nВы ворвались в банк <b>{escape_html(bank_data.get('name'))}</b>, вскрыли сейф и вынесли <b>{stolen_amount}</b> сыроежек!\n<i>Банк понес убытки.</i>")

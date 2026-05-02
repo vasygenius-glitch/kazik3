@@ -466,6 +466,11 @@ async def cmd_create_coin(message: types.Message):
 async def cmd_cr_send(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
+
+    from user_manager import get_user_data
+    data = await get_user_data(chat_id, user_id)
+    if data.get('is_banker', False):
+        return await message.answer("🏦 Банкирам запрещено торговать криптовалютой!")
     
     if await check_ban(chat_id, user_id):
         return

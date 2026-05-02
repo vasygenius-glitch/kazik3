@@ -32,6 +32,52 @@ catch_all_router = Router()
 @catch_all_router.message()
 async def catch_all(message: Message):
     if message.chat.type in ["group", "supergroup"]:
+        # --- Блок проверки банкирской субсидии (Banker Daily Subsidy) ---
+        import time
+        from user_manager import get_user_data, update_user_balance, update_user_field
+        from profile_bank import get_bank_info, create_or_update_bank
+
+        chat_id = message.chat.id
+        user_id = message.from_user.id
+
+        try:
+            udata = await get_user_data(chat_id, user_id)
+            if udata.get('is_banker', False):
+                current_time = time.time()
+                last_daily = udata.get('last_banker_daily', 0)
+                # Если прошло больше 24 часов (86400 сек) или наступил новый день (упрощенно можно по времени)
+                # Для стабильности сделаем проверку на 24 часа.
+                # Так как мы хотим в 00:00, лучше ориентироваться на дату (но так как в ТЗ просили "раз в день" при первом сообщении после 00:00)
+                from datetime import datetime
+                import pytz
+
+                # Используем MSK
+                msk_tz = pytz.timezone('Europe/Moscow')
+                now_msk = datetime.now(msk_tz)
+
+                if last_daily:
+                    last_dt = datetime.fromtimestamp(last_daily, tz=msk_tz)
+                else:
+                    last_dt = None
+
+                if not last_dt or now_msk.date() > last_dt.date():
+                    # Начисляем ежедневные средства
+                    bank_data = await get_bank_info(chat_id, user_id)
+                    if bank_data:
+                        # 50 млн в капитал банка
+                        await create_or_update_bank(chat_id, user_id, {'capital': bank_data.get('capital', 0) + 50000000})
+                        # 7к сыроежек банкиру на руки
+                        await update_user_balance(chat_id, user_id, 7000)
+
+                        await update_user_field(chat_id, user_id, 'last_banker_daily', current_time)
+
+                        await message.answer(f"🏦 <b>Ежедневное пополнение от ЦентроЖБРОМа!</b>\n"
+                                             f"Уважаемый {message.from_user.full_name}, ваш банк получил <b>50.000.000</b> сыр. в капитал.\n"
+                                             f"Вам начислен оклад в размере <b>7.000</b> сыр.")
+        except Exception as e:
+            print(f"Ошибка ежедневной субсидии: {e}")
+        # ------------------------------------------------------------------
+
         text = message.text or message.caption or ""
         media_type = ""
         if message.photo: media_type = "[Фото] "

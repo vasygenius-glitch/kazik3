@@ -33,7 +33,13 @@ async def cmd_setbanker(message: types.Message):
     await get_user_data(chat_id, target_id, target_name)
     await update_user_field(chat_id, target_id, 'is_banker', True)
     
-    await message.answer(f"💼 Пользователь <b>{target_name}</b> назначен официальным <b>Банкиром</b>!\nТеперь у него нет доступа к казино и работам, но он получает 50.000.000 в день и может кредитовать игроков.")
+    alert_text = (
+        f"🌟 <b>ВЕЛИКОЕ НАЗНАЧЕНИЕ В ЭКОНОМИКЕ!</b> 🌟\n\n"
+        f"Пользователь <b>{target_name}</b> официально получил статус <b>Уважаемого Банкира</b>!\n"
+        f"Ему доверено управление финансовыми потоками, выдача кредитов и создание собственного банка.\n"
+        f"<i>(Банкиру запрещено играть в казино, воровать, работать грузчиком и переводить деньги напрямую)</i>"
+    )
+    await message.answer(alert_text)
 
 @router.message(Command("delbanker"))
 async def cmd_delbanker(message: types.Message):
@@ -47,8 +53,14 @@ async def cmd_delbanker(message: types.Message):
     target_name = escape_html(message.reply_to_message.from_user.full_name)
 
     from user_manager import update_user_field
+    from profile_bank import get_bank_info, handle_bankruptcy
     await get_user_data(chat_id, target_id, target_name)
-    await update_user_field(chat_id, target_id, 'is_banker', False)
+
+    bank_data = await get_bank_info(chat_id, target_id)
+    if bank_data:
+        await handle_bankruptcy(chat_id, target_id, message.bot)
+    else:
+        await update_user_field(chat_id, target_id, 'is_banker', False)
     
     await message.answer(f"❌ Пользователь <b>{target_name}</b> снят с должности Банкира и возвращен к обычной жизни.")
 
@@ -693,6 +705,49 @@ async def cmd_nalog(message: types.Message, bot: Bot):
         await message.answer(f"✅ Налог установлен на {tax}%. Уведомлено {success_count} групп.")
     except ValueError:
         await message.answer("Процент должен быть числом.")
+
+@router.message(Command("wipe_money"))
+async def cmd_wipe_money(message: types.Message):
+    if not is_creator(message):
+        return await message.answer("❌ Отказано в доступе. Только Создатель может использовать эту команду!")
+
+    status_msg = await message.answer("🔄 <i>Начинаю неполный сброс баланса...</i>")
+
+    from user_manager import _user_cache
+    db = get_db()
+
+    # 1. Очищаем оперативную память (кэш), чтобы старые балансы не вернулись
+    _user_cache.clear()
+
+    from whitelist import get_whitelist
+    whitelist_dict = await get_whitelist()
+    users_wiped = 0
+
+    for chat_id in whitelist_dict.keys():
+        try:
+            users_ref = db.collection('chats').document(str(chat_id)).collection('users')
+            user_docs = await users_ref.get()
+
+            for doc in user_docs:
+                doc_id = getattr(doc, 'id', None)
+                if doc_id:
+                    # Сбрасываем ТОЛЬКО balance до 500
+                    await users_ref.document(doc_id).update({
+                        'balance': 500
+                    })
+                    users_wiped += 1
+
+        except Exception as e:
+            print(f"Ошибка при вайпе баланса в чате {chat_id}: {e}")
+
+    try:
+        await status_msg.edit_text(
+            f"✅ <b>БАЛАНСЫ УСПЕШНО СБРОШЕНЫ!</b>\n\n"
+            f"👤 Игроков затронуто: <b>{users_wiped}</b>\n\n"
+            f"<i>У всех игроков сброшен наличный баланс до 500 сыроежек. Вклады, имущество и долги сохранены.</i>"
+        )
+    except Exception as e:
+        await status_msg.reply(f"Сброс баланса завершен! Ошибка статуса: {e}")
 
 @router.message(Command("wipe_economy"))
 async def cmd_wipe_economy(message: types.Message):

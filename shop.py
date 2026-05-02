@@ -111,6 +111,10 @@ async def process_buy(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     data = await get_user_data(chat_id, user_id)
 
+    # Разрешаем покупать VIP, но запрещаем покупать бизнесы и машины
+    if data.get('is_banker', False) and item_id != "vip":
+        return await callback.answer("🏦 Банкирам запрещено покупать бизнесы и машины!", show_alert=True)
+
     if data.get('balance', 0) < item['price']:
         return await callback.answer("Недостаточно денег!", show_alert=True)
 

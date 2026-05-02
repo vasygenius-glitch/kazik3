@@ -42,6 +42,9 @@ async def cmd_cups(message: types.Message):
     if data.get('is_banned', False):
         return await message.answer("Вы забанены и не можете играть.")
 
+    if data.get('is_banker', False):
+        return await message.answer("🏦 Банкирам запрещено играть в казино!")
+
     args = message.text.split()
     if len(args) < 2:
         await message.answer("Укажите ставку: <code>/cups 100</code>")

@@ -127,10 +127,87 @@ async def get_bank_info(chat_id: int, identifier):
 
     return None
 
-async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
+async def create_or_update_bank(chat_id: int, banker_id: int, data: dict, bot: Bot = None):
+    from db import get_db
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(banker_id))
+
+    # Сначала проверяем на банкротство
+    if 'capital' in data:
+        new_capital = data['capital']
+        if new_capital <= 0:
+            # БАНКРОТСТВО!
+            await handle_bankruptcy(chat_id, banker_id, bot)
+            return
+
     await bank_ref.set(data, merge=True)
+
+async def handle_bankruptcy(chat_id: int, banker_id: int, bot: Bot = None):
+    from user_manager import get_user_data, update_user_balance, update_user_field, get_all_users_in_chat
+    from db import get_db
+    db = get_db()
+
+    # 1. Удаляем банк
+    banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
+    bank_doc = await banks_ref.document(str(banker_id)).get()
+    bank_name = "Неизвестный Банк"
+    if bank_doc.exists:
+        bank_name = bank_doc.to_dict().get('name', 'Неизвестный Банк')
+        await banks_ref.document(str(banker_id)).delete()
+
+    # 2. Увольняем банкира
+    await update_user_field(chat_id, banker_id, 'is_banker', False)
+
+    # 3. Компенсируем вклады всем клиентам этого банка через ЦентроЖБРОМ
+    users = await get_all_users_in_chat(chat_id)
+    total_compensated = 0
+    compensated_count = 0
+
+    rate = bank_doc.to_dict().get('deposit_rate', 3.0) if bank_doc.exists else 3.0
+
+    for user_doc in users:
+        u_data = user_doc.to_dict()
+        u_id = user_doc.id
+
+        # Если игрок вкладчик этого банка
+        if str(u_data.get('bank_name')) == str(banker_id) and u_data.get('bank_deposit', 0) > 0:
+            deposit_amount = u_data.get('bank_deposit', 0)
+
+            # Начисляем проценты за сегодняшний день
+            daily_interest = int(deposit_amount * (rate / 100.0))
+            if u_data.get('is_offshore', False):
+                daily_interest = max(0, daily_interest - int(deposit_amount * 0.005))
+
+            total_return = deposit_amount + daily_interest
+
+            # Возвращаем депозит + процент на наличный баланс
+            await update_user_balance(chat_id, int(u_id), total_return)
+            # Обнуляем вклад
+            await update_user_field(chat_id, int(u_id), 'bank_deposit', 0)
+            await update_user_field(chat_id, int(u_id), 'bank_name', None)
+
+            total_compensated += total_return
+            compensated_count += 1
+
+            # Можно отправить уведомление пользователю, если нужно, но в группах лучше писать одно общее.
+
+    # 4. Отправляем общее сообщение (если передан бот или мы можем его импортировать/достать)
+    alert_text = (
+        f"🚨 <b>ЭКСТРЕННЫЕ НОВОСТИ ЭКОНОМИКИ!</b> 🚨\n\n"
+        f"Банк <b>{escape_html(bank_name)}</b> объявил о <b>БАНКРОТСТВЕ</b> (капитал упал до нуля).\n"
+        f"Банкир уволен с позором.\n\n"
+        f"🏛 <b>ЦентроЖБРОМ</b> вмешался в ситуацию и компенсировал все вклады вкладчикам из резервного фонда!\n"
+        f"👥 Выплачено: <b>{total_compensated}</b> сыр. (Вкладчиков: {compensated_count})."
+    )
+    if bot:
+        try:
+            await bot.send_message(chat_id, alert_text)
+        except:
+            pass
+    else:
+        # Если bot не передан, попробуем использовать костыль для отправки, либо просто залогируем
+        # В большинстве случаев эта функция будет вызываться через handlers, где можно прокинуть bot.
+        pass
 
 @router.message(Command("bank"))
 async def cmd_bank(message: types.Message):
@@ -148,7 +225,10 @@ async def cmd_bank(message: types.Message):
             "<code>/bank deposit [сумма] [Название или ID]</code>\n"
             "<code>/bank withdraw [сумма]</code> - Снять со своего вклада\n"
             "<code>/bank withdraw all</code> - Снять все деньги\n\n"
-            "<i>(Вы можете иметь вклад только в одном банке одновременно.\nКаждый день хранения средств увеличивает ваш процент на +0.5%)</i>"
+            "<b>Кредиты и микрозаймы (только для банкиров):</b>\n"
+            "<code>кредит [сумма] [%] [срок в днях] [реплай]</code>\n"
+            "<code>микрозайм [сумма] [%] [срок в часах] [реплай]</code>\n\n"
+            "<i>(Вы можете иметь вклад только в одном банке одновременно.\nВаш процент фиксирован и зависит от ставки банка)</i>"
         )
 
     action = args[1].lower()
@@ -224,7 +304,7 @@ async def cmd_bank(message: types.Message):
         if current_deposit == 0:
             await update_user_field(chat_id, user_id, 'deposit_start_time', int(time.time()))
 
-        await create_or_update_bank(chat_id, target_banker_id, {'capital': bank_data.get('capital', 0) + amount})
+        await create_or_update_bank(chat_id, target_banker_id, {'capital': bank_data.get('capital', 0) + amount}, message.bot)
         await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
 
     elif action == "withdraw":
@@ -257,7 +337,7 @@ async def cmd_bank(message: types.Message):
         # Снимаем со вклада, списываем из капитала банка
         await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
         await update_user_balance(chat_id, user_id, amount)
-        await create_or_update_bank(chat_id, current_banker_id, {'capital': bank_data.get('capital', 0) - amount})
+        await create_or_update_bank(chat_id, current_banker_id, {'capital': bank_data.get('capital', 0) - amount}, message.bot)
 
         if current_deposit - amount == 0:
             await update_user_field(chat_id, user_id, 'bank_name', None) # Отвязываем от банка

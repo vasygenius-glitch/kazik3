@@ -51,6 +51,7 @@ async def get_user_data(chat_id, user_id, full_name=None):
             'bank_name': None, # Название банка, где открыт счет
             'last_bonus_time': 0,
             'last_daily_time': 0,
+            'last_banker_daily': 0,
             'last_work_time': 0,
             'last_crime_time': 0,
             'inventory': {},
@@ -103,13 +104,28 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         # ФИКСИРОВАННЫЙ БОНУС ДЛЯ ВСЕХ (без налогов на эту сумму)
         base_bonus = 1000 
 
-        # Ежедневные проверки (проценты по старым системным вкладам, не привязанным к банкам)
+        # Ежедневные проверки (проценты по вкладам)
         if current_time - data.get('last_daily_time', 0) >= 79200:
             is_daily = True
-            if bank_deposit > 0 and not data.get('bank_name'):
-                if bank_deposit <= 100000000: bank_income = int(bank_deposit * 0.01)
-                elif bank_deposit <= 1000000000: bank_income = int(bank_deposit * 0.005)
-                else: bank_income = int(bank_deposit * 0.002)
+            if bank_deposit > 0:
+                bank_name_id = data.get('bank_name')
+                if not bank_name_id:
+                    # Старые системные вклады
+                    if bank_deposit <= 100000000: bank_income = int(bank_deposit * 0.01)
+                    elif bank_deposit <= 1000000000: bank_income = int(bank_deposit * 0.005)
+                    else: bank_income = int(bank_deposit * 0.002)
+                else:
+                    # Вклад в новом банке
+                    from profile_bank import get_bank_info
+                    bank_data = await get_bank_info(chat_id, bank_name_id)
+                    if bank_data:
+                        rate = bank_data.get('deposit_rate', 3.0)
+                        bank_income = int(bank_deposit * (rate / 100.0))
+
+                        # Если включен оффшор, банк забирает 0.5% за обслуживание
+                        if data.get('is_offshore', False):
+                            fee = int(bank_deposit * 0.005)
+                            bank_income = max(0, bank_income - fee)
 
         from shop import ITEMS
         from economy_utils import get_global_tax
@@ -148,7 +164,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         }
         if is_daily:
             upd['last_daily_time'] = current_time
-            if bank_deposit > 0 and not data.get('bank_name'):
+            if bank_deposit > 0:
                 upd['bank_deposit'] = bank_deposit + bank_income
 
         await ref.update(upd)

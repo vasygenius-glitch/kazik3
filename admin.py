@@ -39,6 +39,10 @@ async def check_admin_immunity(bot: Bot, chat_id: int, user_id: int, target_id: 
     if int(user_id) == int(CREATOR_ID):
         return False
 
+    # Любой администратор или создатель имеет иммунитет от других (кроме создателя)
+    # Пользователь попросил: "чтобы бот не реагировал на бан от любого человека"
+    # Это значит, что если кто-то пытается забанить админа, бот должен отказать
+
     user_rank = await get_user_rank(chat_id, user_id)
     target_rank = await get_user_rank(chat_id, target_id)
 
@@ -47,28 +51,26 @@ async def check_admin_immunity(bot: Bot, chat_id: int, user_id: int, target_id: 
         return True 
 
     try:
-        user_member = await bot.get_chat_member(chat_id, user_id)
         target_member = await bot.get_chat_member(chat_id, target_id)
-
         target_status = target_member.status
+
+        # У Telegram администраторов (и создателя чата) АБСОЛЮТНЫЙ иммунитет от всех, кроме CREATOR_ID
+        if target_status in ['administrator', 'creator']:
+            return True
+
+        user_member = await bot.get_chat_member(chat_id, user_id)
         user_status = user_member.status
 
-        if target_status == 'creator':
-            return True
         if target_status == 'administrator' and user_status != 'creator' and user_rank <= target_rank:
             return True
     except:
         pass
     return False
 
-@router.message(F.text.lower().startswith("!повысить") | F.text.lower().startswith("повысить"))
+@router.message(F.text.lower().in_({"!повысить"}) | F.text.lower().startswith("!повысить "))
 async def cmd_promote(message: types.Message, bot: Bot):
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение пользователя для повышения.")
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target = message.reply_to_message.from_user
 
     user_rank = await get_user_rank(chat_id, user_id)
 
@@ -81,6 +83,10 @@ async def cmd_promote(message: types.Message, bot: Bot):
     if not is_tg_admin and user_rank < 3 and int(user_id) != int(CREATOR_ID):
         return await message.answer("У вас нет прав для повышения (нужен ранг 3+ или права Создателя).")
 
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение пользователя для повышения.")
+
+    target = message.reply_to_message.from_user
     args = message.text.split()
     if len(args) < 2:
         return await message.answer("Укажите ранг (1-5): <code>!повысить 2</code>")
@@ -102,14 +108,10 @@ async def cmd_promote(message: types.Message, bot: Bot):
     await update_user_field(chat_id, target.id, 'admin_rank', new_rank)
     await message.answer(f"✅ Пользователь <b>{escape_html(target.full_name)}</b> повышен до {new_rank} ранга администратора!")
 
-@router.message(F.text.lower().startswith("!понизить") | F.text.lower().startswith("понизить"))
+@router.message(F.text.lower().in_({"!понизить"}) | F.text.lower().startswith("!понизить "))
 async def cmd_demote(message: types.Message, bot: Bot):
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение пользователя для понижения.")
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target = message.reply_to_message.from_user
 
     user_rank = await get_user_rank(chat_id, user_id)
 
@@ -122,6 +124,10 @@ async def cmd_demote(message: types.Message, bot: Bot):
     if not is_tg_admin and user_rank < 3 and int(user_id) != int(CREATOR_ID):
         return await message.answer("У вас нет прав для понижения (нужен ранг 3+ или права Создателя).")
 
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение пользователя для понижения.")
+
+    target = message.reply_to_message.from_user
     target_rank = await get_user_rank(chat_id, target.id)
     if target_rank >= user_rank and int(user_id) != int(CREATOR_ID):
          return await message.answer("Вы не можете понизить пользователя с равным или большим рангом.")
@@ -133,14 +139,10 @@ async def cmd_demote(message: types.Message, bot: Bot):
     await update_user_field(chat_id, target.id, 'admin_rank', target_rank - 1)
     await message.answer(f"🔻 Пользователь <b>{escape_html(target.full_name)}</b> понижен до {target_rank - 1} ранга.")
 
-@router.message(F.text.lower().startswith("!снять") | F.text.lower().startswith("снять"))
+@router.message((F.text.lower().in_({"!снять"}) | F.text.lower().startswith("!снять ")) & ~F.text.lower().startswith("!снять варн"))
 async def cmd_remove_admin(message: types.Message, bot: Bot):
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение пользователя для снятия.")
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target = message.reply_to_message.from_user
 
     user_rank = await get_user_rank(chat_id, user_id)
 
@@ -153,6 +155,10 @@ async def cmd_remove_admin(message: types.Message, bot: Bot):
     if not is_tg_admin and user_rank < 3 and int(user_id) != int(CREATOR_ID):
         return await message.answer("У вас нет прав для снятия админки (нужен ранг 3+ или права Создателя).")
 
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение пользователя для снятия.")
+
+    target = message.reply_to_message.from_user
     target_rank = await get_user_rank(chat_id, target.id)
     if target_rank >= user_rank and int(user_id) != int(CREATOR_ID):
          return await message.answer("Вы не можете снять пользователя с равным или большим рангом.")
@@ -161,7 +167,7 @@ async def cmd_remove_admin(message: types.Message, bot: Bot):
     await message.answer(f"❌ Пользователь <b>{escape_html(target.full_name)}</b> полностью лишен всех прав администратора.")
 
 
-@router.message(F.text.lower().startswith("!админы") | F.text.lower().startswith("админы") | F.text.lower().startswith("кто админ"))
+@router.message(F.text.lower().startswith("!админы") | F.text.lower().startswith("!кто админ"))
 async def cmd_admins_list(message: types.Message):
     chat_id = message.chat.id
     from db import get_db
@@ -202,14 +208,10 @@ def extract_args(text: str):
         reason = " ".join(first_line[2:])
     return time_str, reason
 
-@router.message(F.text.lower().startswith("!мут") | F.text.lower().startswith("мут"))
+@router.message(F.text.lower().in_({"!мут"}) | F.text.lower().startswith("!мут "))
 async def cmd_mute(message: types.Message, bot: Bot):
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение пользователя для мута.")
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target = message.reply_to_message.from_user
 
     try:
         member = await bot.get_chat_member(chat_id, user_id)
@@ -220,6 +222,11 @@ async def cmd_mute(message: types.Message, bot: Bot):
     user_rank = await get_user_rank(chat_id, user_id)
     if not is_tg_admin and user_rank < 1 and int(user_id) != int(CREATOR_ID):
         return
+
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение пользователя для мута.")
+
+    target = message.reply_to_message.from_user
 
     if target.is_bot:
         return await message.answer("Нельзя замутить бота.")
@@ -247,14 +254,10 @@ async def cmd_mute(message: types.Message, bot: Bot):
     except Exception as e:
         await message.answer(f"Не удалось замутить: {e}")
 
-@router.message(F.text.lower().startswith("!бан") | F.text.lower().startswith("бан"))
+@router.message(F.text.lower().in_({"!бан"}) | F.text.lower().startswith("!бан "))
 async def cmd_ban(message: types.Message, bot: Bot):
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение пользователя для бана.")
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target = message.reply_to_message.from_user
 
     try:
         member = await bot.get_chat_member(chat_id, user_id)
@@ -265,6 +268,11 @@ async def cmd_ban(message: types.Message, bot: Bot):
     user_rank = await get_user_rank(chat_id, user_id)
     if not is_tg_admin and user_rank < 1 and int(user_id) != int(CREATOR_ID):
         return
+
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение пользователя для бана.")
+
+    target = message.reply_to_message.from_user
 
     if target.is_bot:
         return await message.answer("Нельзя забанить бота.")
@@ -283,15 +291,10 @@ async def cmd_ban(message: types.Message, bot: Bot):
     except Exception as e:
         await message.answer(f"Не удалось забанить: {e}")
 
-@router.message(F.text.lower().startswith("!варн") | F.text.lower().startswith("варн"))
+@router.message(F.text.lower().in_({"!варн"}) | F.text.lower().startswith("!варн "))
 async def cmd_warn(message: types.Message, bot: Bot):
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение пользователя для предупреждения.")
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    target = message.reply_to_message.from_user
-    target_name = escape_html(target.full_name)
 
     try:
         member = await bot.get_chat_member(chat_id, user_id)
@@ -302,6 +305,12 @@ async def cmd_warn(message: types.Message, bot: Bot):
     user_rank = await get_user_rank(chat_id, user_id)
     if not is_tg_admin and user_rank < 1 and int(user_id) != int(CREATOR_ID):
         return
+
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение пользователя для предупреждения.")
+
+    target = message.reply_to_message.from_user
+    target_name = escape_html(target.full_name)
 
     if target.is_bot:
         return await message.answer("Бот не получает варны.")

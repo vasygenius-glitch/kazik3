@@ -90,6 +90,80 @@ async def cmd_credit(message: types.Message):
         reply_markup=builder.as_markup()
     )
 
+@router.message(F.text.lower().startswith("микрозайм"))
+async def cmd_microloan(message: types.Message):
+    chat_id = message.chat.id
+    lender_id = message.from_user.id
+
+    data = await get_user_data(chat_id, lender_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Только банкиры могут выдавать микрозаймы.")
+
+    if not message.reply_to_message:
+        return await message.answer("Сделайте реплай на сообщение игрока, которому хотите выдать микрозайм.")
+
+    args = message.text.split()
+    if len(args) < 4:
+        return await message.answer("Использование: <code>микрозайм [сумма] [%] [срок в часах]</code>\nПример: <code>микрозайм 500 5 12</code>")
+
+    borrower_id = message.reply_to_message.from_user.id
+    if lender_id == borrower_id:
+        return await message.answer("Самому себе микрозайм выдать нельзя.")
+    if message.reply_to_message.from_user.is_bot:
+        return await message.answer("Ботам микрозаймы не нужны.")
+
+    try:
+        amount = int(args[1])
+        percent = int(args[2])
+        term_hours = int(args[3])
+        if amount <= 0 or percent < 0 or term_hours <= 0:
+            return
+    except ValueError:
+        return await message.answer("Сумма, процент и срок должны быть числами.")
+
+    bank_data = await get_bank_info(chat_id, lender_id)
+    if not bank_data:
+        return await message.answer("❌ У вас еще не создан банк. Создайте его командой <code>создать банк [Название]</code>.")
+
+    if bank_data.get('capital', 0) < amount:
+        return await message.answer(f"❌ В капитале вашего банка недостаточно средств! Капитал: {bank_data.get('capital', 0)}")
+
+    import uuid
+    short_id = str(uuid.uuid4())[:8]
+    loan_id = f"bk_{short_id}"
+    active_loans[loan_id] = {
+        'amount': amount,
+        'percent': percent,
+        'term_days': term_hours / 24.0, # сохраняем срок в днях (дробным) для единой логики времени
+        'chat_id': chat_id,
+        'lender_id': lender_id,
+        'borrower_id': borrower_id,
+        'guarantor_id': None,
+        'original_principal': amount,
+        'is_microloan': True,
+        'term_hours': term_hours
+    }
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Взять микрозайм 🤝", callback_data=f"bk_yes_{short_id}")
+    builder.button(text="Отказаться ❌", callback_data=f"bk_no_{short_id}")
+
+    total_return = int(amount * (1 + percent / 100))
+    bank_name = escape_html(bank_data.get('name', 'Неизвестный Банк'))
+
+    borrower_data = await get_user_data(chat_id, borrower_id)
+    credit_score = borrower_data.get('credit_score', 100)
+
+    await message.answer(
+        f"💸 <b>Договор микрозайма с банком «{bank_name}»!</b>\n\n"
+        f"Заемщик: <b>{escape_html(message.reply_to_message.from_user.full_name)}</b> (Рейтинг: {credit_score})\n\n"
+        f"Микрозайм на <b>{amount}</b> сыроежек под <b>{percent}%</b> на <b>{term_hours}</b> часов.\n"
+        f"Итого к возврату: <b>{total_return}</b> сыроежек.\n\n"
+        f"Заемщик, согласны с условиями?",
+        reply_markup=builder.as_markup()
+    )
+
+
 @router.callback_query(F.data.startswith("bk_yes_") | F.data.startswith("bk_no_"))
 async def process_bank_loan(callback: types.CallbackQuery):
     action = callback.data.split("_")[1]
@@ -123,13 +197,13 @@ async def process_bank_loan(callback: types.CallbackQuery):
         return await callback.message.edit_text("❌ У банка уже не хватает капитала.")
 
     # Выдаем кредит из капитала банка
-    await create_or_update_bank(chat_id, lender_id, {'capital': bank_data.get('capital', 0) - amount})
+    await create_or_update_bank(chat_id, lender_id, {'capital': bank_data.get('capital', 0) - amount}, callback.message.bot)
     await update_user_balance(chat_id, borrower_id, amount)
 
     borrower_data = await get_user_data(chat_id, borrower_id)
     debts = borrower_data.get('debts', {})
     
-    due_date = int(time.time()) + (term_days * 86400)
+    due_date = int(time.time()) + int(term_days * 86400)
     # Формат долга: bank_ID_DUEDATE_GUARANTORID_PRINCIPAL
     g_id_str = str(guarantor_id) if guarantor_id else "none"
     str_lender = f"bank_{lender_id}_{due_date}_{g_id_str}_{amount}"
@@ -138,7 +212,11 @@ async def process_bank_loan(callback: types.CallbackQuery):
     
     await update_user_field(chat_id, borrower_id, 'debts', debts)
 
-    await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
+    if loan_info.get('is_microloan'):
+        term_hours = loan_info.get('term_hours')
+        await callback.message.edit_text(f"🤝 Микрозайм оформлен на {term_hours} ч.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
+    else:
+        await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
 
 @router.message(F.text.lower().startswith("выплатить") | F.text.lower().startswith("вернуть"))
 async def cmd_repay(message: types.Message):
