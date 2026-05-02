@@ -130,7 +130,17 @@ async def get_bank_info(chat_id: int, identifier):
 async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(banker_id))
+
+    # Конвертируем 'capital' в Increment для безопасности, если передано целое число,
+    # а не прямая замена. Но у нас там везде передается абсолютное значение (new capital).
+    # Лучше сделать новую функцию increment_bank_capital.
     await bank_ref.set(data, merge=True)
+
+async def increment_bank_capital(chat_id: int, banker_id: int, amount: int):
+    from firebase_admin import firestore_async
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(banker_id))
+    await bank_ref.update({'capital': firestore_async.Increment(amount)})
 
 @router.message(Command("bank"))
 async def cmd_bank(message: types.Message):
@@ -388,6 +398,9 @@ async def cmd_bank_stats(message: types.Message):
     rate = bank_data.get('deposit_rate', 3.0)
     capital = bank_data.get('capital', 0)
 
+    cb_loan = bank_data.get('cb_loan', 0)
+    cb_text = f"\n🏛 <b>Долг Центробанку:</b> {cb_loan} сыр.\n" if cb_loan > 0 else ""
+
     text = (
         f"📊 <b>Панель управления банком: {escape_html(bank_data.get('name'))}</b>\n\n"
         f"💰 <b>Ликвидность (Капитал):</b> {capital} сыр.\n"
@@ -396,6 +409,162 @@ async def cmd_bank_stats(message: types.Message):
         f"🏦 <b>Сумма на вкладах:</b> {total_deposits} сыр.\n\n"
         f"🤝 <b>Раздано кредитов:</b> {total_loans_given} сыр.\n"
         f"🚨 <b>Просроченных долгов:</b> {overdue_loans} сыр.\n"
+        f"{cb_text}"
     )
 
     await message.answer(text)
+
+@router.message(Command("cb_loan"))
+async def cmd_cb_loan(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ У вас нет открытого банка.")
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("🏦 <b>Кредит от Центрального Банка</b>\n\nГосударство может выдать вашему банку ликвидность под ставку <b>5% в день</b>.\n\nИспользование: <code>/cb_loan [сумма]</code>\n\n<i>Внимание: Невозврат кредита ЦБ или отрицательный капитал приведет к банкротству банка!</i>")
+
+    try:
+        amount = int(args[1])
+        if amount <= 0: return
+    except ValueError:
+        return await message.answer("Сумма должна быть числом.")
+
+    if amount > 50000000:
+        return await message.answer("❌ ЦБ не выдает транши более 50,000,000 сыроежек за один раз.")
+
+    current_cb_loan = bank_data.get('cb_loan', 0)
+    if current_cb_loan + amount > 200000000:
+        return await message.answer("❌ Ваш лимит кредитования в ЦБ исчерпан (максимум 200,000,000 сыр.).")
+
+    await increment_bank_capital(chat_id, user_id, amount)
+
+    # Update cb_loan
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(user_id))
+    from firebase_admin import firestore_async
+    await bank_ref.update({'cb_loan': firestore_async.Increment(amount)})
+
+    await message.answer(f"🏛 <b>Транш одобрен!</b>\n\nЦентральный Банк выделил вашему банку ликвидность на сумму <b>{amount}</b> сыр.\nВаш общий долг перед ЦБ: <b>{current_cb_loan + amount}</b> сыр.\nСтавка: 5% в день.")
+
+@router.message(Command("cb_repay"))
+async def cmd_cb_repay(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ У вас нет открытого банка.")
+
+    current_cb_loan = bank_data.get('cb_loan', 0)
+    if current_cb_loan <= 0:
+        return await message.answer("🏛 У вашего банка нет долгов перед ЦБ.")
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer(f"Использование: <code>/cb_repay [сумма]</code>\nВаш долг: {current_cb_loan}")
+
+    try:
+        amount = int(args[1])
+        if amount <= 0: return
+    except ValueError:
+        return await message.answer("Сумма должна быть числом.")
+
+    repay_amount = min(amount, current_cb_loan)
+
+    if bank_data.get('capital', 0) < repay_amount:
+        return await message.answer(f"❌ В капитале вашего банка недостаточно средств для погашения кредита на эту сумму.")
+
+    await increment_bank_capital(chat_id, user_id, -repay_amount)
+
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(user_id))
+    from firebase_admin import firestore_async
+    await bank_ref.update({'cb_loan': firestore_async.Increment(-repay_amount)})
+
+    await message.answer(f"🏛 <b>Долг частично или полностью погашен!</b>\n\nВы вернули ЦБ <b>{repay_amount}</b> сыр. из капитала банка.\nОстаток долга: <b>{current_cb_loan - repay_amount}</b> сыр.")
+
+@router.message(Command("bank_invest"))
+async def cmd_bank_invest(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ У вас нет открытого банка.")
+
+    args = message.text.split()
+    if len(args) < 2:
+        invested = bank_data.get('investments', 0)
+        return await message.answer(f"💼 <b>Инвестиции Банка (Государственные Облигации)</b>\n\nВы можете вложить часть капитала банка в гособлигации под <b>2% в день</b>.\nЭто безопасный способ наращивать капитал.\n\nТекущие инвестиции: <b>{invested}</b> сыр.\nИспользование: <code>/bank_invest [сумма]</code>\nСнять инвестиции: <code>/bank_divest [сумма]</code>")
+
+    try:
+        amount = int(args[1])
+        if amount <= 0: return
+    except ValueError:
+        return await message.answer("Сумма должна быть числом.")
+
+    if bank_data.get('capital', 0) < amount:
+        return await message.answer("❌ В капитале банка недостаточно средств.")
+
+    await increment_bank_capital(chat_id, user_id, -amount)
+
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(user_id))
+    from firebase_admin import firestore_async
+    await bank_ref.update({'investments': firestore_async.Increment(amount)})
+
+    await message.answer(f"💼 <b>Успешная инвестиция!</b>\n\nБанк купил гособлигаций на сумму <b>{amount}</b> сыр. из капитала.\nТеперь они будут приносить 2% дохода каждый день.")
+
+@router.message(Command("bank_divest"))
+async def cmd_bank_divest(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ У вас нет открытого банка.")
+
+    invested = bank_data.get('investments', 0)
+    if invested <= 0:
+        return await message.answer("💼 У банка нет активных инвестиций.")
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer(f"Использование: <code>/bank_divest [сумма]</code>\nДоступно для снятия: {invested}")
+
+    try:
+        amount = int(args[1])
+        if amount <= 0: return
+    except ValueError:
+        return await message.answer("Сумма должна быть числом.")
+
+    divest_amount = min(amount, invested)
+
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(user_id))
+    from firebase_admin import firestore_async
+    await bank_ref.update({'investments': firestore_async.Increment(-divest_amount)})
+
+    await increment_bank_capital(chat_id, user_id, divest_amount)
+
+    await message.answer(f"💼 <b>Облигации проданы!</b>\n\nВ капитал банка возвращено <b>{divest_amount}</b> сыр.")

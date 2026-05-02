@@ -71,9 +71,10 @@ async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False)
     ref = get_user_ref(chat_id, user_id)
     data = await get_user_data(chat_id, user_id)
     
-    new_balance = data.get('balance', 0) + amount
-    await ref.update({'balance': new_balance})
+    from firebase_admin import firestore_async
+    await ref.update({'balance': firestore_async.Increment(amount)})
 
+    new_balance = data.get('balance', 0) + amount
     data['balance'] = new_balance
     set_in_cache(chat_id, user_id, data)
     return new_balance

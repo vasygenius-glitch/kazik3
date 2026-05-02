@@ -96,18 +96,17 @@ async def process_bank_loan(callback: types.CallbackQuery):
     short_id = callback.data.split("_")[2]
     loan_id = f"bk_{short_id}"
 
-    if loan_id not in active_loans:
-        return await callback.answer("Это предложение устарело.", show_alert=True)
-
-    loan_info = active_loans[loan_id]
+    loan_info = active_loans.pop(loan_id, None)
+    if not loan_info:
+        return await callback.answer("Это предложение устарело или уже обработано.", show_alert=True)
     chat_id = loan_info['chat_id']
     lender_id = loan_info['lender_id']
     borrower_id = loan_info['borrower_id']
 
     if callback.from_user.id != borrower_id:
+        # Вернем обратно в активные, так как нажал не тот
+        active_loans[loan_id] = loan_info
         return await callback.answer("Это предлагают не тебе!", show_alert=True)
-
-    active_loans.pop(loan_id)
 
     if action == "no":
         return await callback.message.edit_text("❌ Клиент отказался брать кредит.")
@@ -230,10 +229,25 @@ async def cmd_repay(message: types.Message):
     if debts[target_debt_key] <= 0:
         del debts[target_debt_key]
         if target_debt_key.startswith("bank_"):
-            credit_score = borrower_data.get('credit_score', 100)
-            new_score = min(500, credit_score + 10)
-            await update_user_field(chat_id, borrower_id, 'credit_score', new_score)
-            rating_msg = f"\n📈 Ваш кредитный рейтинг повышен до <b>{new_score}</b>!"
+            parts = target_debt_key.split("_")
+            principal = int(parts[4]) if len(parts) >= 5 else 0
+
+            # АНТИ-АБУЗ: Рейтинг растет только если сумма кредита приличная
+            if principal >= 5000:
+                # Проверка на кулдаун (раз в 12 часов)
+                last_rating_up = borrower_data.get('last_rating_up', 0)
+                current_time = time.time()
+
+                if current_time - last_rating_up >= 43200:
+                    credit_score = borrower_data.get('credit_score', 100)
+                    new_score = min(500, credit_score + 10)
+                    await update_user_field(chat_id, borrower_id, 'credit_score', new_score)
+                    await update_user_field(chat_id, borrower_id, 'last_rating_up', current_time)
+                    rating_msg = f"\n📈 Ваш кредитный рейтинг повышен до <b>{new_score}</b>!"
+                else:
+                    rating_msg = f"\nℹ️ Кредит погашен, но рейтинг не повышен (повышать можно не чаще раза в 12 часов)."
+            else:
+                rating_msg = f"\nℹ️ Кредит слишком мал для повышения кредитного рейтинга (нужно от 5000 сыр.)."
 
     await update_user_field(chat_id, borrower_id, 'debts', debts)
     await message.answer(f"✅ Ты вернул <b>{repay_amount}</b> сыроежек кредитору.{discount_msg}\nОстаток долга: <b>{debts.get(target_debt_key, 0)}</b> сыроежек.{rating_msg}")

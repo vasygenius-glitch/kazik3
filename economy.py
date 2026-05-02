@@ -467,7 +467,8 @@ async def cmd_rob_bank(message: types.Message):
         steal_percent = rand.uniform(0.01, 0.05)
         stolen_amount = int(capital * steal_percent)
 
-        await create_or_update_bank(chat_id, target_banker_id, {'capital': capital - stolen_amount})
+        from profile_bank import increment_bank_capital
+        await increment_bank_capital(chat_id, target_banker_id, -stolen_amount)
         await update_user_balance(chat_id, user_id, stolen_amount)
 
         await message.answer(f"🥷 <b>УСПЕШНОЕ ОГРАБЛЕНИЕ!</b>\n\nВы ворвались в банк <b>{escape_html(bank_data.get('name'))}</b>, вскрыли сейф и вынесли <b>{stolen_amount}</b> сыроежек!\n<i>Банк понес убытки.</i>")

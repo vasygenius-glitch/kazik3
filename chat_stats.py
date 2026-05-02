@@ -122,18 +122,12 @@ async def cmd_top(message: types.Message):
 
     await message.answer(text)
 
-async def weekly_reset_task(bot: Bot):
-    while True:
-        await asyncio.sleep(60) # Проверяем каждую минуту
-        current_time = time.localtime()
-
-        # --- Ежедневное пополнение капитала банков и начисление % по вкладам ---
-        if current_time.tm_hour == 0 and current_time.tm_min == 0:
-            db = get_db()
-            from whitelist import get_whitelist
-            from user_manager import update_user_field
-            whitelist = await get_whitelist()
-            for chat_id in whitelist.keys():
+async def _daily_bank_task(bot: Bot):
+    db = get_db()
+    from whitelist import get_whitelist
+    from user_manager import update_user_field
+    whitelist = await get_whitelist()
+    for chat_id in whitelist.keys():
                 try:
                     # 1. Загружаем все банки в чате
                     banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
@@ -172,9 +166,24 @@ async def weekly_reset_task(bot: Bot):
                                         new_dep = deposit + profit - fee
                                         await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
 
-                    # 3. Обновляем капитал банков (вычитаем выплаченные %, добавляем гос. субсидию 50М, налог на сверхприбыль, банкротство)
+                    # 3. Обновляем капитал банков (вычитаем выплаченные %, начисляем кредит ЦБ и процент, налог на сверхприбыль, банкротство)
                     for b_id, b_data in banks_data.items():
                         current_cap = b_data.get('capital', 0)
+
+                        # --- НОВАЯ МЕХАНИКА ЦБ (Займ) ---
+                        cb_loan = b_data.get('cb_loan', 0)
+                        if cb_loan > 0:
+                            # Ставка ЦБ 5% в день от тела долга
+                            cb_interest = int(cb_loan * 0.05)
+                            b_data['cb_loan'] = cb_loan + cb_interest
+
+                        # --- ИНВЕСТИЦИИ БАНКА (Доход) ---
+                        investments = b_data.get('investments', 0)
+                        invest_profit = 0
+                        if investments > 0:
+                            # 2% в день доходности по гособлигациям
+                            invest_profit = int(investments * 0.02)
+                            current_cap += invest_profit
 
                         # Банкротство
                         if current_cap < 0:
@@ -199,29 +208,26 @@ async def weekly_reset_task(bot: Bot):
                             except: pass
                             continue
 
-                        new_capital = current_cap + 50000000
+                        # Убираем безусловные 50 миллионов от государства. Оставляем только текущий капитал (с вычетом процентов).
+                        new_capital = current_cap
 
                         # Налог на роскошь (сверхприбыль > 1 млрд)
                         if new_capital > 1000000000:
                             luxury_tax = int((new_capital - 1000000000) * 0.05) # 5% с суммы превышающей 1 млрд
                             new_capital -= luxury_tax
 
-                        await banks_ref.document(b_id).update({'capital': new_capital})
+                        await banks_ref.document(b_id).update({'capital': new_capital, 'cb_loan': b_data.get('cb_loan', 0)})
 
                 except Exception as e:
                     print(f"Ошибка ежедневных банковских операций в чате {chat_id}: {e}")
 
-            await asyncio.sleep(60) # Чтобы не сработало дважды
-            continue
+async def _weekly_top_task(bot: Bot):
+    from whitelist import get_whitelist
+    from user_manager import update_user_balance
+    db = get_db()
+    whitelist = await get_whitelist()
 
-        # Проверяем, является ли день воскресеньем (6) и время 23:59
-        if current_time.tm_wday == 6 and current_time.tm_hour == 23 and current_time.tm_min == 59:
-            from whitelist import get_whitelist
-            from user_manager import update_user_balance
-            db = get_db()
-            whitelist = await get_whitelist()
-
-            for chat_id in whitelist.keys():
+    for chat_id in whitelist.keys():
                 try:
                     stats_ref = db.collection('chats').document(str(chat_id)).collection('stats')
                     # Находим победителя недели
@@ -251,5 +257,15 @@ async def weekly_reset_task(bot: Bot):
                 except Exception as e:
                     print(f"Weekly reset error for chat {chat_id}: {e}")
 
-            # Ждем 60 секунд, чтобы не сработало дважды
-            await asyncio.sleep(60)
+def setup_scheduler(bot: Bot):
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    scheduler = AsyncIOScheduler(timezone="Europe/Moscow")
+
+    # Ежедневные банковские операции (начисление процентов) в полночь
+    scheduler.add_job(_daily_bank_task, 'cron', hour=0, minute=0, args=[bot], misfire_grace_time=3600)
+
+    # Итоги недели (воскресенье 23:59)
+    scheduler.add_job(_weekly_top_task, 'cron', day_of_week='sun', hour=23, minute=59, args=[bot], misfire_grace_time=3600)
+
+    scheduler.start()
+    print("✅ APScheduler запущен")

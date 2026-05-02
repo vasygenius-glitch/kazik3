@@ -79,7 +79,19 @@ def init_db(key_path):
 
             async def update(self, data):
                 if '_data' in self.doc_node:
-                    self.doc_node['_data'].update(data)
+                    for k, v in data.items():
+                        if hasattr(v, 'value') and type(v).__name__ == 'Increment':
+                            self.doc_node['_data'][k] = self.doc_node['_data'].get(k, 0) + v.value
+                        else:
+                            self.doc_node['_data'][k] = v
+
+        class MockIncrement:
+            def __init__(self, value):
+                self.value = value
+
+        # Patch firestore_async
+        firestore_async.Increment = MockIncrement
+
         db = MockDB()
         return db
 
