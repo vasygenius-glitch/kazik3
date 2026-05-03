@@ -3,6 +3,7 @@ from aiogram.filters import Command
 from config import CREATOR_ID
 from user_manager import get_user_data, update_user_field
 from escape import escape_html
+from profile_bank import get_bank_info, create_or_update_bank
 
 router = Router()
 
@@ -17,21 +18,28 @@ async def cmd_add_bank_debt(message: types.Message):
     if not is_creator(message): return
     if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
-    if len(args) < 3: return await message.answer("Использование: /add_bank_debt [ID_Банкира] [Сумма]")
-    try:
-        banker_id = int(args[1])
-        amount = int(args[2])
-    except: return
+    if len(args) < 3: return await message.answer("Использование: /add_bank_debt [Сумма] [Название Банка или ID]")
 
-    target_id = message.reply_to_message.from_user.id
+    try:
+        amount = int(args[1])
+    except: return await message.answer("Сумма должна быть числом.")
+
+    bank_identifier = " ".join(args[2:])
     chat_id = message.chat.id
+    bank_data = await get_bank_info(chat_id, bank_identifier)
+
+    if not bank_data:
+        return await message.answer("❌ Банк не найден.")
+
+    banker_id = bank_data['banker_id']
+    target_id = message.reply_to_message.from_user.id
     data = await get_user_data(chat_id, target_id)
     debts = data.get('debts', {})
 
-    key = f"bank_{banker_id}_0_none_{amount}" # Условный формат ключа долга
+    key = f"bank_{banker_id}_0_none_{amount}"
     debts[key] = debts.get(key, 0) + amount
     await update_user_field(chat_id, target_id, 'debts', debts)
-    await message.answer(f"✅ Добавлен долг банку (ID {banker_id}) в размере {amount} для {escape_html(message.reply_to_message.from_user.full_name)}.")
+    await message.answer(f"✅ Добавлен долг банку <b>{escape_html(bank_data.get('name'))}</b> в размере {amount} для {escape_html(message.reply_to_message.from_user.full_name)}.")
 
 # 2. Добавить долг игроку (кредитору)
 @router.message(Command("add_user_debt"))
@@ -71,13 +79,17 @@ async def cmd_del_bank_debt(message: types.Message):
     if not is_creator(message): return
     if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
-    if len(args) < 2: return await message.answer("Использование: /del_bank_debt [ID_Банкира]")
-    try:
-        banker_id = int(args[1])
-    except: return
+    if len(args) < 2: return await message.answer("Использование: /del_bank_debt [Название Банка или ID]")
 
-    target_id = message.reply_to_message.from_user.id
+    bank_identifier = " ".join(args[1:])
     chat_id = message.chat.id
+    bank_data = await get_bank_info(chat_id, bank_identifier)
+
+    if not bank_data:
+        return await message.answer("❌ Банк не найден.")
+
+    banker_id = bank_data['banker_id']
+    target_id = message.reply_to_message.from_user.id
     data = await get_user_data(chat_id, target_id)
     debts = data.get('debts', {})
 
@@ -86,7 +98,7 @@ async def cmd_del_bank_debt(message: types.Message):
         del debts[k]
 
     await update_user_field(chat_id, target_id, 'debts', debts)
-    await message.answer(f"✅ Все долги перед банком (ID {banker_id}) удалены.")
+    await message.answer(f"✅ Все долги перед банком <b>{escape_html(bank_data.get('name'))}</b> удалены.")
 
 # 5. Списать конкретный долг игроку
 @router.message(Command("del_user_debt"))
@@ -110,21 +122,27 @@ async def cmd_del_user_debt(message: types.Message):
     await update_user_field(chat_id, target_id, 'debts', debts)
     await message.answer(f"✅ Долг перед игроком (ID {creditor_id}) удален.")
 
-
 # 6. Изменить сумму конкретного долга банку
 @router.message(Command("set_bank_debt"))
 async def cmd_set_bank_debt(message: types.Message):
     if not is_creator(message): return
     if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
-    if len(args) < 3: return await message.answer("Использование: /set_bank_debt [ID_Банкира] [Новая_Сумма]")
-    try:
-        banker_id = int(args[1])
-        new_amount = int(args[2])
-    except: return
+    if len(args) < 3: return await message.answer("Использование: /set_bank_debt [Новая_Сумма] [Название Банка или ID]")
 
-    target_id = message.reply_to_message.from_user.id
+    try:
+        new_amount = int(args[1])
+    except: return await message.answer("Сумма должна быть числом.")
+
+    bank_identifier = " ".join(args[2:])
     chat_id = message.chat.id
+    bank_data = await get_bank_info(chat_id, bank_identifier)
+
+    if not bank_data:
+        return await message.answer("❌ Банк не найден.")
+
+    banker_id = bank_data['banker_id']
+    target_id = message.reply_to_message.from_user.id
     data = await get_user_data(chat_id, target_id)
     debts = data.get('debts', {})
 
@@ -140,7 +158,7 @@ async def cmd_set_bank_debt(message: types.Message):
         debts[key] = new_amount
 
     await update_user_field(chat_id, target_id, 'debts', debts)
-    await message.answer(f"✅ Долг банку (ID {banker_id}) изменен на {new_amount}.")
+    await message.answer(f"✅ Долг банку <b>{escape_html(bank_data.get('name'))}</b> изменен на {new_amount}.")
 
 # 7. Изменить сумму конкретного долга игроку
 @router.message(Command("set_user_debt"))
@@ -168,21 +186,23 @@ async def cmd_set_user_debt(message: types.Message):
 async def cmd_add_bank_cap(message: types.Message):
     if not is_creator(message): return
     args = message.text.split()
-    if len(args) < 3: return await message.answer("Использование: /add_bank_cap [ID_Банкира] [Сумма]")
+    if len(args) < 3: return await message.answer("Использование: /add_bank_cap [Сумма] [Название Банка или ID]")
+
     try:
-        banker_id = int(args[1])
-        amount = int(args[2])
-    except: return
+        amount = int(args[1])
+    except: return await message.answer("Сумма должна быть числом.")
 
-    from profile_bank import get_bank_info, create_or_update_bank
+    bank_identifier = " ".join(args[2:])
     chat_id = message.chat.id
-    bank_data = await get_bank_info(chat_id, banker_id)
-    if not bank_data:
-        return await message.answer("Банк не найден.")
+    bank_data = await get_bank_info(chat_id, bank_identifier)
 
+    if not bank_data:
+        return await message.answer("❌ Банк не найден.")
+
+    banker_id = bank_data['banker_id']
     new_cap = bank_data.get('capital', 0) + amount
     await create_or_update_bank(chat_id, banker_id, {'capital': new_cap})
-    await message.answer(f"✅ Капитал банка (ID {banker_id}) изменен. Текущий: {new_cap}.")
+    await message.answer(f"✅ Капитал банка <b>{escape_html(bank_data.get('name'))}</b> изменен. Текущий: {new_cap}.")
 
 # 9. Узнать список всех долгов (Дебаг)
 @router.message(Command("view_debts"))
