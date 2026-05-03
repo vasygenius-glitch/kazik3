@@ -345,10 +345,11 @@ async def cmd_bank_offshore(message: types.Message):
 def get_bank_stats_kb(banker_id: int):
     builder = InlineKeyboardBuilder()
     builder.button(text="📊 Главная", callback_data=f"bstat_main_{banker_id}")
-    builder.button(text="👥 Топ вкладчиков", callback_data=f"bstat_deps_{banker_id}")
-    builder.button(text="🤝 Топ должников", callback_data=f"bstat_loans_{banker_id}")
+    builder.button(text="👥 Вкладчики", callback_data=f"bstat_deps_{banker_id}")
+    builder.button(text="🤝 Должники", callback_data=f"bstat_loans_{banker_id}")
     builder.button(text="⚙️ Настройки", callback_data=f"bstat_settings_{banker_id}")
-    builder.adjust(2, 2)
+    builder.button(text="⬆️ Улучшения", callback_data=f"bstat_upgrades_{banker_id}")
+    builder.adjust(2, 2, 1)
     return builder.as_markup()
 
 async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
@@ -484,6 +485,242 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             f"📌 <i>Команды:</i>\n"
             f"<code>/bankrate [3-13]</code> - Изменить ставку по вкладам.\n"
             f"<code>/bank_offshore</code> - Скрыть свои средства в оффшоре.\n"
+            f"<code>/incass</code> - Запустить рейс инкассаторов.\n"
             f"Выдавать кредиты можно реплаем: <code>кредит [сумма] [%] [срок]</code>"
         )
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
+
+    elif action == "upgrades":
+        lvl_armor = bank_data.get('upgrade_armor', 0)
+        lvl_market = bank_data.get('upgrade_marketing', 0)
+        lvl_earnings = bank_data.get('upgrade_earnings', 0)
+        lvl_banker = bank_data.get('upgrade_banker', 0)
+
+        armor_price = 10000000 * (lvl_armor + 1)
+        market_price = 15000000 * (lvl_market + 1)
+        earn_price = 12000000 * (lvl_earnings + 1)
+        banker_price = 20000000 * (lvl_banker + 1)
+
+        armor_status = f"{lvl_armor}/5" if lvl_armor < 5 else "МАКС."
+        market_status = f"{lvl_market}/5" if lvl_market < 5 else "МАКС."
+        earn_status = f"{lvl_earnings}/5" if lvl_earnings < 5 else "МАКС."
+        banker_status = f"{lvl_banker}/5" if lvl_banker < 5 else "МАКС."
+
+        text = (
+            f"⬆️ <b>Улучшения банка</b>\n"
+            f"Капитал: <b>{bank_data.get('capital', 0)}</b> сыр.\n\n"
+
+            f"🛡 <b>Броневики (Инкассация)</b>: Ур. {armor_status}\n"
+            f"<i>Снижает начальный шанс нападения ОПГ при /incass на 2% за уровень.</i>\n"
+            f"Цена: {armor_price if lvl_armor < 5 else '—'} сыр.\n\n"
+
+            f"💼 <b>Вместимость мешков</b>: Ур. {earn_status}\n"
+            f"<i>Увеличивает количество собираемых денег на точках /incass на 10% за уровень.</i>\n"
+            f"Цена: {earn_price if lvl_earnings < 5 else '—'} сыр.\n\n"
+
+            f"👔 <b>Доля Банкира</b>: Ур. {banker_status}\n"
+            f"<i>Увеличивает вашу личную долю при успешной инкассации на 5% (База 20%).</i>\n"
+            f"Цена: {banker_price if lvl_banker < 5 else '—'} сыр.\n\n"
+
+            f"📈 <b>Маркетинг (Субсидии)</b>: Ур. {market_status}\n"
+            f"<i>Дает бонус +20% к ежедневным субсидиям от ЦентроЖБРОМа за уровень.</i>\n"
+            f"Цена: {market_price if lvl_market < 5 else '—'} сыр."
+        )
+
+        builder = InlineKeyboardBuilder()
+        if lvl_armor < 5: builder.button(text=f"🛡 Броневики", callback_data=f"bstat_buyupg_armor_{banker_id}")
+        if lvl_earnings < 5: builder.button(text=f"💼 Вместимость", callback_data=f"bstat_buyupg_earn_{banker_id}")
+        if lvl_banker < 5: builder.button(text=f"👔 Доля", callback_data=f"bstat_buyupg_banker_{banker_id}")
+        if lvl_market < 5: builder.button(text=f"📈 Маркетинг", callback_data=f"bstat_buyupg_market_{banker_id}")
+
+        builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
+        builder.adjust(2, 2, 1)
+
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+    elif action == "buyupg":
+        upg_type = parts[2]
+        banker_id = int(parts[3])
+
+        if callback.from_user.id != banker_id: return
+
+        bank_data = await get_bank_info(chat_id, banker_id)
+        capital = bank_data.get('capital', 0)
+
+        if upg_type == "armor":
+            lvl = bank_data.get('upgrade_armor', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 10000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_armor': lvl + 1})
+            await callback.answer(f"✅ Броневики улучшены до уровня {lvl + 1}!")
+
+        elif upg_type == "earn":
+            lvl = bank_data.get('upgrade_earnings', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 12000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_earnings': lvl + 1})
+            await callback.answer(f"✅ Вместимость улучшена до уровня {lvl + 1}!")
+
+        elif upg_type == "banker":
+            lvl = bank_data.get('upgrade_banker', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 20000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_banker': lvl + 1})
+            await callback.answer(f"✅ Доля банкира улучшена до уровня {lvl + 1}!")
+
+        elif upg_type == "market":
+            lvl = bank_data.get('upgrade_marketing', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 15000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_marketing': lvl + 1})
+            await callback.answer(f"✅ Маркетинг улучшен до уровня {lvl + 1}!")
+
+        callback.data = f"bstat_upgrades_{banker_id}"
+        await cb_bank_stats(callback)
+
+import random
+import time
+
+# ================= ИНКАССАЦИЯ (ИГРА ДЛЯ БАНКИРОВ) =================
+active_incass = {}
+
+@router.message(Command("incass"))
+async def cmd_incass(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ У вас нет открытого банка.")
+
+    current_time = int(time.time())
+    last_time = bank_data.get('incass_last_time', 0)
+
+    # Кулдаун 2 часа
+    if current_time - last_time < 7200:
+        rem_min = (7200 - (current_time - last_time)) // 60
+        return await message.answer(f"🚛 Машины на техобслуживании. Следующий рейс будет доступен через {rem_min} мин.")
+
+    if bank_data.get('capital', 0) < 5000000:
+        return await message.answer("❌ В капитале банка должно быть минимум 5.000.000 сыроежек (залог на случай ремонта).")
+
+    await create_or_update_bank(chat_id, user_id, {'incass_last_time': current_time})
+
+    lvl_armor = bank_data.get('upgrade_armor', 0)
+    base_risk = 15 - (lvl_armor * 2) # Уменьшаем начальный риск с 15%
+    if base_risk < 5: base_risk = 5
+
+    lvl_earnings = bank_data.get('upgrade_earnings', 0)
+    earning_mult = 1.0 + (lvl_earnings * 0.1) # +10% заработка за каждый уровень
+
+    start_money = int(random.randint(2000000, 5000000) * earning_mult)
+
+    # Храним состояние рейса
+    incass_id = f"incass_{chat_id}_{user_id}"
+    active_incass[incass_id] = {
+        'money': start_money,
+        'risk': base_risk,
+        'step': 1,
+        'earning_mult': earning_mult
+    }
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🛣 Ехать на следующую точку", callback_data=f"incass_next_{user_id}")
+    builder.button(text="🏦 Вернуться в банк", callback_data=f"incass_cashout_{user_id}")
+    builder.adjust(1)
+
+    await message.answer(
+        f"🚛 <b>Рейс инкассаторов начат!</b>\n\n"
+        f"📍 Точка 1 пройдена.\n"
+        f"💰 Собрано: <b>{start_money}</b> сыр.\n"
+        f"🚨 Шанс нападения ОПГ на следующем шаге: <b>{base_risk + 10}%</b>\n\n"
+        f"Что делаем дальше?",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(F.data.startswith("incass_"))
+async def cb_incass(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    action = parts[1]
+    banker_id = int(parts[2])
+
+    if callback.from_user.id != banker_id:
+        return await callback.answer("Это не ваш рейс!", show_alert=True)
+
+    chat_id = callback.message.chat.id
+    incass_id = f"incass_{chat_id}_{banker_id}"
+
+    if incass_id not in active_incass:
+        return await callback.message.edit_text("❌ Этот рейс уже завершён.")
+
+    state = active_incass[incass_id]
+
+    bank_data = await get_bank_info(chat_id, banker_id)
+
+    # Бонус банкира от улучшения "Заработок"
+    lvl_banker = bank_data.get('upgrade_banker', 0)
+    banker_cut = 0.20 + (lvl_banker * 0.05) # База 20%, +5% за уровень (до 45%)
+
+    if action == "cashout":
+        money = state['money']
+        del active_incass[incass_id]
+
+        banker_profit = int(money * banker_cut)
+        bank_profit = money - banker_profit
+
+        await create_or_update_bank(chat_id, banker_id, {'capital': bank_data.get('capital', 0) + bank_profit})
+        await update_user_balance(chat_id, banker_id, banker_profit)
+
+        await callback.message.edit_text(
+            f"🏦 <b>Машина благополучно вернулась!</b>\n\n"
+            f"Общий куш: <b>{money}</b> сыр.\n"
+            f"💼 Капитал банка пополнен на: <b>{bank_profit}</b> сыр.\n"
+            f"💵 Личная премия банкира: <b>{banker_profit}</b> сыр."
+        )
+
+    elif action == "next":
+        # Увеличиваем риск
+        state['risk'] += 10
+        current_risk = state['risk']
+
+        # Проверяем нападение
+        if random.randint(1, 100) <= current_risk:
+            del active_incass[incass_id]
+            penalty = random.randint(3000000, 5000000)
+
+            # Штраф снимаем с капитала
+            new_capital = max(0, bank_data.get('capital', 0) - penalty)
+            await create_or_update_bank(chat_id, banker_id, {'capital': new_capital})
+
+            await callback.message.edit_text(
+                f"💥 <b>НАПАДЕНИЕ ОПГ!</b>\n\n"
+                f"Вооруженные бандиты подорвали броневик и украли все собранные <b>{state['money']}</b> сыр.\n"
+                f"💸 Банк оплатил ремонт машины: <b>-{penalty}</b> сыр. из капитала."
+            )
+        else:
+            state['step'] += 1
+            add_money = int(random.randint(2000000, 5000000) * state['earning_mult'])
+            state['money'] += add_money
+
+            builder = InlineKeyboardBuilder()
+            builder.button(text="🛣 Ехать на следующую точку", callback_data=f"incass_next_{banker_id}")
+            builder.button(text="🏦 Вернуться в банк", callback_data=f"incass_cashout_{banker_id}")
+            builder.adjust(1)
+
+            await callback.message.edit_text(
+                f"🚛 <b>Рейс продолжается...</b>\n\n"
+                f"📍 Точка {state['step']} пройдена.\n"
+                f"💰 Найдено: +{add_money}\n"
+                f"💵 Всего в кузове: <b>{state['money']}</b> сыр.\n"
+                f"🚨 Шанс нападения на следующем шаге: <b>{current_risk + 10}%</b>\n\n"
+                f"Рискуем дальше?",
+                reply_markup=builder.as_markup()
+            )
