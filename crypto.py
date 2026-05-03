@@ -770,12 +770,44 @@ async def cmd_cr_delcoin(message: types.Message):
     if ticker in coins:
         from firebase_admin import firestore
         db = get_db()
-        # Используем firestore.DELETE_FIELD для точечного удаления ключа внутри словаря
+
+        last_price = coins[ticker]["prices"][-1]
+
+        # 1. Возвращаем деньги пользователям
+        try:
+            users_ref = db.collection('chats').document(str(message.chat.id)).collection('users')
+            users_docs = await users_ref.get()
+
+            refunded_count = 0
+            total_refund = 0
+
+            for user_doc in users_docs:
+                u_data = user_doc.to_dict()
+                port = u_data.get('crypto_portfolio', {})
+
+                if ticker in port:
+                    qty = port[ticker]
+                    if qty > 0:
+                        refund_amount = qty * last_price
+                        # Возвращаем баланс и удаляем монету из портфеля
+                        del port[ticker]
+
+                        await users_ref.document(user_doc.id).update({
+                            'balance': firestore.Increment(refund_amount),
+                            'crypto_portfolio': port
+                        })
+
+                        refunded_count += 1
+                        total_refund += refund_amount
+        except Exception as e:
+            logging.error(f"Ошибка при возврате средств за монету: {e}")
+
+        # 2. Удаляем саму монету с биржи
         try:
             await db.collection('bot_settings').document('crypto_coins').update({
                 f"coins.{ticker}": firestore.DELETE_FIELD
             })
-            await message.answer(f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).")
+            await message.answer(f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).\n💰 Средства возвращены {refunded_count} игрокам (всего {fmt(total_refund)} сыр. по цене {fmt(last_price)} за монету).")
         except Exception as e:
             await message.answer(f"❌ Ошибка удаления: {e}")
     else:
