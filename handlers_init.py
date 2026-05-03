@@ -56,28 +56,30 @@ def is_valid_command(text: str) -> bool:
 catch_all_router = Router()
 @catch_all_router.message()
 async def catch_all(message: Message):
+
     if message.chat.type in ["group", "supergroup"]:
         text = message.text or message.caption or ""
 
-        # Если это не команда, то мы просто логируем и считаем статистику, но не пускаем дальше в aiogram обработчики (которые могут ошибочно реагировать)
-        # В плоской архитектуре aiogram, если сообщение не подошло ни под один фильтр, оно попадает сюда
-        if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
-            # Мы пропускаем сообщение для aiogram (на него бот не должен реагировать "Я не понимаю" и т.п., если бы такие обработчики были)
-            # В данном случае, это просто заглушка-перехватчик.
-            pass
-
         media_type = ""
-        if message.photo: media_type = "[Фото] "
-        elif message.video: media_type = "[Видео] "
-        elif message.sticker: media_type = "[Стикер] "
-        elif message.voice: media_type = "[Голосовое] "
-        elif message.document: media_type = "[Файл] "
+        if message.photo:
+            media_type = "[Фото] "
+        elif message.video:
+            media_type = "[Видео] "
+        elif message.document:
+            media_type = "[Документ] "
+        elif message.voice:
+            media_type = "[Голосовое] "
+        elif message.audio:
+            media_type = "[Аудио] "
 
         full_text = f"{media_type}{text}"
         if full_text.strip():
             log_message(message.chat.id, message.chat.title or "Unknown", message.from_user.id, message.from_user.full_name, full_text)
             import asyncio
             asyncio.create_task(increment_message_count(message.chat.id, message.from_user.id, message.from_user.full_name))
+
+        if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
+            return
 
 def register_all_handlers(dp: Dispatcher):
     # Твоя биржа

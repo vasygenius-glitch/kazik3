@@ -768,7 +768,7 @@ async def cmd_cr_delcoin(message: types.Message):
     coins = await get_all_coins()
 
     if ticker in coins:
-        from firebase_admin import firestore
+        from google.cloud import firestore
         db = get_db()
 
         last_price = coins[ticker]["prices"][-1]

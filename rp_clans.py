@@ -182,9 +182,13 @@ async def rp_and_karma(message: types.Message):
         await message.answer(f"📈 Уважение пользователя <b>{target_name}</b> повышено! (Репутация: {new_rep})")
 
 # ================= ДУЭЛИ =================
+import time
+import asyncio
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
 active_duels = {}
 
-@router.message(F.text & (F.text.lower().startswith("дуэль") | F.text.lower().startswith("/duel")))
+@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | F.text.lower().startswith("дуэль") | F.text.lower().startswith("/duel")))
 async def cmd_duel(message: types.Message):
     if not message.reply_to_message:
         return await message.answer("Ответьте на сообщение человека, чтобы вызвать его на дуэль.")
@@ -197,98 +201,216 @@ async def cmd_duel(message: types.Message):
         return await message.answer("С этим нельзя устроить дуэль.")
 
     args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Укажите ставку: <code>Дуэль 1000</code>")
+    bet_str = args[-1]
 
     try:
-        bet = int(args[1])
+        bet = int(bet_str)
         if bet <= 0: return
     except ValueError:
-        return
+        return await message.answer("Укажите ставку: <code>Вызвать на дуэль 1000</code>")
 
     user_data = await get_user_data(chat_id, user_id)
     if user_data.get('balance', 0) < bet:
         return await message.answer("У вас недостаточно средств.")
 
-    duel_id = f"{chat_id}_{user_id}_{target_id}"
-    active_duels[duel_id] = {'bet': bet, 'proposer_name': escape_html(message.from_user.full_name)}
+    import uuid
+    duel_id = uuid.uuid4().hex[:10]
 
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Принять вызов ⚔️", callback_data=f"duel_accept_{duel_id}")
-    builder.button(text="Сбежать 🏃", callback_data=f"duel_decline_{duel_id}")
+    proposer_name = escape_html(message.from_user.full_name)
+    target_name = escape_html(message.reply_to_message.from_user.full_name)
 
-    await message.answer(
-        f"⚔️ <b>Вызов на дуэль!</b>\n\n"
-        f"<b>{active_duels[duel_id]['proposer_name']}</b> вызывает <b>{escape_html(message.reply_to_message.from_user.full_name)}</b>!\n"
-        f"Ставка: <b>{bet}</b> сыроежек.",
-        reply_markup=builder.as_markup()
-    )
+    active_duels[duel_id] = {
+        'state': 'pending',
+        'bet': bet,
+        'proposer_id': user_id,
+        'target_id': target_id,
+        'proposer_name': proposer_name,
+        'target_name': target_name,
+        'timestamp': time.time()
+    }
 
-@router.callback_query(F.data.startswith("duel_"))
-async def callback_duel(callback: types.CallbackQuery):
-    action = callback.data.split("_")[1]
-    duel_id = callback.data.replace(f"duel_{action}_", "")
-    parts = duel_id.split("_")
-    chat_id = int(parts[0])
-    proposer_id = int(parts[1])
-    target_id = int(parts[2])
+    if not hasattr(message.bot, 'pending_text_duels'):
+        message.bot.pending_text_duels = {}
 
-    if callback.from_user.id != target_id:
-        return await callback.answer("Вас не вызывали на эту дуэль!", show_alert=True)
+    message.bot.pending_text_duels[f"{chat_id}_{target_id}"] = duel_id
 
-    if duel_id not in active_duels:
-        return await callback.answer("Дуэль больше не актуальна.", show_alert=True)
+    async def expire_duel(d_id, c_id, t_id):
+        await asyncio.sleep(300)
+        if d_id in active_duels and active_duels[d_id]['state'] == 'pending':
+            del active_duels[d_id]
+            if getattr(message.bot, 'pending_text_duels', {}).get(f"{c_id}_{t_id}") == d_id:
+                del message.bot.pending_text_duels[f"{c_id}_{t_id}"]
 
-    duel_info = active_duels.pop(duel_id)
+    asyncio.create_task(expire_duel(duel_id, chat_id, target_id))
+
+    text = "🔫 <b>" + target_name + "</b>, минуточку внимания!\n" + "<b>" + proposer_name + "</b> вызывает Вас на дуэль на сумму <b>" + str(bet) + "</b> 💰\n" + "💬 Чтобы принять вызов, ответьте или напишите <code>дуэль да</code>, или <code>дуэль нет</code> для отказа.\n" + "⏳ На принятие решения у вас есть 5 минут."
+    text = text.replace("\\n", "\n")
+
+    await message.answer(text)
+
+@router.message(F.text & F.text.lower().in_(["дуэль да", "дуэль нет"]))
+async def text_duel_accept_decline(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    if not hasattr(message.bot, 'pending_text_duels'):
+        return
+
+    duel_key = f"{chat_id}_{user_id}"
+    duel_id = message.bot.pending_text_duels.get(duel_key)
+
+    if not duel_id or duel_id not in active_duels:
+        return
+
+    duel_info = active_duels[duel_id]
+    if duel_info['state'] != 'pending':
+        return
+
+    is_accept = message.text.lower() == "дуэль да"
+
+    if not is_accept:
+        del active_duels[duel_id]
+        del message.bot.pending_text_duels[duel_key]
+        return await message.answer(f"🏃 <b>{duel_info['target_name']}</b> испугался и отказался от дуэли.")
+
     bet = duel_info['bet']
-    proposer_name = duel_info['proposer_name']
-    target_name = escape_html(callback.from_user.full_name)
+    proposer_id = duel_info['proposer_id']
+    target_id = duel_info['target_id']
 
-    if action == "decline":
-        return await callback.message.edit_text(f"🏃 <b>{target_name}</b> испугался и отказался от дуэли.")
-
-    # Accept
     user_data = await get_user_data(chat_id, proposer_id)
     target_data = await get_user_data(chat_id, target_id)
 
     if user_data.get('balance', 0) < bet or target_data.get('balance', 0) < bet:
-        return await callback.message.edit_text("❌ Дуэль отменена. У одного из участников недостаточно средств.")
+        del active_duels[duel_id]
+        del message.bot.pending_text_duels[duel_key]
+        return await message.answer("❌ Дуэль отменена. У одного из участников недостаточно средств.")
 
     await update_user_balance(chat_id, proposer_id, -bet)
     await update_user_balance(chat_id, target_id, -bet)
 
-    rand = secrets.SystemRandom()
-    p1_roll = rand.randint(1, 100)
-    p2_roll = rand.randint(1, 100)
+    duel_info['state'] = 'active'
+    duel_info['p1'] = {'id': proposer_id, 'name': duel_info['proposer_name'], 'acc': 10, 'cover': False}
+    duel_info['p2'] = {'id': target_id, 'name': duel_info['target_name'], 'acc': 10, 'cover': False}
+    duel_info['turn'] = proposer_id
 
-    from economy_utils import get_global_tax
-    tax_percent = await get_global_tax()
-    pool = bet * 2
-    tax_amount = int(pool * (tax_percent / 100.0))
-    win_amount = pool - tax_amount
+    del message.bot.pending_text_duels[duel_key]
 
-    text = f"⚔️ <b>Дуэль состоялась!</b>\n\n"
-    text += f"🎲 <b>{proposer_name}</b> выбросил <b>{p1_roll}</b>\n"
-    text += f"🎲 <b>{target_name}</b> выбросил <b>{p2_roll}</b>\n\n"
+    await render_tactical_duel(message.bot, chat_id, duel_id)
 
-    if p1_roll > p2_roll:
-        await update_user_balance(chat_id, proposer_id, win_amount)
-        text += f"🏆 Победил <b>{proposer_name}</b> и забрал <b>{win_amount}</b> сыроежек!\n"
-    elif p2_roll > p1_roll:
-        await update_user_balance(chat_id, target_id, win_amount)
-        text += f"🏆 Победил <b>{target_name}</b> и забрал <b>{win_amount}</b> сыроежек!\n"
+
+def get_duel_keyboard(duel_id: str, turn_user_id: int):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎯 Прицелиться", callback_data=f"tduel_{duel_id}_aim")
+    builder.button(text="💥 Выстрелить", callback_data=f"tduel_{duel_id}_shoot")
+    builder.button(text="💨 Сбить прицел", callback_data=f"tduel_{duel_id}_distract")
+    builder.button(text="🛡 Укрытие", callback_data=f"tduel_{duel_id}_cover")
+    builder.adjust(2, 2)
+    return builder.as_markup()
+
+async def render_tactical_duel(bot, chat_id: int, duel_id: str, message_to_edit=None, action_text=""):
+    if duel_id not in active_duels:
+        return
+
+    duel = active_duels[duel_id]
+    p1 = duel['p1']
+    p2 = duel['p2']
+
+    turn_name = p1['name'] if duel['turn'] == p1['id'] else p2['name']
+
+    p1_cover = "🛡 В укрытии" if p1['cover'] else ""
+    p2_cover = "🛡 В укрытии" if p2['cover'] else ""
+
+    text = "⚔️ <b>Тактическая Дуэль</b> ⚔️\n\n" + "💰 <b>Банк:</b> " + str(duel['bet'] * 2) + "\n\n" + "🤠 <b>" + p1['name'] + "</b>\n" + "Меткость: " + str(p1['acc']) + "% " + p1_cover + "\n\n" + "🤠 <b>" + p2['name'] + "</b>\n" + "Меткость: " + str(p2['acc']) + "% " + p2_cover + "\n\n"
+
+    if action_text:
+        text += "📜 <i>" + action_text + "</i>\n\n"
+
+    text += "⏳ Ход игрока: <b>" + turn_name + "</b>"
+
+    text = text.replace("\\n", "\n")
+
+    keyboard = get_duel_keyboard(duel_id, duel['turn'])
+
+    if message_to_edit:
+        await message_to_edit.edit_text(text, reply_markup=keyboard)
     else:
-        # Ничья
-        await update_user_balance(chat_id, proposer_id, bet)
-        await update_user_balance(chat_id, target_id, bet)
-        text += f"🤝 Ничья! Ставки возвращены."
-        tax_amount = 0
+        msg = await bot.send_message(chat_id, text, reply_markup=keyboard)
+        duel['msg_id'] = msg.message_id
 
-    if tax_amount > 0:
-        text += f"<i>(Налог дуэльного клуба: {tax_amount})</i>"
 
-    await callback.message.edit_text(text)
+@router.callback_query(F.data.startswith("tduel_"))
+async def callback_tactical_duel(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    duel_id = parts[1]
+    action = parts[2]
 
+
+
+    if duel_id not in active_duels:
+        return await callback.answer("Дуэль завершена или не найдена.", show_alert=True)
+
+    duel = active_duels[duel_id]
+    if duel['state'] != 'active':
+        return await callback.answer("Дуэль уже завершена.", show_alert=True)
+
+    if duel['turn'] != callback.from_user.id:
+        return await callback.answer("Сейчас не ваш ход!", show_alert=True)
+
+    is_p1 = (callback.from_user.id == duel['p1']['id'])
+    me = duel['p1'] if is_p1 else duel['p2']
+    enemy = duel['p2'] if is_p1 else duel['p1']
+
+    chat_id = callback.message.chat.id
+    action_text = ""
+
+    me['cover'] = False
+
+    if action == "aim":
+        me['acc'] = min(100, me['acc'] + 35)
+        action_text = f"{me['name']} прицеливается! Меткость повышена до {me['acc']}%."
+
+    elif action == "cover":
+        me['cover'] = True
+        action_text = f"{me['name']} уходит в укрытие! Следующий выстрел по нему не пройдет."
+
+    elif action == "distract":
+        enemy['acc'] = 10
+        action_text = f"{me['name']} кидает песок в глаза! Меткость {enemy['name']} сбита до 10%."
+
+    elif action == "shoot":
+        import secrets
+        rand = secrets.SystemRandom()
+        roll = rand.randint(1, 100)
+
+        if enemy['cover']:
+            action_text = f"💥 {me['name']} стреляет... Но {enemy['name']} был в укрытии! Промах! Меткость {me['name']} падает до 10%."
+            me['acc'] = 10
+        elif roll <= me['acc']:
+            from economy_utils import get_global_tax
+            tax_percent = await get_global_tax()
+            pool = duel['bet'] * 2
+            tax_amount = int(pool * (tax_percent / 100.0))
+            win_amount = pool - tax_amount
+
+            await update_user_balance(chat_id, me['id'], win_amount)
+
+            text = "💥 <b>ВЫСТРЕЛ!</b>\n\n" + "🎯 <b>" + me['name'] + "</b> попадает точно в цель (шанс был " + str(me['acc']) + "%)!\n" + "☠️ <b>" + enemy['name'] + "</b> падает замертво.\n\n" + "🏆 Победитель <b>" + me['name'] + "</b> забирает <b>" + str(win_amount) + "</b> сыроежек!"
+
+            if tax_amount > 0:
+                text += "\n<i>(Налог дуэльного клуба: " + str(tax_amount) + ")</i>"
+
+            text = text.replace("\\n", "\n")
+
+            duel['state'] = 'finished'
+            del active_duels[duel_id]
+            return await callback.message.edit_text(text)
+        else:
+            action_text = f"💥 {me['name']} стреляет (шанс {me['acc']}%)... И ПРОМАЗЫВАЕТ! Меткость падает до 10%."
+            me['acc'] = 10
+
+    duel['turn'] = enemy['id']
+
+    await render_tactical_duel(callback.bot, chat_id, duel_id, message_to_edit=callback.message, action_text=action_text)
 
 # ================= КЛАНЫ =================
 async def get_clan_ref(chat_id: int, clan_name: str):

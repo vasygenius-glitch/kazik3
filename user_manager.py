@@ -126,7 +126,10 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             item = ITEMS.get(item_id)
             if not item: continue
             if item.get('action') == 'business':
-                biz_income += item.get('income', 0) * min(count, 10)
+                inc = item.get('income', 0) * min(count, 10)
+                if data.get('is_banker', False):
+                    inc = int(inc * 0.20)
+                biz_income += inc
             elif item.get('action') == 'car':
                 car_income += item.get('income', 0) * count
 

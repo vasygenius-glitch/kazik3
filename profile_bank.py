@@ -412,11 +412,18 @@ async def cmd_bank_stats(message: types.Message):
     text = await generate_bank_main_stats(chat_id, user_id, bank_data)
     await message.answer(text, reply_markup=get_bank_stats_kb(user_id))
 
+
 @router.callback_query(F.data.startswith("bstat_"))
 async def cb_bank_stats(callback: types.CallbackQuery):
     parts = callback.data.split("_")
     action = parts[1]
-    banker_id = int(parts[2])
+
+    if action == "buyupg":
+        upg_type = parts[2]
+        banker_id = int(parts[3])
+    else:
+        banker_id = int(parts[2])
+
 
     if callback.from_user.id != banker_id:
         return await callback.answer("❌ Это не ваш банк!", show_alert=True)

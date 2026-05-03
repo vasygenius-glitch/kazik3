@@ -71,7 +71,7 @@ async def cmd_help(message: types.Message):
 
     text += "🎰 <b>ИГРЫ:</b>\n"
     text += "<code>/bj</code>, <code>/slots</code>, <code>/roulette [ставка] [число/цвет]</code>.\n"
-    text += "<code>Дуэль [ставка]</code>, <code>/lottery</code> (розыгрыш).\n\n"
+    text += "<code>Вызвать на дуэль [ставка]</code> - Тактическая дуэль на пистолетах!\n<code>/lottery</code> - розыгрыш.\n\n"
 
     text += "👮‍♂️ <b>АДМИНЫ (В Т.Ч. КРИПТО):</b>\n"
     text += "<code>мут</code>, <code>бан</code>, <code>варн</code>, <code>повысить</code>, <code>снять</code>.\n"
