@@ -28,11 +28,39 @@ from aiogram import Router
 from aiogram.types import Message
 from logger import log_message
 
+# Добавляем список команд, на которые бот должен реагировать, чтобы не игнорировать их.
+ALLOWED_TEXT_COMMANDS = (
+    "кусь", "обнять", "поцеловать", "ударить", "диктор", "мут", "бан", "варн",
+    "снять варн", "снять", "повысить", "понизить", "админы", "кто админ", "создать банк",
+    "выплатить", "вернуть", "кредит", "приветствие", "заметка", "антилинк", "антивойс",
+    "био", "+правила", "правила", "+", "спасибо", "реп", "стата", "топ",
+    "казино", "блэкджек", "рулетка", "слоты", "кости", "крапс", "банка", "шлюха", "договор",
+    "профиль", "банк"
+)
+
+def is_valid_command(text: str) -> bool:
+    if not text:
+        return False
+    text_lower = text.lower()
+
+    if text_lower.startswith(('/', '!', '?')):
+        return True
+
+    for cmd in ALLOWED_TEXT_COMMANDS:
+        if text_lower.startswith(cmd):
+            return True
+
+    return False
+
 catch_all_router = Router()
 @catch_all_router.message()
 async def catch_all(message: Message):
     if message.chat.type in ["group", "supergroup"]:
         text = message.text or message.caption or ""
+
+        # Если это не команда, то мы просто логируем и считаем статистику, но не пускаем дальше в aiogram обработчики (которые могут ошибочно реагировать)
+        # В плоской архитектуре aiogram, если сообщение не подошло ни под один фильтр, оно попадает сюда
+
         media_type = ""
         if message.photo: media_type = "[Фото] "
         elif message.video: media_type = "[Видео] "

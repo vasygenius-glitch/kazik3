@@ -1,10 +1,21 @@
+import random
 import time
-import secrets
 from aiogram import Router, types, Bot, F
 from escape import escape_html
 from user_manager import get_user_data, update_user_balance, update_user_field
 
 router = Router()
+
+@router.message(F.text.lower().startswith("диктор"))
+async def cmd_dictor(message: types.Message):
+    answers = [
+        "Бесспорно", "Предрешено", "Никаких сомнений", "Определённо да", "Можешь быть уверен в этом",
+        "Мне кажется — «да»", "Вероятнее всего", "Хорошие перспективы", "Знаки говорят — «да»", "Да",
+        "Пока не ясно, попробуй снова", "Спроси позже", "Лучше не рассказывать", "Сейчас нельзя предсказать",
+        "Сконцентрируйся и спроси опять", "Даже не думай", "Мой ответ — «нет»", "По моим данным — «нет»",
+        "Перспективы не очень хорошие", "Весьма сомнительно"
+    ]
+    await message.answer(f"🎱 <b>Диктор говорит:</b> {random.choice(answers)}")
 
 @router.message(F.text.lower().startswith("украсть") | F.text.lower().startswith("/steal"))
 async def cmd_steal(message: types.Message, bot: Bot):
@@ -41,29 +52,28 @@ async def cmd_steal(message: types.Message, bot: Bot):
     target_balance = target_data.get('balance', 0)
 
     if target_balance <= 0:
-        return await message.answer("У этого бедолаги пустые карманы, воровать нечего.")
+        return await message.answer("У жертвы пустые карманы, воровать нечего.")
 
-    rand = secrets.SystemRandom()
-    stealth_bonus = data.get('skills', {}).get('stealth', 0) * 0.05
-    success_chance = 0.3 + stealth_bonus # Base 30%
+    user_balance = data.get('balance', 0)
 
-    # Защита от ограбления банкиров
-    if target_data.get('is_banker') and target_data.get('bank_security'):
-        success_chance /= 2.0 # Шанс режется в 2 раза
+    if user_balance < 500:
+        return await message.answer("Вам нужно минимум 500 сыроежек на балансе, чтобы оплатить штраф в случае провала.")
 
-    if rand.random() < success_chance:
-        steal_amount = int(target_balance * rand.uniform(0.01, 0.05)) # Steal 1-5%
-        if steal_amount == 0: steal_amount = 1
+    chance = 20
 
-        await update_user_balance(chat_id, user_id, steal_amount)
+    if target_data.get('is_vip'): chance -= 10
+    if target_data.get('is_banker') and target_data.get('bank_security'): chance -= 15
+
+    if random.randint(1, 100) <= chance:
+        steal_amount = random.randint(int(target_balance * 0.05), int(target_balance * 0.20))
+        steal_amount = min(steal_amount, target_balance)
+
         await update_user_balance(chat_id, target_id, -steal_amount)
+        await update_user_balance(chat_id, user_id, steal_amount)
 
-        await message.answer(f"🥷 <b>Успех!</b>\nВы незаметно вытащили из кармана <b>{escape_html(message.reply_to_message.from_user.full_name)}</b> сумму в <b>{steal_amount}</b> сыроежек!")
+        await message.answer(f"💰 <b>Успех!</b>\nВы незаметно вытащили <b>{steal_amount}</b> сыроежек у {escape_html(message.reply_to_message.from_user.full_name)}!")
     else:
-        penalty = int(target_balance * 0.02) # Penalty 2%
-        if penalty == 0: penalty = 50
-
-        user_balance = data.get('balance', 0)
+        penalty = 1000
         actual_penalty = penalty if user_balance <= 0 else min(penalty, user_balance)
 
         await update_user_balance(chat_id, user_id, -actual_penalty, is_debt_repayment=True)
