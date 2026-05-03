@@ -1,6 +1,7 @@
 import time
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import get_db
 from escape import escape_html
 from user_manager import get_user_data, update_user_balance, update_user_field
@@ -341,22 +342,17 @@ async def cmd_bank_offshore(message: types.Message):
         await update_user_field(chat_id, user_id, 'is_offshore', True)
         await message.answer(f"🏝 <b>Оффшорный счет активирован!</b>\nСписано {price} сыр. Теперь ваш вклад скрыт от других игроков в `/profile`.\n<i>(Банк будет снимать 0.5% от вашего депозита при начислении процентов за обслуживание)</i>")
 
-@router.message(Command("bank_stats"))
-async def cmd_bank_stats(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+def get_bank_stats_kb(banker_id: int):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📊 Главная", callback_data=f"bstat_main_{banker_id}")
+    builder.button(text="👥 Топ вкладчиков", callback_data=f"bstat_deps_{banker_id}")
+    builder.button(text="🤝 Топ должников", callback_data=f"bstat_loans_{banker_id}")
+    builder.button(text="⚙️ Настройки", callback_data=f"bstat_settings_{banker_id}")
+    builder.adjust(2, 2)
+    return builder.as_markup()
 
-    data = await get_user_data(chat_id, user_id)
-    if not data.get('is_banker', False):
-        return await message.answer("❌ Эта команда доступна только банкирам.")
-
-    bank_data = await get_bank_info(chat_id, user_id)
-    if not bank_data:
-        return await message.answer("❌ У вас нет открытого банка.")
-
+async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
     db = get_db()
-
-    # Считаем вклады
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
     user_docs = await users_ref.get()
 
@@ -397,5 +393,97 @@ async def cmd_bank_stats(message: types.Message):
         f"🤝 <b>Раздано кредитов:</b> {total_loans_given} сыр.\n"
         f"🚨 <b>Просроченных долгов:</b> {overdue_loans} сыр.\n"
     )
+    return text
 
-    await message.answer(text)
+@router.message(Command("bank_stats"))
+async def cmd_bank_stats(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    if not data.get('is_banker', False):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ У вас нет открытого банка.")
+
+    text = await generate_bank_main_stats(chat_id, user_id, bank_data)
+    await message.answer(text, reply_markup=get_bank_stats_kb(user_id))
+
+@router.callback_query(F.data.startswith("bstat_"))
+async def cb_bank_stats(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    action = parts[1]
+    banker_id = int(parts[2])
+
+    if callback.from_user.id != banker_id:
+        return await callback.answer("❌ Это не ваш банк!", show_alert=True)
+
+    chat_id = callback.message.chat.id
+    bank_data = await get_bank_info(chat_id, banker_id)
+    if not bank_data:
+        return await callback.answer("❌ Банк не найден.", show_alert=True)
+
+    db = get_db()
+    users_ref = db.collection('chats').document(str(chat_id)).collection('users')
+
+    if action == "main":
+        text = await generate_bank_main_stats(chat_id, banker_id, bank_data)
+        await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
+
+    elif action == "deps":
+        user_docs = await users_ref.get()
+        depositors = []
+        for doc in user_docs:
+            u_data = doc.to_dict()
+            if str(u_data.get('bank_name')) == str(banker_id):
+                depositors.append({
+                    'name': u_data.get('full_name', 'Unknown'),
+                    'deposit': u_data.get('bank_deposit', 0)
+                })
+
+        depositors.sort(key=lambda x: x['deposit'], reverse=True)
+        text = f"👥 <b>Топ вкладчиков банка {escape_html(bank_data.get('name'))}</b>\n\n"
+        if not depositors:
+            text += "<i>Вкладов пока нет.</i>"
+        else:
+            for i, dep in enumerate(depositors[:10], 1):
+                text += f"{i}. <b>{escape_html(dep['name'])}</b>: {dep['deposit']} сыр.\n"
+
+        await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
+
+    elif action == "loans":
+        user_docs = await users_ref.get()
+        debtors = []
+        for doc in user_docs:
+            u_data = doc.to_dict()
+            debts = u_data.get('debts', {})
+            total_debt = sum(v for k, v in debts.items() if k.startswith(f"bank_{banker_id}_") and v > 0)
+            if total_debt > 0:
+                debtors.append({
+                    'name': u_data.get('full_name', 'Unknown'),
+                    'debt': total_debt
+                })
+
+        debtors.sort(key=lambda x: x['debt'], reverse=True)
+        text = f"🤝 <b>Топ должников банка {escape_html(bank_data.get('name'))}</b>\n\n"
+        if not debtors:
+            text += "<i>Должников пока нет.</i>"
+        else:
+            for i, deb in enumerate(debtors[:10], 1):
+                text += f"{i}. <b>{escape_html(deb['name'])}</b>: {deb['debt']} сыр.\n"
+
+        await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
+
+    elif action == "settings":
+        rate = bank_data.get('deposit_rate', 3.0)
+        text = (
+            f"⚙️ <b>Настройки банка {escape_html(bank_data.get('name'))}</b>\n\n"
+            f"Текущая ставка: <b>{rate}%</b>\n\n"
+            f"📌 <i>Команды:</i>\n"
+            f"<code>/bankrate [3-13]</code> - Изменить ставку по вкладам.\n"
+            f"<code>/bank_offshore</code> - Скрыть свои средства в оффшоре.\n"
+            f"Выдавать кредиты можно реплаем: <code>кредит [сумма] [%] [срок]</code>"
+        )
+        await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
