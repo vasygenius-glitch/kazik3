@@ -768,8 +768,15 @@ async def cmd_cr_delcoin(message: types.Message):
     coins = await get_all_coins()
 
     if ticker in coins:
-        del coins[ticker]
-        await update_coins(coins)
-        await message.answer(f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).")
+        from firebase_admin import firestore
+        db = get_db()
+        # Используем firestore.DELETE_FIELD для точечного удаления ключа внутри словаря
+        try:
+            await db.collection('bot_settings').document('crypto_coins').update({
+                f"coins.{ticker}": firestore.DELETE_FIELD
+            })
+            await message.answer(f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).")
+        except Exception as e:
+            await message.answer(f"❌ Ошибка удаления: {e}")
     else:
         await message.answer("❌ Такая монета не найдена.")
