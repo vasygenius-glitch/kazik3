@@ -305,7 +305,8 @@ async def smart_edit(callback: types.CallbackQuery, text: str, reply_markup):
 
 @router.message(F.text.lower().startswith("бан крипты"))
 async def cmd_crypto_ban(message: types.Message):
-    if not await is_admin(message):
+    from config import CREATOR_ID
+    if int(message.from_user.id) != int(CREATOR_ID):
         return
         
     if not message.reply_to_message:
@@ -319,7 +320,8 @@ async def cmd_crypto_ban(message: types.Message):
 
 @router.message(F.text.lower().startswith("разбан крипты"))
 async def cmd_crypto_unban(message: types.Message):
-    if not await is_admin(message):
+    from config import CREATOR_ID
+    if int(message.from_user.id) != int(CREATOR_ID):
         return
         
     if not message.reply_to_message:
@@ -334,7 +336,8 @@ async def cmd_crypto_unban(message: types.Message):
 @router.message(Command("cr_crash"))
 async def cmd_cr_crash(message: types.Message):
     """Админская команда для искусственного обрушения курса монеты."""
-    if not await is_admin(message): 
+    from config import CREATOR_ID
+    if int(message.from_user.id) != int(CREATOR_ID):
         return
         
     try:
@@ -363,7 +366,8 @@ async def cmd_cr_crash(message: types.Message):
 @router.message(Command("cr_price"))
 async def cmd_cr_price(message: types.Message):
     """Админская команда для ручного изменения (пампа/дампа) курса монеты."""
-    if not await is_admin(message): 
+    from config import CREATOR_ID
+    if int(message.from_user.id) != int(CREATOR_ID):
         return
         
     try:
@@ -749,3 +753,23 @@ async def cb_create_info(callback: types.CallbackQuery):
     builder.button(text="⬅️ Назад", callback_data="crypto_main")
     
     await smart_edit(callback, text, builder.as_markup())
+@router.message(Command("cr_delcoin"))
+async def cmd_cr_delcoin(message: types.Message):
+    """Админская команда для удаления монеты с биржи."""
+    from config import CREATOR_ID
+    if int(message.from_user.id) != int(CREATOR_ID):
+        return
+
+    parts = message.text.split()
+    if len(parts) < 2:
+        return await message.answer("Укажите тикер монеты: <code>/cr_delcoin [тикер]</code>")
+
+    ticker = parts[1].lower()
+    coins = await get_all_coins()
+
+    if ticker in coins:
+        del coins[ticker]
+        await update_coins(coins)
+        await message.answer(f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).")
+    else:
+        await message.answer("❌ Такая монета не найдена.")
