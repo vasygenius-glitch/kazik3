@@ -7,8 +7,27 @@ db = None
 
 def init_db(key_path):
     global db
-    if not os.path.exists(key_path):
-        print(f"ВНИМАНИЕ: Файл ключа Firebase {key_path} не найден!")
+    import json
+
+    # Сначала проверяем переменную окружения FIREBASE_JSON (секрет из HF Spaces)
+    fb_config = os.environ.get("FIREBASE_JSON")
+    cred = None
+
+    if fb_config:
+        try:
+            cred_dict = json.loads(fb_config)
+            cred = credentials.Certificate(cred_dict)
+            print("✅ Загружен ключ Firebase из переменной окружения (Секрета).")
+        except Exception as e:
+            print(f"❌ Ошибка парсинга FIREBASE_JSON: {e}")
+    # Если переменной нет, пробуем прочитать из файла (для локального тестирования)
+    elif os.path.exists(key_path):
+        cred = credentials.Certificate(key_path)
+        print(f"✅ Загружен ключ Firebase из файла: {key_path}")
+
+    # Если мы так и не получили ключ (нет файла и нет секретов)
+    if not cred:
+        print("ВНИМАНИЕ: Ключ Firebase не найден ни в FIREBASE_JSON, ни в файле!")
         print("Бот будет работать в режиме мок-базы, или упадет при запросах.")
         class MockDB:
             def __init__(self):
@@ -83,11 +102,11 @@ def init_db(key_path):
         db = MockDB()
         return db
 
-    cred = credentials.Certificate(key_path)
     if not firebase_admin._apps:
         firebase_admin.initialize_app(cred)
     db = firestore_async.client()
     return db
+
 
 def get_db():
     return db
