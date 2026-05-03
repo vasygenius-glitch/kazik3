@@ -192,7 +192,7 @@ async def get_top_users(chat_id, limit=10):
     users =[]
     for doc in docs:
         data = doc.to_dict()
-        if not data.get('hide_in_top', False) and not data.get('is_banned', False):
+        if not data.get('hide_in_top', False) and not data.get('is_banned', False) and not data.get('is_banker', False):
             users.append({'user_id': doc.id, **data})
         if len(users) >= limit:
             break
