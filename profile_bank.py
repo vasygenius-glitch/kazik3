@@ -620,13 +620,16 @@ async def cmd_incass(message: types.Message):
     current_time = int(time.time())
     last_time = bank_data.get('incass_last_time', 0)
 
-    # Кулдаун 2 часа
-    if current_time - last_time < 7200:
-        rem_min = (7200 - (current_time - last_time)) // 60
+    # Кулдаун 5 часов (18000 сек)
+    if current_time - last_time < 18000:
+        rem_min = (18000 - (current_time - last_time)) // 60
         return await message.answer(f"🚛 Машины на техобслуживании. Следующий рейс будет доступен через {rem_min} мин.")
 
     if bank_data.get('capital', 0) < 5000000:
         return await message.answer("❌ В капитале банка должно быть минимум 5.000.000 сыроежек (залог на случай ремонта).")
+
+    if data.get('balance', 0) < 2500000:
+        return await message.answer("❌ У вас на личном счету должно быть минимум 2.500.000 сыр. для оплаты личной страховки рейса.")
 
     await create_or_update_bank(chat_id, user_id, {'incass_last_time': current_time})
 
@@ -641,11 +644,13 @@ async def cmd_incass(message: types.Message):
 
     # Храним состояние рейса
     incass_id = f"incass_{chat_id}_{user_id}"
+    next_risk_jump = random.randint(5, 25) # Случайный прыжок риска
     active_incass[incass_id] = {
         'money': start_money,
         'risk': base_risk,
         'step': 1,
-        'earning_mult': earning_mult
+        'earning_mult': earning_mult,
+        'next_jump': next_risk_jump
     }
 
     builder = InlineKeyboardBuilder()
@@ -657,7 +662,7 @@ async def cmd_incass(message: types.Message):
         f"🚛 <b>Рейс инкассаторов начат!</b>\n\n"
         f"📍 Точка 1 пройдена.\n"
         f"💰 Собрано: <b>{start_money}</b> сыр.\n"
-        f"🚨 Шанс нападения ОПГ на следующем шаге: <b>{base_risk + 10}%</b>\n\n"
+        f"🚨 Текущий риск: <b>{base_risk}%</b> (Прыжок на след. шаге: +{next_risk_jump}%)\n\n"
         f"Что делаем дальше?",
         reply_markup=builder.as_markup()
     )
@@ -704,27 +709,40 @@ async def cb_incass(callback: types.CallbackQuery):
 
     elif action == "next":
         # Увеличиваем риск
-        state['risk'] += 10
+        state['risk'] += state['next_jump']
         current_risk = state['risk']
 
         # Проверяем нападение
         if random.randint(1, 100) <= current_risk:
             del active_incass[incass_id]
-            penalty = random.randint(3000000, 5000000)
 
-            # Штраф снимаем с капитала
-            new_capital = max(0, bank_data.get('capital', 0) - penalty)
+            # Штраф 3-5 млн.
+            total_penalty = random.randint(3000000, 5000000)
+
+            # 50% платит банк, 50% платит лично банкир (нерф банкиров)
+            bank_penalty = total_penalty // 2
+            personal_penalty = total_penalty - bank_penalty
+
+            new_capital = max(0, bank_data.get('capital', 0) - bank_penalty)
             await create_or_update_bank(chat_id, banker_id, {'capital': new_capital})
 
+            # Снимаем деньги с личного счета (даже если уйдет в минус)
+            await update_user_balance(chat_id, banker_id, -personal_penalty)
+
             await callback.message.edit_text(
-                f"💥 <b>НАПАДЕНИЕ ОПГ!</b>\n\n"
-                f"Вооруженные бандиты подорвали броневик и украли все собранные <b>{state['money']}</b> сыр.\n"
-                f"💸 Банк оплатил ремонт машины: <b>-{penalty}</b> сыр. из капитала."
+                f"💥 <b>НАПАДЕНИЕ ОПГ! (Шанс был {current_risk}%)</b>\n\n"
+                f"Вооруженные бандиты подорвали броневик и украли все собранные <b>{state['money']}</b> сыр.\n\n"
+                f"💸 Банк оплатил часть ремонта: <b>-{bank_penalty}</b> сыр. из капитала.\n"
+                f"💸 Вы оплатили остаток из своего кармана: <b>-{personal_penalty}</b> сыр."
             )
         else:
             state['step'] += 1
             add_money = int(random.randint(2000000, 5000000) * state['earning_mult'])
             state['money'] += add_money
+
+            # Генерируем следующий случайный прыжок риска
+            next_risk_jump = random.randint(5, 25)
+            state['next_jump'] = next_risk_jump
 
             builder = InlineKeyboardBuilder()
             builder.button(text="🛣 Ехать на следующую точку", callback_data=f"incass_next_{banker_id}")
@@ -736,7 +754,7 @@ async def cb_incass(callback: types.CallbackQuery):
                 f"📍 Точка {state['step']} пройдена.\n"
                 f"💰 Найдено: +{add_money}\n"
                 f"💵 Всего в кузове: <b>{state['money']}</b> сыр.\n"
-                f"🚨 Шанс нападения на следующем шаге: <b>{current_risk + 10}%</b>\n\n"
+                f"🚨 Текущий риск: <b>{current_risk}%</b> (Прыжок на след. шаге: +{next_risk_jump}%)\n\n"
                 f"Рискуем дальше?",
                 reply_markup=builder.as_markup()
             )
