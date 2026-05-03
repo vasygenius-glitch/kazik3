@@ -59,10 +59,18 @@ async def cmd_steal(message: types.Message, bot: Bot):
     if user_balance < 500:
         return await message.answer("Вам нужно минимум 500 сыроежек на балансе, чтобы оплатить штраф в случае провала.")
 
-    chance = 20
+    chance = 25 # Базовый шанс без улучшений 25%
 
     if target_data.get('is_vip'): chance -= 10
-    if target_data.get('is_banker') and target_data.get('bank_security'): chance -= 15
+
+    if target_data.get('is_banker'):
+        from profile_bank import get_bank_info
+        bank_data = await get_bank_info(chat_id, target_id)
+        if bank_data:
+            # Улучшение охраны. Макс уровень (5) дает снижение до 5%
+            # Базовый шанс 25. Каждый уровень снимает 4%. На 5-ом уровне снимает 20%. Итого: 25 - 20 = 5%
+            sec_lvl = bank_data.get('upgrade_security', 0)
+            chance -= (sec_lvl * 4)
 
     if random.randint(1, 100) <= chance:
         steal_amount = random.randint(int(target_balance * 0.05), int(target_balance * 0.20))

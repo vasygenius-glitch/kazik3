@@ -495,36 +495,43 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         lvl_market = bank_data.get('upgrade_marketing', 0)
         lvl_earnings = bank_data.get('upgrade_earnings', 0)
         lvl_banker = bank_data.get('upgrade_banker', 0)
+        lvl_security = bank_data.get('upgrade_security', 0)
 
         armor_price = 10000000 * (lvl_armor + 1)
         market_price = 15000000 * (lvl_market + 1)
         earn_price = 12000000 * (lvl_earnings + 1)
         banker_price = 20000000 * (lvl_banker + 1)
+        sec_price = 15000000 * (lvl_security + 1)
 
         armor_status = f"{lvl_armor}/5" if lvl_armor < 5 else "МАКС."
         market_status = f"{lvl_market}/5" if lvl_market < 5 else "МАКС."
         earn_status = f"{lvl_earnings}/5" if lvl_earnings < 5 else "МАКС."
         banker_status = f"{lvl_banker}/5" if lvl_banker < 5 else "МАКС."
+        sec_status = f"{lvl_security}/5" if lvl_security < 5 else "МАКС."
 
         text = (
             f"⬆️ <b>Улучшения банка</b>\n"
             f"Капитал: <b>{bank_data.get('capital', 0)}</b> сыр.\n\n"
 
             f"🛡 <b>Броневики (Инкассация)</b>: Ур. {armor_status}\n"
-            f"<i>Снижает начальный шанс нападения ОПГ при /incass на 2% за уровень.</i>\n"
+            f"<i>Снижает начальный риск нападения при /incass.</i>\n"
             f"Цена: {armor_price if lvl_armor < 5 else '—'} сыр.\n\n"
 
             f"💼 <b>Вместимость мешков</b>: Ур. {earn_status}\n"
-            f"<i>Увеличивает количество собираемых денег на точках /incass на 10% за уровень.</i>\n"
+            f"<i>+10% к добыче при инкассации за уровень.</i>\n"
             f"Цена: {earn_price if lvl_earnings < 5 else '—'} сыр.\n\n"
 
             f"👔 <b>Доля Банкира</b>: Ур. {banker_status}\n"
-            f"<i>Увеличивает вашу личную долю при успешной инкассации на 5% (База 20%).</i>\n"
+            f"<i>+5% к вашей личной премии от инкассации.</i>\n"
             f"Цена: {banker_price if lvl_banker < 5 else '—'} сыр.\n\n"
 
             f"📈 <b>Маркетинг (Субсидии)</b>: Ур. {market_status}\n"
-            f"<i>Дает бонус +20% к ежедневным субсидиям от ЦентроЖБРОМа за уровень.</i>\n"
-            f"Цена: {market_price if lvl_market < 5 else '—'} сыр."
+            f"<i>+20% к ежедневным субсидиям ЦБ.</i>\n"
+            f"Цена: {market_price if lvl_market < 5 else '—'} сыр.\n\n"
+
+            f"🔐 <b>Сейфовая Охрана</b>: Ур. {sec_status}\n"
+            f"<i>Снижает шанс, что игроки украдут ваши деньги через /steal (до 5% при макс ур).</i>\n"
+            f"Цена: {sec_price if lvl_security < 5 else '—'} сыр."
         )
 
         builder = InlineKeyboardBuilder()
@@ -532,9 +539,10 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         if lvl_earnings < 5: builder.button(text=f"💼 Вместимость", callback_data=f"bstat_buyupg_earn_{banker_id}")
         if lvl_banker < 5: builder.button(text=f"👔 Доля", callback_data=f"bstat_buyupg_banker_{banker_id}")
         if lvl_market < 5: builder.button(text=f"📈 Маркетинг", callback_data=f"bstat_buyupg_market_{banker_id}")
+        if lvl_security < 5: builder.button(text=f"🔐 Охрана", callback_data=f"bstat_buyupg_sec_{banker_id}")
 
         builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
-        builder.adjust(2, 2, 1)
+        builder.adjust(2, 2, 1, 1)
 
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
 
@@ -578,6 +586,14 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
             await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_marketing': lvl + 1})
             await callback.answer(f"✅ Маркетинг улучшен до уровня {lvl + 1}!")
+
+        elif upg_type == "sec":
+            lvl = bank_data.get('upgrade_security', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 15000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_security': lvl + 1})
+            await callback.answer(f"✅ Охрана сейфа улучшена до уровня {lvl + 1}!")
 
         callback.data = f"bstat_upgrades_{banker_id}"
         await cb_bank_stats(callback)
