@@ -13,6 +13,7 @@ from craps import router as craps_router
 from baccarat import router as baccarat_router
 from skills import router as skills_router
 from admin import router as admin_router
+from admin_debts import router as admin_debts_router
 from log_system import router as log_system_router
 from chat_stats import router as chat_stats_router, increment_message_count
 from rp_clans import router as rp_clans_router
@@ -96,6 +97,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(baccarat_router)
     dp.include_router(skills_router)
     dp.include_router(admin_router)
+    dp.include_router(admin_debts_router)
     dp.include_router(log_system_router)
     dp.include_router(chat_stats_router)
     dp.include_router(rp_clans_router)
