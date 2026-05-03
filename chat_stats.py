@@ -213,7 +213,13 @@ async def weekly_reset_task(bot: Bot):
                                     total_loans_given += 1
 
                         # Базовая субсидия 10 лямов + бонус за кредиты (допустим 1 лям за каждый выданный кредит)
-                        subsidy = 10000000 + (total_loans_given * 1000000)
+                        base_subsidy = 10000000 + (total_loans_given * 1000000)
+
+                        # Бонус от улучшения "Маркетинг" (Ур. 1-5, по +20% за уровень)
+                        lvl_market = b_data.get('upgrade_marketing', 0)
+                        market_mult = 1.0 + (lvl_market * 0.20)
+
+                        subsidy = int(base_subsidy * market_mult)
 
                         new_capital = current_cap + subsidy
 
