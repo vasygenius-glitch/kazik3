@@ -203,6 +203,11 @@ async def weekly_reset_task(bot: Bot):
                             except: pass
                             continue
 
+                        # Проверяем репутацию банкира (если меньше 0, субсидии не будет)
+                        banker_doc = await users_ref.document(b_id).get()
+                        banker_data = banker_doc.to_dict() if banker_doc.exists else {}
+                        banker_rep = banker_data.get('reputation', 0)
+
                         # Подсчет выданных кредитов для мультипликатора субсидии
                         total_loans_given = 0
                         for user_doc in user_docs:
@@ -221,18 +226,29 @@ async def weekly_reset_task(bot: Bot):
 
                         subsidy = int(base_subsidy * market_mult)
 
-                        new_capital = current_cap + subsidy
+                        # Ежедневный налог на лицензию: 5.000.000
+                        license_tax = 5000000
 
-                        # Налог на роскошь (сверхприбыль > 1 млрд)
-                        if new_capital > 1000000000:
-                            luxury_tax = int((new_capital - 1000000000) * 0.05) # 5% с суммы превышающей 1 млрд
+                        new_capital = current_cap - license_tax
+
+                        msg_text = f"📄 С банка <b>{b_data.get('name')}</b> списан ежедневный налог на лицензию: <b>{license_tax}</b> сыр.\n"
+
+                        if banker_rep < 0:
+                            msg_text += "🚫 <b>ЦБ отказал в субсидии</b> из-за отрицательной репутации банкира!"
+                        else:
+                            new_capital += subsidy
+                            msg_text += f"🏦 ЦентроЖБРОМ выдал субсидию в размере <b>{subsidy}</b> сыр. (Кредитов: {total_loans_given})."
+
+                        # Жесткая инфляция: Налог на роскошь (сверхприбыль > 500 млн) - 20%
+                        if new_capital > 500000000:
+                            luxury_tax = int((new_capital - 500000000) * 0.20) # 20% с суммы превышающей 500 млн
                             new_capital -= luxury_tax
+                            msg_text += f"\n💸 <b>Налог на излишки:</b> списано <b>{luxury_tax}</b> сыр. (20% от суммы свыше 500м)."
 
                         await banks_ref.document(b_id).update({'capital': new_capital})
 
                         try:
-                            bank_owner_id = int(b_id)
-                            await bot.send_message(chat_id, f"🏦 ЦентроЖБРОМ выдал субсидию банку <b>{b_data.get('name')}</b> в размере <b>{subsidy}</b> сыр. (Активных кредитов: {total_loans_given}).")
+                            await bot.send_message(chat_id, msg_text)
                         except: pass
 
                 except Exception as e:
