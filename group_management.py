@@ -25,11 +25,8 @@ async def set_welcome(message: types.Message, bot: Bot):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        if member.status not in ['administrator', 'creator'] and int(user_id) != int(CREATOR_ID):
-            return
-    except: return
+    if int(user_id) != int(CREATOR_ID):
+        return
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2: return
@@ -77,11 +74,9 @@ async def show_rules(message: types.Message):
 async def set_note(message: types.Message, bot: Bot):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        if member.status not in ['administrator', 'creator'] and int(user_id) != int(CREATOR_ID):
-            return
-    except: return
+
+    if int(user_id) != int(CREATOR_ID):
+        return
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3: return await message.answer("Использование: заметка [имя] [текст]")
@@ -109,11 +104,9 @@ async def get_note(message: types.Message):
 async def toggle_antilink(message: types.Message, bot: Bot):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        if member.status not in ['administrator', 'creator'] and int(user_id) != int(CREATOR_ID):
-            return
-    except: return
+
+    if int(user_id) != int(CREATOR_ID):
+        return
 
     is_on = "вкл" in message.text.lower()
     await update_group_settings(chat_id, 'antilink', is_on)
@@ -126,23 +119,15 @@ async def antilink_check(message: types.Message, bot: Bot):
     settings = await get_group_settings(message.chat.id)
     if settings.get('antilink', False):
         user_id = message.from_user.id
-        try:
-            member = await bot.get_chat_member(message.chat.id, user_id)
-            if member.status not in ['administrator', 'creator'] and int(user_id) != int(CREATOR_ID):
-                await message.delete()
-                await message.answer(f"⚠️ <b>{escape_html(message.from_user.full_name)}</b>, ссылки в этом чате запрещены!")
-                # Выдача варна
-                from admin import parse_time
-                from user_manager import get_user_data
-                data = await get_user_data(message.chat.id, user_id)
-                warns = data.get('warns', [])
-                current_time = time.time()
-                warns = [w for w in warns if w > current_time]
-                warns.append(current_time + 9 * 86400)
-                await update_user_field(message.chat.id, user_id, 'warns', warns)
-                if len(warns) >= 3:
-                    await bot.ban_chat_member(message.chat.id, user_id, until_date=int(current_time) + 3*86400)
-                    await update_user_field(message.chat.id, user_id, 'warns', [])
+        # Создателя не наказываем за ссылки
+        if int(user_id) == int(CREATOR_ID):
+            return
+
+        await message.delete()
+        msg = await message.answer(f"⚠️ <b>{escape_html(message.from_user.full_name)}</b>, ссылки в этом чате запрещены!")
+        import asyncio
+        await asyncio.sleep(10)
+        try: await msg.delete()
         except: pass
 
 # 4. БИО ПРОФИЛЯ
@@ -155,37 +140,30 @@ async def set_bio(message: types.Message):
     await update_user_field(message.chat.id, message.from_user.id, 'bio', bio_text)
     await message.answer("✅ Биография обновлена!")
 
-
-
 # 5. АНТИВОЙС
 @router.message(F.text.lower().in_(["антивойс вкл", "антивойс выкл"]))
 async def toggle_antivoice(message: types.Message, bot: Bot):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    try:
-        member = await bot.get_chat_member(chat_id, user_id)
-        if member.status not in ['administrator', 'creator'] and int(user_id) != int(CREATOR_ID):
-            return
-    except: return
+
+    if int(user_id) != int(CREATOR_ID):
+        return
 
     is_on = "вкл" in message.text.lower()
-    from group_management import update_group_settings
     await update_group_settings(chat_id, 'antivoice', is_on)
     await message.answer(f"🎙 Анти-голосовые {'включены' if is_on else 'выключены'}.")
 
 @router.message(F.voice | F.video_note)
 async def antivoice_check(message: types.Message, bot: Bot):
-    from group_management import get_group_settings
     settings = await get_group_settings(message.chat.id)
     if settings.get('antivoice', False):
         user_id = message.from_user.id
-        try:
-            member = await bot.get_chat_member(message.chat.id, user_id)
-            if member.status not in ['administrator', 'creator'] and int(user_id) != int(CREATOR_ID):
-                await message.delete()
-                msg = await message.answer(f"⚠️ <b>{escape_html(message.from_user.full_name)}</b>, голосовые и видеосообщения в этом чате запрещены!")
-                import asyncio
-                await asyncio.sleep(10)
-                try: await msg.delete()
-                except: pass
+        if int(user_id) == int(CREATOR_ID):
+            return
+
+        await message.delete()
+        msg = await message.answer(f"⚠️ <b>{escape_html(message.from_user.full_name)}</b>, голосовые и видеосообщения в этом чате запрещены!")
+        import asyncio
+        await asyncio.sleep(10)
+        try: await msg.delete()
         except: pass
