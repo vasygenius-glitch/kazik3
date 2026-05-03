@@ -768,7 +768,7 @@ async def cmd_cr_delcoin(message: types.Message):
     coins = await get_all_coins()
 
     if ticker in coins:
-        from google.cloud import firestore
+        from firebase_admin import firestore_async
         db = get_db()
 
         last_price = coins[ticker]["prices"][-1]
@@ -793,7 +793,7 @@ async def cmd_cr_delcoin(message: types.Message):
                         del port[ticker]
 
                         await users_ref.document(user_doc.id).update({
-                            'balance': firestore.Increment(refund_amount),
+                            'balance': firestore_async.Increment(refund_amount),
                             'crypto_portfolio': port
                         })
 
@@ -805,7 +805,7 @@ async def cmd_cr_delcoin(message: types.Message):
         # 2. Удаляем саму монету с биржи
         try:
             await db.collection('bot_settings').document('crypto_coins').update({
-                f"coins.{ticker}": firestore.DELETE_FIELD
+                f"coins.{ticker}": firestore_async.DELETE_FIELD
             })
             await message.answer(f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).\n💰 Средства возвращены {refunded_count} игрокам (всего {fmt(total_refund)} сыр. по цене {fmt(last_price)} за монету).")
         except Exception as e:
