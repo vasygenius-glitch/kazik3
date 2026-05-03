@@ -125,7 +125,11 @@ async def cmd_top(message: types.Message):
 async def weekly_reset_task(bot: Bot):
     while True:
         await asyncio.sleep(60) # Проверяем каждую минуту
-        current_time = time.localtime()
+        import datetime
+        # Получаем время по МСК (UTC+3)
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        now_msk = now_utc + datetime.timedelta(hours=3)
+        current_time = now_msk.timetuple()
 
         # --- Ежедневное пополнение капитала банков и начисление % по вкладам ---
         if current_time.tm_hour == 0 and current_time.tm_min == 0:
@@ -199,7 +203,19 @@ async def weekly_reset_task(bot: Bot):
                             except: pass
                             continue
 
-                        new_capital = current_cap + 50000000
+                        # Подсчет выданных кредитов для мультипликатора субсидии
+                        total_loans_given = 0
+                        for user_doc in user_docs:
+                            u_data = user_doc.to_dict()
+                            debts = u_data.get('debts', {})
+                            for k, v in debts.items():
+                                if k.startswith(f"bank_{b_id}_") and v > 0:
+                                    total_loans_given += 1
+
+                        # Базовая субсидия 10 лямов + бонус за кредиты (допустим 1 лям за каждый выданный кредит)
+                        subsidy = 10000000 + (total_loans_given * 1000000)
+
+                        new_capital = current_cap + subsidy
 
                         # Налог на роскошь (сверхприбыль > 1 млрд)
                         if new_capital > 1000000000:
@@ -207,6 +223,11 @@ async def weekly_reset_task(bot: Bot):
                             new_capital -= luxury_tax
 
                         await banks_ref.document(b_id).update({'capital': new_capital})
+
+                        try:
+                            bank_owner_id = int(b_id)
+                            await bot.send_message(chat_id, f"🏦 ЦентроЖБРОМ выдал субсидию банку <b>{b_data.get('name')}</b> в размере <b>{subsidy}</b> сыр. (Активных кредитов: {total_loans_given}).")
+                        except: pass
 
                 except Exception as e:
                     print(f"Ошибка ежедневных банковских операций в чате {chat_id}: {e}")
