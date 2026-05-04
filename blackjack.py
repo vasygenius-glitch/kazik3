@@ -7,18 +7,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus
 from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
+from utils import schedule_delete
 
 router = Router()
-
-async def schedule_delete(*messages):
-    import asyncio
-    await asyncio.sleep(40)
-    for msg in messages:
-        try:
-            if msg and hasattr(msg, 'delete'):
-                await msg.delete()
-        except:
-            pass
 
 
 def get_bj_keyboard(game_id: str):

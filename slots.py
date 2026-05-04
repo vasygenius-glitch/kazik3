@@ -8,17 +8,9 @@ from user_manager import get_user_data, update_user_balance, check_and_give_bonu
 from chances import get_game_chance
 from escape import escape_html
 from config import CREATOR_ID  # <-- ИМПОРТИРУЕМ ID СОЗДАТЕЛЯ
+from utils import schedule_delete
 
 router = Router()
-
-async def schedule_delete(*messages):
-    await asyncio.sleep(40)
-    for msg in messages:
-        try:
-            if msg and hasattr(msg, 'delete'):
-                await msg.delete()
-        except:
-            pass
 
 secure_random = secrets.SystemRandom()
 
