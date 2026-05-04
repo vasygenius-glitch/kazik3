@@ -276,7 +276,7 @@ async def cmd_say(message: types.Message, bot: Bot):
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
-        await message.answer("Использование: <code>/say <id_группы> <сообщение></code>")
+        await message.answer("Использование: <code>/say [id_группы] [сообщение]</code>")
         return
 
     try:
@@ -297,7 +297,7 @@ async def cmd_rdel(message: types.Message, bot: Bot):
 
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer("Использование: <code>/rdel <id_группы> <id_сообщения></code>")
+        await message.answer("Использование: <code>/rdel [id_группы] [id_сообщения]</code>")
         return
 
     try:
@@ -318,7 +318,7 @@ async def cmd_rban(message: types.Message, bot: Bot):
 
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer("Использование: <code>/rban <id_группы> <id_пользователя></code>")
+        await message.answer("Использование: <code>/rban [id_группы] [id_пользователя]</code>")
         return
 
     try:
@@ -339,7 +339,7 @@ async def cmd_runban(message: types.Message, bot: Bot):
 
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer("Использование: <code>/runban <id_группы> <id_пользователя></code>")
+        await message.answer("Использование: <code>/runban [id_группы] [id_пользователя]</code>")
         return
 
     try:
@@ -360,7 +360,7 @@ async def cmd_getlink(message: types.Message, bot: Bot):
 
     parts = message.text.split()
     if len(parts) < 2:
-        await message.answer("Использование: <code>/getlink <id_группы></code>")
+        await message.answer("Использование: <code>/getlink [id_группы]</code>")
         return
 
     try:
@@ -503,7 +503,7 @@ async def cmd_setchance(message: types.Message):
     args = message.text.split()
     if len(args) < 3:
         await message.answer(
-            "Использование: <code>/setchance <игра> <процент></code>\n"
+            "Использование: <code>/setchance [игра] [процент]</code>\n"
             "Доступные игры: <code>slots</code>, <code>cups</code>, <code>roulette</code>\n"
             "Процент: 0-100 (установите -1 для честного рандома).\n"
             "Пример: <code>/setchance slots 50</code>"
@@ -572,7 +572,7 @@ async def cmd_rleave(message: types.Message, bot: Bot):
         return
     parts = message.text.split()
     if len(parts) < 2:
-        return await message.answer("Использование: <code>/rleave <id_группы></code>")
+        return await message.answer("Использование: <code>/rleave [id_группы]</code>")
     try:
         chat_id = int(parts[1])
         await bot.leave_chat(chat_id)
@@ -588,7 +588,7 @@ async def cmd_rmute(message: types.Message, bot: Bot):
         return
     parts = message.text.split()
     if len(parts) < 4:
-        return await message.answer("Использование: <code>/rmute <id_группы> <id_юзера> <минуты></code>")
+        return await message.answer("Использование: <code>/rmute [id_группы] [id_юзера] [минуты]</code>")
     try:
         chat_id = int(parts[1])
         user_id = int(parts[2])
@@ -612,7 +612,7 @@ async def cmd_rpin(message: types.Message, bot: Bot):
         return
     parts = message.text.split()
     if len(parts) < 3:
-        return await message.answer("Использование: <code>/rpin <id_группы> <id_сообщения></code>")
+        return await message.answer("Использование: <code>/rpin [id_группы] [id_сообщения]</code>")
     try:
         chat_id = int(parts[1])
         msg_id = int(parts[2])
@@ -627,7 +627,7 @@ async def cmd_runpin(message: types.Message, bot: Bot):
         return
     parts = message.text.split()
     if len(parts) < 3:
-        return await message.answer("Использование: <code>/runpin <id_группы> <id_сообщения></code>")
+        return await message.answer("Использование: <code>/runpin [id_группы] [id_сообщения]</code>")
     try:
         chat_id = int(parts[1])
         msg_id = int(parts[2])
@@ -646,7 +646,7 @@ async def cmd_gethistory(message: types.Message):
 
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: <code>/gethistory <id_группы> [ГГГГ-ММ-ДД]</code>")
+        await message.answer("Использование: <code>/gethistory [id_группы] [ГГГГ-ММ-ДД]</code>")
         return
 
     try:
