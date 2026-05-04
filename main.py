@@ -38,7 +38,7 @@ async def main():
         if session._session is None or session._session.closed:
             session._session = aiohttp.ClientSession(
                 trust_env=True,
-                connector=aiohttp.TCPConnector(ssl=False)
+                connector=aiohttp.TCPConnector()
             )
             session._should_reset_connector = False
         return session._session
