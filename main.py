@@ -12,8 +12,10 @@ from config import BOT_TOKEN, FIREBASE_KEY_PATH
 from db import init_db
 from handlers_init import register_all_handlers
 from whitelist_middleware import WhitelistMiddleware
-from system_logger import logger
 import os
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 async def main():
     redis_url = os.environ.get("REDIS_URL")
