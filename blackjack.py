@@ -4,6 +4,8 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus
 from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
@@ -11,6 +13,8 @@ from utils import schedule_delete
 
 router = Router()
 
+class BlackjackState(StatesGroup):
+    playing = State()
 
 def get_bj_keyboard(game_id: str):
     builder = InlineKeyboardBuilder()
@@ -18,10 +22,12 @@ def get_bj_keyboard(game_id: str):
     builder.button(text="Хватит", callback_data=f"bj_stand_{game_id}")
     return builder.as_markup()
 
-active_games = {}
-
 @router.message(Command("bj"))
-async def cmd_bj(message: types.Message):
+async def cmd_bj(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state == BlackjackState.playing.state:
+        await message.answer("Сначала завершите текущую игру!")
+        return
     chat_id = message.chat.id
     user_id = message.from_user.id
     full_name = escape_html(message.from_user.full_name)
@@ -91,15 +97,15 @@ async def cmd_bj(message: types.Message):
         asyncio.create_task(schedule_delete(msg, message))
         return
 
-    active_games[game_id] = {
-        'original_msg': message,
-        'user_id': user_id,
-        'chat_id': chat_id,
-        'full_name': full_name,
-        'bet': bet,
-        'player_cards': player_cards,
-        'dealer_cards': dealer_cards
-    }
+    await state.set_state(BlackjackState.playing)
+    await state.update_data(
+        user_id=user_id,
+        chat_id=chat_id,
+        full_name=full_name,
+        bet=bet,
+        player_cards=player_cards,
+        dealer_cards=dealer_cards
+    )
 
     text = (
         f"{bonus_text}Играет: {full_name} | Ставка: {bet}\n\n"
@@ -107,16 +113,19 @@ async def cmd_bj(message: types.Message):
         f"Карты дилера: {format_cards(dealer_cards)} и 🂠 (?)"
     )
 
-    await message.answer(text, reply_markup=get_bj_keyboard(game_id))
+    msg = await message.answer(text, reply_markup=get_bj_keyboard(game_id))
+    asyncio.create_task(schedule_delete(message))
 
 @router.callback_query(F.data.startswith("bj_hit_"))
-async def process_bj_hit(callback: types.CallbackQuery):
+async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     game_id = callback.data.replace("bj_hit_", "")
-    game = active_games.get(game_id)
-    if not game:
+
+    current_state = await state.get_state()
+    if current_state != BlackjackState.playing.state:
         await callback.answer("Эта игра уже завершена или не найдена.", show_alert=True)
         return
 
+    game = await state.get_data()
     if callback.from_user.id != game['user_id']:
         await callback.answer("Это не ваша игра!", show_alert=True)
         return
@@ -136,20 +145,17 @@ async def process_bj_hit(callback: types.CallbackQuery):
         player_score = calculate_score(game['player_cards'])
 
     if player_score > 21:
-        game = active_games.pop(game_id, None)
-        if not game:
-            await callback.answer()
-            return
+        await state.clear()
         text = (
             f"<b>БЛЭКДЖЕК: Игрок {game['full_name']} перебрал и проиграл {game['bet']} сыроежек.</b>"
         )
         msg = await callback.message.edit_text(text)
-        asyncio.create_task(schedule_delete(msg, game.get('original_msg') if 'game' in locals() and game else None))
+        asyncio.create_task(schedule_delete(msg))
     elif player_score == 21:
-        game = active_games.pop(game_id, None)
-        if game:
-            await finish_dealer_turn(callback, game)
+        await state.clear()
+        await finish_dealer_turn(callback, game)
     else:
+        await state.update_data(player_cards=game['player_cards'])
         text = (
             f"Играет: {game['full_name']} | Ставка: {game['bet']}\n\n"
             f"Ваши карты: {format_cards(game['player_cards'])} ({player_score})\n"
@@ -160,20 +166,21 @@ async def process_bj_hit(callback: types.CallbackQuery):
     await callback.answer()
 
 @router.callback_query(F.data.startswith("bj_stand_"))
-async def process_bj_stand(callback: types.CallbackQuery):
+async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
     game_id = callback.data.replace("bj_stand_", "")
-    game = active_games.get(game_id)
-    if not game:
+
+    current_state = await state.get_state()
+    if current_state != BlackjackState.playing.state:
         await callback.answer("Эта игра уже завершена или не найдена.", show_alert=True)
         return
 
+    game = await state.get_data()
     if callback.from_user.id != game['user_id']:
         await callback.answer("Это не ваша игра!", show_alert=True)
         return
 
-    game = active_games.pop(game_id, None)
-    if game:
-        await finish_dealer_turn(callback, game)
+    await state.clear()
+    await finish_dealer_turn(callback, game)
 
     await callback.answer()
 
@@ -219,4 +226,4 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict):
     )
 
     msg = await callback.message.edit_text(text)
-    asyncio.create_task(schedule_delete(msg, game.get('original_msg') if 'game' in locals() and game else None))
+    asyncio.create_task(schedule_delete(msg))

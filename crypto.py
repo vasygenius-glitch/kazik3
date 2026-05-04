@@ -258,11 +258,37 @@ def _generate_global_chart_sync(coins_dict: Dict[str, Any]) -> bytes:
     fig.clear()
     return buf.read()
 
+from utils_pkg.cache_manager import global_cache
+import hashlib
+
 async def generate_chart_async(coin_name: str, prices: list) -> bytes:
-    return await asyncio.to_thread(_generate_single_chart_sync, coin_name, prices)
+    # Оптимизация: кэшируем картинку по хэшу массива цен (если цены не менялись, картинка та же)
+    prices_hash = hashlib.md5(str(prices).encode()).hexdigest()
+    cache_key = f"crypto_chart_{coin_name}_{prices_hash}"
+    cached_bytes = global_cache.get(cache_key)
+    if cached_bytes:
+        return cached_bytes
+
+    chart_bytes = await asyncio.to_thread(_generate_single_chart_sync, coin_name, prices)
+    global_cache.set(cache_key, chart_bytes, ttl=300) # Кэш на 5 минут
+    return chart_bytes
 
 async def generate_global_chart_async(coins_dict: dict) -> bytes:
-    return await asyncio.to_thread(_generate_global_chart_sync, coins_dict)
+    # Собираем все последние цены в одну строку для хэша
+    prices_str = ""
+    for c in list(coins_dict.values())[:5]:
+        prices_str += str(c.get('prices', []))
+
+    prices_hash = hashlib.md5(prices_str.encode()).hexdigest()
+    cache_key = f"crypto_global_chart_{prices_hash}"
+
+    cached_bytes = global_cache.get(cache_key)
+    if cached_bytes:
+        return cached_bytes
+
+    chart_bytes = await asyncio.to_thread(_generate_global_chart_sync, coins_dict)
+    global_cache.set(cache_key, chart_bytes, ttl=300)
+    return chart_bytes
 
 # ============================================================================
 # БЛОК 3: УТИЛИТЫ И ПРОВЕРКИ ПРАВ
