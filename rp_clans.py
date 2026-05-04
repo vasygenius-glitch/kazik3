@@ -188,7 +188,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 active_duels = {}
 
-@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | F.text.lower().startswith("дуэль") | F.text.lower().startswith("/duel")))
+@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | (F.text.lower().startswith("дуэль") & ~F.text.lower().in_(["дуэль да", "дуэль нет"])) | F.text.lower().startswith("/duel")))
 async def cmd_duel(message: types.Message):
     if not message.reply_to_message:
         return await message.answer("Ответьте на сообщение человека, чтобы вызвать его на дуэль.")
