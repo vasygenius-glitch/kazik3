@@ -29,6 +29,22 @@ def init_db(key_path):
     if not cred:
         print("ВНИМАНИЕ: Ключ Firebase не найден ни в FIREBASE_JSON, ни в файле!")
         print("Бот будет работать в режиме мок-базы, или упадет при запросах.")
+        class MockTransaction:
+            def __init__(self):
+                pass
+
+            def get(self, ref):
+                # Returns awaitable in mock
+                return ref.get()
+
+            def update(self, ref, data):
+                from utils import fire_and_forget
+                fire_and_forget(ref.update(data))
+
+            def set(self, ref, data, merge=False):
+                from utils import fire_and_forget
+                fire_and_forget(ref.set(data, merge=merge))
+
         class MockDB:
             def __init__(self):
                 self.data = {}
@@ -38,6 +54,9 @@ def init_db(key_path):
 
             def batch(self):
                 return MockBatch()
+
+            def transaction(self):
+                return MockTransaction()
 
         class MockBatch:
             def __init__(self):

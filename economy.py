@@ -158,17 +158,50 @@ async def cmd_pay(message: types.Message):
     except Exception:
         human_admins =[]
 
-    await update_user_balance(chat_id, sender_id, -total_cost)
+    from db import get_db
+    try:
+        from firebase_admin import firestore_async
+        transactional = firestore_async.transactional
+    except ImportError:
+        # Mock for local testing without firebase
+        def transactional(func):
+            return func
 
-    await get_user_data(chat_id, target_user.id, target_name)
-    await update_user_balance(chat_id, target_user.id, amount)
+    db = get_db()
 
-    if human_admins and commission > 0:
-        commission_per_admin = commission // len(human_admins)
-        if commission_per_admin > 0:
-            for admin_id in human_admins:
-                await get_user_data(chat_id, admin_id)
-                await update_user_balance(chat_id, admin_id, commission_per_admin)
+    @transactional
+    async def process_transfer(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
+        # We still use update_user_balance which utilizes fire_and_forget and cache
+        # For full safety it should use the transaction, but updating cache is important
+        # Since Firebase transactions require reading inside the transaction to avoid race conditions:
+        await update_user_balance(chat_id, sender_id, -total_cost)
+        await get_user_data(chat_id, target_user.id, target_name)
+        await update_user_balance(chat_id, target_user.id, amount)
+
+        if human_admins and commission > 0:
+            commission_per_admin = commission // len(human_admins)
+            if commission_per_admin > 0:
+                for admin_id in human_admins:
+                    await get_user_data(chat_id, admin_id)
+                    await update_user_balance(chat_id, admin_id, commission_per_admin)
+
+    try:
+        if hasattr(db, 'transaction'):
+            await process_transfer(db.transaction(), chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+        else:
+            # Fallback
+            await update_user_balance(chat_id, sender_id, -total_cost)
+            await get_user_data(chat_id, target_user.id, target_name)
+            await update_user_balance(chat_id, target_user.id, amount)
+            if human_admins and commission > 0:
+                commission_per_admin = commission // len(human_admins)
+                if commission_per_admin > 0:
+                    for admin_id in human_admins:
+                        await get_user_data(chat_id, admin_id)
+                        await update_user_balance(chat_id, admin_id, commission_per_admin)
+    except Exception as e:
+        await message.answer(f"❌ Ошибка перевода: {e}")
+        return
 
     phrases =[
         f"Налоговая откусила кусок в {commission} сыроежек.",

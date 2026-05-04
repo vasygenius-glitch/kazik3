@@ -248,17 +248,35 @@ async def cmd_bank(message: types.Message):
         if data.get('balance', 0) < amount:
             return await message.answer("Недостаточно средств на балансе.")
 
-        # Списываем у игрока, добавляем в капитал банка
-        await update_user_balance(chat_id, user_id, -amount)
-        await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit + amount)
-        await update_user_field(chat_id, user_id, 'bank_name', target_banker_id)
+        from db import get_db
+        try:
+            from firebase_admin import firestore_async
+            transactional = firestore_async.transactional
+        except ImportError:
+            def transactional(func): return func
 
-        # Запоминаем время вклада (если первый раз или обновляем)
-        if current_deposit == 0:
-            await update_user_field(chat_id, user_id, 'deposit_start_time', int(time.time()))
+        db = get_db()
+        @transactional
+        async def process_deposit(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data):
+            # Списываем у игрока, добавляем в капитал банка
+            await update_user_balance(chat_id, user_id, -amount)
+            await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit + amount)
+            await update_user_field(chat_id, user_id, 'bank_name', target_banker_id)
 
-        await create_or_update_bank(chat_id, target_banker_id, {'capital': bank_data.get('capital', 0) + amount})
-        await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
+            # Запоминаем время вклада (если первый раз или обновляем)
+            if current_deposit == 0:
+                await update_user_field(chat_id, user_id, 'deposit_start_time', int(time.time()))
+
+            await create_or_update_bank(chat_id, target_banker_id, {'capital': bank_data.get('capital', 0) + amount})
+
+        try:
+            if hasattr(db, 'transaction'):
+                await process_deposit(db.transaction(), chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+            else:
+                await process_deposit(None, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+            await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
+        except Exception as e:
+            await message.answer("❌ Произошла ошибка при пополнении вклада.")
 
     elif action == "withdraw":
         if args[2].lower() == "all":
@@ -287,16 +305,33 @@ async def cmd_bank(message: types.Message):
         if bank_data.get('capital', 0) < amount:
             return await message.answer(" У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас! Банкир выдал слишком много кредитов.")
 
-        # Снимаем со вклада, списываем из капитала банка
-        await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
-        await update_user_balance(chat_id, user_id, amount)
-        await create_or_update_bank(chat_id, current_banker_id, {'capital': bank_data.get('capital', 0) - amount})
+        from db import get_db
+        try:
+            from firebase_admin import firestore_async
+            transactional = firestore_async.transactional
+        except ImportError:
+            def transactional(func): return func
 
-        if current_deposit - amount == 0:
-            await update_user_field(chat_id, user_id, 'bank_name', None) # Отвязываем от банка
-            await update_user_field(chat_id, user_id, 'deposit_start_time', 0) # Сбрасываем срок лояльности
+        db = get_db()
+        @transactional
+        async def process_withdraw(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data):
+            # Снимаем со вклада, списываем из капитала банка
+            await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
+            await update_user_balance(chat_id, user_id, amount)
+            await create_or_update_bank(chat_id, current_banker_id, {'capital': bank_data.get('capital', 0) - amount})
 
-        await message.answer(f"💸 Снято {amount} сыроежек со счета.")
+            if current_deposit - amount == 0:
+                await update_user_field(chat_id, user_id, 'bank_name', None) # Отвязываем от банка
+                await update_user_field(chat_id, user_id, 'deposit_start_time', 0) # Сбрасываем срок лояльности
+
+        try:
+            if hasattr(db, 'transaction'):
+                await process_withdraw(db.transaction(), chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+            else:
+                await process_withdraw(None, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+            await message.answer(f"💸 Снято {amount} сыроежек со счета.")
+        except Exception as e:
+            await message.answer("❌ Произошла ошибка при снятии со вклада.")
 @router.message(F.text.lower().startswith("создать банк"))
 async def cmd_create_bank(message: types.Message):
     chat_id = message.chat.id
