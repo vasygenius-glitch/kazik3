@@ -76,7 +76,7 @@ async def cmd_bj(message: types.Message, state: FSMContext):
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
     if is_creator:
-        player_cards = ['A♠', 'K♠']
+        player_cards = [{'rank': 'A', 'suit': '♠'}, {'rank': 'K', 'suit': '♠'}]
         player_score = 21
 
     if player_score == 21:
@@ -150,12 +150,12 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     if player_score > 21 and luck_level > 0 and __import__("secrets").SystemRandom().randint(1, 100) <= luck_level * 5:
         # Magic save! Convert the last card to a low one
         game['player_cards'].pop()
-        game['player_cards'].append('2♠') # just a hardcoded low card for the save
+        game['player_cards'].append({'rank': '2', 'suit': '♠'}) # just a hardcoded low card for the save
         player_score = calculate_score(game['player_cards'])
 
     if is_creator and player_score > 21:
         game['player_cards'].pop()
-        game['player_cards'].append('2♠')
+        game['player_cards'].append({'rank': '2', 'suit': '♠'})
         player_score = calculate_score(game['player_cards'])
 
     if player_score > 21:
@@ -210,8 +210,8 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict):
     dealer_score = calculate_score(dealer_cards)
 
     if is_creator and dealer_score >= player_score and dealer_score <= 21:
-        dealer_cards.append('10♠')
-        dealer_cards.append('10♥')
+        dealer_cards.append({'rank': '10', 'suit': '♠'})
+        dealer_cards.append({'rank': '10', 'suit': '♥'})
         dealer_score = calculate_score(dealer_cards)
 
     bet = game['bet']
