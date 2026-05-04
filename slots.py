@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus
 from chances import get_game_chance
 from escape import escape_html
-from config import CREATOR_ID  # <-- ИМПОРТИРУЕМ ID СОЗДАТЕЛЯ
+from config import CREATOR_ID
 from utils import schedule_delete
 
 router = Router()
@@ -72,8 +72,9 @@ async def cmd_slots(message: types.Message):
     chance = await get_game_chance('slots')
     is_forced_win = False
 
-    # 👑 РЕЖИМ БОГА ДЛЯ СОЗДАТЕЛЯ (Исправлено)
-    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
+    if is_creator:
         is_forced_win = True
     elif chance != -1:
         if secure_random.randint(1, 100) <= chance:
@@ -81,40 +82,37 @@ async def cmd_slots(message: types.Message):
 
     # Final result generation
     if is_forced_win:
-        # Принудительная победа (выдаем случайную выигрышную комбинацию)
-        win_types =["jackpot", "mega", "three", "pair_mega", "pair_7"]
-        
-        # Для создателя даем шанс на джекпот еще выше
-        if CREATOR_ID and int(user_id) == int(CREATOR_ID):
-            chosen_win = secure_random.choice(["jackpot", "mega", "three", "jackpot"]) # 50% на жирный куш
+        if is_creator:
+            final_slots = ["7️⃣", "7️⃣", "7️⃣"]
         else:
+            win_types = ["jackpot", "mega", "three", "pair_mega", "pair_7"]
             chosen_win = secure_random.choice(win_types)
 
-        if chosen_win == "jackpot":
-            final_slots =["7️⃣", "7️⃣", "7️⃣"]
-        elif chosen_win == "mega":
-            sym = secure_random.choice(["💎", "🔔"])
-            final_slots = [sym, sym, sym]
-        elif chosen_win == "three":
-            sym = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
-            final_slots = [sym, sym, sym]
-        elif chosen_win == "pair_mega":
-            sym = secure_random.choice(["💎", "🔔"])
-            other = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
-            final_slots =[sym, sym, other]
-            secure_random.shuffle(final_slots)
-        else: # pair_7
-            other = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
-            final_slots = ["7️⃣", "7️⃣", other]
-            secure_random.shuffle(final_slots)
+            if chosen_win == "jackpot":
+                final_slots = ["7️⃣", "7️⃣", "7️⃣"]
+            elif chosen_win == "mega":
+                sym = secure_random.choice(["💎", "🔔"])
+                final_slots = [sym, sym, sym]
+            elif chosen_win == "three":
+                sym = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
+                final_slots = [sym, sym, sym]
+            elif chosen_win == "pair_mega":
+                sym = secure_random.choice(["💎", "🔔"])
+                other = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
+                final_slots = [sym, sym, other]
+                secure_random.shuffle(final_slots)
+            else: # pair_7
+                other = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
+                final_slots = ["7️⃣", "7️⃣", other]
+                secure_random.shuffle(final_slots)
     else:
         # Обычный честный рандом
-        final_slots =[secure_random.choice(EMOJIS) for _ in range(3)]
+        final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
 
         # Гарантируем проигрыш, если игрок не попал в установленный шанс
         if chance != -1:
             while final_slots[0] == final_slots[1] or final_slots[1] == final_slots[2] or final_slots[0] == final_slots[2]:
-                final_slots =[secure_random.choice(["🍒", "🍋"]), secure_random.choice(["🍉", "🍇"]), secure_random.choice(["💎", "🔔"])]
+                final_slots = [secure_random.choice(["🍒", "🍋"]), secure_random.choice(["🍉", "🍇"]), secure_random.choice(["💎", "🔔"])]
 
     profit = 0
     multiplier_text = ""
@@ -144,9 +142,7 @@ async def cmd_slots(message: types.Message):
             profit = int(bet * 1.5)
             multiplier_text = "Крупная пара! x1.5"
         else:
-            # Маленькая пара (визуально есть, но без профита в обычной игре, 
-            # но мы дадим х1.1 в режиме бога чтобы всегда был плюс)
-            if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+            if is_creator:
                 profit = int(bet * 1.1)
                 multiplier_text = "Удачная пара! x1.1"
 
