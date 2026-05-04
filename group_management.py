@@ -8,16 +8,42 @@ from config import CREATOR_ID
 
 router = Router()
 
+from utils import fire_and_forget
+
+_group_settings_cache = {}
+_group_settings_cache_time = {}
+GROUP_SETTINGS_CACHE_TTL = 60.0
+
 async def get_group_settings(chat_id: int):
+    global _group_settings_cache, _group_settings_cache_time
+    chat_key = str(chat_id)
+    if chat_key in _group_settings_cache and time.time() - _group_settings_cache_time.get(chat_key, 0) < GROUP_SETTINGS_CACHE_TTL:
+        return _group_settings_cache[chat_key]
+
     db = get_db()
-    doc = await db.collection('chats').document(str(chat_id)).collection('settings').document('config').get()
+    doc = await db.collection('chats').document(chat_key).collection('settings').document('config').get()
+
     if doc.exists:
-        return doc.to_dict()
-    return {}
+        data = doc.to_dict()
+    else:
+        data = {}
+
+    _group_settings_cache[chat_key] = data
+    _group_settings_cache_time[chat_key] = time.time()
+    return data
 
 async def update_group_settings(chat_id: int, field: str, value):
+    global _group_settings_cache, _group_settings_cache_time
+    chat_key = str(chat_id)
+
+    if chat_key not in _group_settings_cache:
+        _group_settings_cache[chat_key] = {}
+
+    _group_settings_cache[chat_key][field] = value
+    _group_settings_cache_time[chat_key] = time.time()
+
     db = get_db()
-    await db.collection('chats').document(str(chat_id)).collection('settings').document('config').set({field: value}, merge=True)
+    fire_and_forget(db.collection('chats').document(chat_key).collection('settings').document('config').set({field: value}, merge=True))
 
 # 1. ПРИВЕТСТВИЕ И ПРАВИЛА
 @router.message(F.text.lower().startswith("приветствие ") | F.text.lower().startswith("!приветствие "))
@@ -56,18 +82,35 @@ async def set_rules(message: types.Message, bot: Bot):
     text = parts[1]
 
     db = get_db()
-    await db.collection('bot_settings').document('global_rules').set({'text': text})
+    fire_and_forget(db.collection('bot_settings').document('global_rules').set({'text': text}))
+
+    global _global_rules_cache, _global_rules_cache_time
+    _global_rules_cache = text
+    _global_rules_cache_time = time.time()
+
     await message.answer("✅ Глобальные правила успешно обновлены!")
+
+_global_rules_cache = None
+_global_rules_cache_time = 0
+GLOBAL_RULES_CACHE_TTL = 300.0
 
 @router.message(F.text.lower().in_(["правила", "!правила", "/rules"]))
 async def show_rules(message: types.Message):
-    db = get_db()
-    doc = await db.collection('bot_settings').document('global_rules').get()
-    if doc.exists:
-        text = doc.to_dict().get('text', "Правила пока не установлены.")
-        await message.answer(f"📜 <b>Правила:</b>\n\n{text}")
+    global _global_rules_cache, _global_rules_cache_time
+
+    if _global_rules_cache is not None and time.time() - _global_rules_cache_time < GLOBAL_RULES_CACHE_TTL:
+        text = _global_rules_cache
     else:
-        await message.answer("Правила пока не установлены.")
+        db = get_db()
+        doc = await db.collection('bot_settings').document('global_rules').get()
+        if doc.exists:
+            text = doc.to_dict().get('text', "Правила пока не установлены.")
+        else:
+            text = "Правила пока не установлены."
+        _global_rules_cache = text
+        _global_rules_cache_time = time.time()
+
+    await message.answer(f"📜 <b>Правила:</b>\n\n{text}")
 
 # 2. ЗАМЕТКИ
 @router.message(F.text.lower().startswith("заметка ") | F.text.lower().startswith("!заметка "))
@@ -85,7 +128,7 @@ async def set_note(message: types.Message, bot: Bot):
     note_text = parts[2]
 
     db = get_db()
-    await db.collection('chats').document(str(chat_id)).collection('notes').document(note_name).set({'text': note_text})
+    fire_and_forget(db.collection('chats').document(str(chat_id)).collection('notes').document(note_name).set({'text': note_text}))
     await message.answer(f"📝 Заметка <b>{escape_html(note_name)}</b> сохранена! Вызов: <code>?{escape_html(note_name)}</code>")
 
 @router.message(F.text.startswith("?"))

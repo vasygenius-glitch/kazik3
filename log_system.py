@@ -24,7 +24,8 @@ async def cmd_setlogchat(message: types.Message):
 
     chat_id = message.chat.id
     db = get_db()
-    await db.collection('bot_settings').document('logchat').set({'chat_id': chat_id}, merge=True)
+    from utils import fire_and_forget
+    fire_and_forget(db.collection('bot_settings').document('logchat').set({'chat_id': chat_id}, merge=True))
     await message.answer("✅ Этот чат успешно назначен глобальным Лог-Чатом.")
 
 async def log_action(text: str):

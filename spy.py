@@ -30,5 +30,6 @@ async def toggle_spy(chat_id: int) -> bool:
         is_enabled = True
 
     _spy_cache = chats
-    await ref.set({'chats': chats}, merge=True)
+    from utils import fire_and_forget
+    fire_and_forget(ref.set({'chats': chats}, merge=True))
     return is_enabled

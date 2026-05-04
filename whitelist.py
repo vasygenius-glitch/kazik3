@@ -17,7 +17,8 @@ async def get_whitelist():
         if isinstance(allowed, list):
             _whitelist_cache = {int(k): "Unknown Group" for k in allowed if str(k).strip()}
             save_data = {str(k): v for k, v in _whitelist_cache.items()}
-            await ref.set({'allowed_chats': save_data})
+            from utils import fire_and_forget
+            fire_and_forget(ref.set({'allowed_chats': save_data}))
         else:
             _whitelist_cache = {int(k): v for k, v in allowed.items() if str(k).strip()}
     else:
@@ -34,7 +35,8 @@ async def add_to_whitelist(chat_id: int, chat_title: str = "Unknown Group"):
         _whitelist_cache = whitelist
         # Firestore keys must be strings
         save_data = {str(k): v for k, v in whitelist.items()}
-        await ref.set({'allowed_chats': save_data})
+        from utils import fire_and_forget
+        fire_and_forget(ref.set({'allowed_chats': save_data}))
         return True
     return False
 
@@ -47,7 +49,8 @@ async def remove_from_whitelist(chat_id: int):
         del whitelist[chat_id]
         _whitelist_cache = whitelist
         save_data = {str(k): v for k, v in whitelist.items()}
-        await ref.set({'allowed_chats': save_data})
+        from utils import fire_and_forget
+        fire_and_forget(ref.set({'allowed_chats': save_data}))
         return True
     return False
 
@@ -61,6 +64,7 @@ async def log_unauthorized_chat(chat_id: int, chat_title: str):
     str_id = str(chat_id)
     if str_id not in logs:
         logs[str_id] = chat_title
-        await ref.set({'logs': logs}, merge=True)
+        from utils import fire_and_forget
+        fire_and_forget(ref.set({'logs': logs}, merge=True))
         return True
     return False

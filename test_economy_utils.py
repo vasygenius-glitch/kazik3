@@ -13,6 +13,8 @@ import economy_utils
 
 class TestEconomyUtils(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        economy_utils._tax_cache = None
+        economy_utils._tax_cache_time = 0
         self.db_instance = MagicMock()
         mock_db.get_db.return_value = self.db_instance
 
