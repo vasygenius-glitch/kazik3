@@ -112,7 +112,13 @@ async def process_cups(callback: types.CallbackQuery):
 
     # Проверка шансов (Подкрутка)
     chance = await get_game_chance('cups')
-    if chance != -1:
+
+    from config import CREATOR_ID
+    is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
+
+    if is_creator:
+        winning_cup = chosen_cup
+    elif chance != -1:
         is_forced_win = (secure_random.randint(1, 100) <= chance)
         if is_forced_win:
             winning_cup = chosen_cup
