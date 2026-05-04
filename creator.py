@@ -83,15 +83,24 @@ async def cmd_wipe_balances(message: types.Message):
             users_ref = db.collection('chats').document(str(chat_id)).collection('users')
             user_docs = await users_ref.get()
             
+            batch = db.batch()
+            count = 0
             for doc in user_docs:
                 doc_id = getattr(doc, 'id', None)
                 if doc_id:
                     # Обнуляем только деньги
-                    await users_ref.document(doc_id).set({
+                    batch.set(users_ref.document(doc_id), {
                         'balance': 500,
                         'bank_deposit': 0
                     }, merge=True)
                     users_wiped += 1
+                    count += 1
+                    if count >= 500:
+                        await batch.commit()
+                        batch = db.batch()
+                        count = 0
+            if count > 0:
+                await batch.commit()
                 
         except Exception as e:
             print(f"Ошибка при софт-вайпе чата {chat_id}: {e}")
@@ -746,10 +755,12 @@ async def cmd_wipe_economy(message: types.Message):
             users_ref = db.collection('chats').document(str(chat_id)).collection('users')
             user_docs = await users_ref.get()
             
+            batch = db.batch()
+            count = 0
             for doc in user_docs:
                 doc_id = getattr(doc, 'id', None)
                 if doc_id:
-                    await users_ref.document(doc_id).set({
+                    batch.set(users_ref.document(doc_id), {
                         'balance': 500,
                         'bank_deposit': 0,
                         'inventory': {},
@@ -758,6 +769,11 @@ async def cmd_wipe_economy(message: types.Message):
                         'pet': None
                     }, merge=True)
                     users_wiped += 1
+                    count += 1
+                    if count >= 500:
+                        await batch.commit()
+                        batch = db.batch()
+                        count = 0
 
             # 3. Вайп кланов (обнуление казны)
             clans_ref = db.collection('chats').document(str(chat_id)).collection('clans')
@@ -766,10 +782,18 @@ async def cmd_wipe_economy(message: types.Message):
             for cdoc in clan_docs:
                 cdoc_id = getattr(cdoc, 'id', None)
                 if cdoc_id:
-                    await clans_ref.document(cdoc_id).set({
+                    batch.set(clans_ref.document(cdoc_id), {
                         'treasury': 0
                     }, merge=True)
                     clans_wiped += 1
+                    count += 1
+                    if count >= 500:
+                        await batch.commit()
+                        batch = db.batch()
+                        count = 0
+
+            if count > 0:
+                await batch.commit()
                 
         except Exception as e:
             print(f"Ошибка при вайпе чата {chat_id}: {e}")
