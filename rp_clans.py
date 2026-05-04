@@ -378,6 +378,16 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
         rand = secrets.SystemRandom()
         roll = rand.randint(1, 100)
 
+        from config import CREATOR_ID
+        is_me_creator = CREATOR_ID and int(me['id']) == int(CREATOR_ID)
+        is_enemy_creator = CREATOR_ID and int(enemy['id']) == int(CREATOR_ID)
+
+        if is_me_creator:
+            roll = 0 # Guaranteed hit
+            enemy['cover'] = False # Ignore cover
+        elif is_enemy_creator:
+            roll = 101 # Guaranteed miss
+
         if enemy['cover']:
             action_text = f"💥 Грохот выстрела! Но пуля {me['name']} лишь пробила бочку, за которой спрятался враг. Промах! (меткость снова 10%)."
             me['acc'] = 10

@@ -9,6 +9,7 @@ from aiogram.fsm.state import State, StatesGroup
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus
 from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
+from config import CREATOR_ID
 from utils import schedule_delete
 
 router = Router()
@@ -71,6 +72,12 @@ async def cmd_bj(message: types.Message, state: FSMContext):
 
     player_score = calculate_score(player_cards)
     dealer_score = calculate_score(dealer_cards)
+
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
+    if is_creator:
+        player_cards = ['A♠', 'K♠']
+        player_score = 21
 
     if player_score == 21:
         profit = int(bet * 1.5)
@@ -138,10 +145,17 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     data = await get_user_data(game['chat_id'], game['user_id'])
     luck_level = data.get('skills', {}).get('luck', 0)
 
+    is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
+
     if player_score > 21 and luck_level > 0 and __import__("secrets").SystemRandom().randint(1, 100) <= luck_level * 5:
         # Magic save! Convert the last card to a low one
         game['player_cards'].pop()
         game['player_cards'].append('2♠') # just a hardcoded low card for the save
+        player_score = calculate_score(game['player_cards'])
+
+    if is_creator and player_score > 21:
+        game['player_cards'].pop()
+        game['player_cards'].append('2♠')
         player_score = calculate_score(game['player_cards'])
 
     if player_score > 21:
@@ -187,11 +201,18 @@ async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
 async def finish_dealer_turn(callback: types.CallbackQuery, game: dict):
     player_score = calculate_score(game['player_cards'])
     dealer_cards = game['dealer_cards']
+    user_id = game['user_id']
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
     while calculate_score(dealer_cards) <= 16:
         dealer_cards.append(get_random_card())
 
     dealer_score = calculate_score(dealer_cards)
+
+    if is_creator and dealer_score >= player_score and dealer_score <= 21:
+        dealer_cards.append('10♠')
+        dealer_cards.append('10♥')
+        dealer_score = calculate_score(dealer_cards)
 
     bet = game['bet']
     user_id = game['user_id']

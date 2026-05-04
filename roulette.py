@@ -7,6 +7,7 @@ from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus
 from chances import get_game_chance
 from escape import escape_html
+from config import CREATOR_ID
 from utils import schedule_delete
 
 router = Router()
@@ -56,7 +57,11 @@ async def cmd_roulette(message: types.Message):
 
     # Проверка шансов (Подкрутка)
     chance = await get_game_chance('roulette')
-    if chance != -1:
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
+    if is_creator:
+        result_number = guess
+    elif chance != -1:
         is_forced_win = (secure_random.randint(1, 100) <= chance)
         if is_forced_win:
             # Даем победу (разброс от 0 до 4)
