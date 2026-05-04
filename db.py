@@ -36,6 +36,36 @@ def init_db(key_path):
             def collection(self, name):
                 return MockCollection(self.data, name)
 
+            def batch(self):
+                return MockBatch()
+
+        class MockBatch:
+            def __init__(self):
+                self.ops = []
+
+            def set(self, doc_ref, data, merge=False):
+                self.ops.append(('set', doc_ref, data, merge))
+
+            def update(self, doc_ref, data):
+                self.ops.append(('update', doc_ref, data))
+
+            def delete(self, doc_ref):
+                self.ops.append(('delete', doc_ref))
+
+            async def commit(self):
+                for op_data in self.ops:
+                    op = op_data[0]
+                    if op == 'set':
+                        _, doc_ref, data, merge = op_data
+                        await doc_ref.set(data, merge=merge)
+                    elif op == 'update':
+                        _, doc_ref, data = op_data
+                        await doc_ref.update(data)
+                    elif op == 'delete':
+                        _, doc_ref = op_data
+                        await doc_ref.delete()
+                self.ops = []
+
         class MockCollection:
             def __init__(self, parent_dict, name):
                 if name not in parent_dict:
@@ -47,26 +77,28 @@ def init_db(key_path):
 
             async def get(self):
                 class MockDocStream:
-                    def __init__(self, data):
+                    def __init__(self, id, data):
+                        self.id = id
                         self._data = data
                     def to_dict(self): return self._data
 
                 results = []
                 for doc_id, doc_data in self.data.items():
                     if '_data' in doc_data:
-                        results.append(MockDocStream(doc_data['_data']))
+                        results.append(MockDocStream(doc_id, doc_data['_data']))
                 return results
 
             async def stream(self):
                 class MockDocStream:
-                    def __init__(self, data):
+                    def __init__(self, id, data):
+                        self.id = id
                         self._data = data
                     def to_dict(self): return self._data
 
                 for doc_id, doc_data in self.data.items():
                     # Return only docs that actually have data (not just subcollections)
                     if '_data' in doc_data:
-                        yield MockDocStream(doc_data['_data'])
+                        yield MockDocStream(doc_id, doc_data['_data'])
 
         class MockDocument:
             def __init__(self, parent_dict, name):
@@ -99,6 +131,10 @@ def init_db(key_path):
             async def update(self, data):
                 if '_data' in self.doc_node:
                     self.doc_node['_data'].update(data)
+
+            async def delete(self):
+                if '_data' in self.doc_node:
+                    del self.doc_node['_data']
         db = MockDB()
         return db
 
