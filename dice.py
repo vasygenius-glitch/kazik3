@@ -3,18 +3,9 @@ import secrets
 from aiogram import Router, types
 from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance
+from utils import schedule_delete
 
 router = Router()
-
-async def schedule_delete(*messages, delay: int = 40):
-    import asyncio
-    await asyncio.sleep(delay)
-    for msg in messages:
-        try:
-            if msg and hasattr(msg, 'delete'):
-                await msg.delete()
-        except:
-            pass
 
 @router.message(Command("dice"))
 async def cmd_dice(message: types.Message):
