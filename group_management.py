@@ -5,6 +5,8 @@ from db import get_db
 from escape import escape_html
 from user_manager import update_user_field
 from config import CREATOR_ID
+from utils import schedule_delete
+import asyncio
 
 router = Router()
 
@@ -125,10 +127,7 @@ async def antilink_check(message: types.Message, bot: Bot):
 
         await message.delete()
         msg = await message.answer(f"⚠️ <b>{escape_html(message.from_user.full_name)}</b>, ссылки в этом чате запрещены!")
-        import asyncio
-        await asyncio.sleep(10)
-        try: await msg.delete()
-        except: pass
+        asyncio.create_task(schedule_delete(msg, delay=10))
 
 # 4. БИО ПРОФИЛЯ
 @router.message(F.text.lower().startswith("/bio ") | F.text.lower().startswith("био "))
@@ -163,7 +162,4 @@ async def antivoice_check(message: types.Message, bot: Bot):
 
         await message.delete()
         msg = await message.answer(f"⚠️ <b>{escape_html(message.from_user.full_name)}</b>, голосовые и видеосообщения в этом чате запрещены!")
-        import asyncio
-        await asyncio.sleep(10)
-        try: await msg.delete()
-        except: pass
+        asyncio.create_task(schedule_delete(msg, delay=10))
