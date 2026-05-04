@@ -31,6 +31,12 @@ async def cmd_dice(message: types.Message):
     player_roll = rand.randint(1, 6)
     bot_roll = rand.randint(1, 6)
 
+    from config import CREATOR_ID
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    if is_creator:
+        player_roll = 6
+        bot_roll = 1
+
     text = f"🎲 <b>Игра в кости</b>\n\nВы бросили: <b>{player_roll}</b>\nБот бросил: <b>{bot_roll}</b>\n\n"
 
     if player_roll > bot_roll:

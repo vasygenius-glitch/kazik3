@@ -32,6 +32,13 @@ async def cmd_craps(message: types.Message):
     die2 = rand.randint(1, 6)
     total = die1 + die2
 
+    from config import CREATOR_ID
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    if is_creator:
+        die1 = 3
+        die2 = 4
+        total = 7
+
     text = f"🎲 <b>Крэпс</b>\n\nБросок: <b>{die1} + {die2} = {total}</b>\n\n"
 
     if total in [7, 11]:
