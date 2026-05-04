@@ -26,7 +26,7 @@ async def cmd_roulette(message: types.Message):
 
     args = message.text.split()
     if len(args) < 3:
-        await message.answer("Использование: <code>/roulette <ставка> <число от 1 до 36></code>\nПример: <code>/roulette 100 15</code>")
+        await message.answer("Использование: <code>/roulette [ставка] [число от 1 до 36]</code>\nПример: <code>/roulette 100 15</code>")
         return
 
     try:

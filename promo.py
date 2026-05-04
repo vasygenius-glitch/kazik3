@@ -15,7 +15,7 @@ async def cmd_createpromo(message: types.Message):
 
     args = message.text.split()
     if len(args) < 4:
-        await message.answer("Использование: <code>/createpromo <код> <награда> <кол-во активаций></code>")
+        await message.answer("Использование: <code>/createpromo [код] [награда] [кол-во активаций]</code>")
         return
 
     code = args[1]
