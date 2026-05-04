@@ -188,17 +188,17 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 active_duels = {}
 
-@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | (F.text.lower().startswith("дуэль") & ~F.text.lower().in_(["дуэль да", "дуэль нет"])) | F.text.lower().startswith("/duel")))
+@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | F.text.lower().startswith("дуэль") | F.text.lower().startswith("/duel")))
 async def cmd_duel(message: types.Message):
     if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение человека, чтобы вызвать его на дуэль.")
+        return await message.answer("Ответьте на сообщение ковбоя, которому хотите бросить вызов.")
 
     chat_id = message.chat.id
     user_id = message.from_user.id
     target_id = message.reply_to_message.from_user.id
 
     if user_id == target_id or message.reply_to_message.from_user.is_bot:
-        return await message.answer("С этим нельзя устроить дуэль.")
+        return await message.answer("В этом салуне с такими не стреляются.")
 
     args = message.text.split()
     bet_str = args[-1]
@@ -207,11 +207,11 @@ async def cmd_duel(message: types.Message):
         bet = int(bet_str)
         if bet <= 0: return
     except ValueError:
-        return await message.answer("Укажите ставку: <code>Вызвать на дуэль 1000</code>")
+        return await message.answer("Укажите ставку для дуэли: <code>Вызвать на дуэль 1000</code>")
 
     user_data = await get_user_data(chat_id, user_id)
     if user_data.get('balance', 0) < bet:
-        return await message.answer("У вас недостаточно средств.")
+        return await message.answer("В ваших карманах пусто для такой ставки.")
 
     import uuid
     duel_id = uuid.uuid4().hex[:10]
@@ -229,61 +229,58 @@ async def cmd_duel(message: types.Message):
         'timestamp': time.time()
     }
 
-    if not hasattr(message.bot, 'pending_text_duels'):
-        message.bot.pending_text_duels = {}
-
-    message.bot.pending_text_duels[f"{chat_id}_{target_id}"] = duel_id
-
-    async def expire_duel(d_id, c_id, t_id):
+    async def expire_duel(d_id):
         await asyncio.sleep(300)
         if d_id in active_duels and active_duels[d_id]['state'] == 'pending':
             del active_duels[d_id]
-            if getattr(message.bot, 'pending_text_duels', {}).get(f"{c_id}_{t_id}") == d_id:
-                del message.bot.pending_text_duels[f"{c_id}_{t_id}"]
 
-    asyncio.create_task(expire_duel(duel_id, chat_id, target_id))
+    asyncio.create_task(expire_duel(duel_id))
 
-    text = "🔫 <b>" + target_name + "</b>, минуточку внимания!\n" + "<b>" + proposer_name + "</b> вызывает Вас на дуэль на сумму <b>" + str(bet) + "</b> 💰\n" + "💬 Чтобы принять вызов, ответьте или напишите <code>дуэль да</code>, или <code>дуэль нет</code> для отказа.\n" + "⏳ На принятие решения у вас есть 5 минут."
-    text = text.replace("\\n", "\n")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Принять вызов 🔫", callback_data=f"duelinv_yes_{duel_id}")
+    builder.button(text="Струсить 🏃", callback_data=f"duelinv_no_{duel_id}")
 
-    await message.answer(text)
+    text = (
+        f"🌵 <b>Солнце в зените, пыль под сапогами...</b>\n\n"
+        f"Ковбой <b>{proposer_name}</b> бросает вызов <b>{target_name}</b>.\n"
+        f"Ставка в этом жестоком споре: <b>{bet}</b> сыроежек.\n\n"
+        f"<i>Рука на кобуре. Время покажет, кто из вас быстрее.</i>"
+    )
 
-@router.message(F.text & F.text.lower().in_(["дуэль да", "дуэль нет"]))
-async def text_duel_accept_decline(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+    await message.answer(text, reply_markup=builder.as_markup())
 
-    if not hasattr(message.bot, 'pending_text_duels'):
-        return
+@router.callback_query(F.data.startswith("duelinv_"))
+async def callback_duel_invitation(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    action = parts[1]
+    duel_id = parts[2]
 
-    duel_key = f"{chat_id}_{user_id}"
-    duel_id = message.bot.pending_text_duels.get(duel_key)
-
-    if not duel_id or duel_id not in active_duels:
-        return
+    if duel_id not in active_duels:
+        return await callback.answer("Эта история уже стала местной легендой и больше не актуальна.", show_alert=True)
 
     duel_info = active_duels[duel_id]
     if duel_info['state'] != 'pending':
-        return
+        return await callback.answer("Дуэль уже идет полным ходом или завершена.", show_alert=True)
 
-    is_accept = message.text.lower() == "дуэль да"
+    target_id = duel_info['target_id']
+    chat_id = callback.message.chat.id
 
-    if not is_accept:
+    if callback.from_user.id != target_id:
+        return await callback.answer("Этот вызов брошен не вам, постойте в сторонке.", show_alert=True)
+
+    if action == "no":
         del active_duels[duel_id]
-        del message.bot.pending_text_duels[duel_key]
-        return await message.answer(f"🏃 <b>{duel_info['target_name']}</b> испугался и отказался от дуэли.")
+        return await callback.message.edit_text(f"🏃 <b>{duel_info['target_name']}</b> бросил шляпу в пыль и сбежал от дуэли под свист толпы.")
 
     bet = duel_info['bet']
     proposer_id = duel_info['proposer_id']
-    target_id = duel_info['target_id']
 
     user_data = await get_user_data(chat_id, proposer_id)
     target_data = await get_user_data(chat_id, target_id)
 
     if user_data.get('balance', 0) < bet or target_data.get('balance', 0) < bet:
         del active_duels[duel_id]
-        del message.bot.pending_text_duels[duel_key]
-        return await message.answer("❌ Дуэль отменена. У одного из участников недостаточно средств.")
+        return await callback.message.edit_text("❌ Один из стрелков оказался на мели. Дуэль отменяется.")
 
     await update_user_balance(chat_id, proposer_id, -bet)
     await update_user_balance(chat_id, target_id, -bet)
@@ -293,17 +290,15 @@ async def text_duel_accept_decline(message: types.Message):
     duel_info['p2'] = {'id': target_id, 'name': duel_info['target_name'], 'acc': 10, 'cover': False}
     duel_info['turn'] = proposer_id
 
-    del message.bot.pending_text_duels[duel_key]
-
-    await render_tactical_duel(message.bot, chat_id, duel_id)
+    await render_tactical_duel(callback.bot, chat_id, duel_id, message_to_edit=callback.message)
 
 
-def get_duel_keyboard(duel_id: str, turn_user_id: int):
+def get_duel_keyboard(duel_id: str):
     builder = InlineKeyboardBuilder()
-    builder.button(text="🎯 Прицелиться", callback_data=f"tduel_{duel_id}_aim")
-    builder.button(text="💥 Выстрелить", callback_data=f"tduel_{duel_id}_shoot")
-    builder.button(text="💨 Сбить прицел", callback_data=f"tduel_{duel_id}_distract")
-    builder.button(text="🛡 Укрытие", callback_data=f"tduel_{duel_id}_cover")
+    builder.button(text="🎯 Прищуриться", callback_data=f"tduel_{duel_id}_aim")
+    builder.button(text="💥 Спустить курок", callback_data=f"tduel_{duel_id}_shoot")
+    builder.button(text="💨 Бросить пыль в глаза", callback_data=f"tduel_{duel_id}_distract")
+    builder.button(text="🛡 За бочку", callback_data=f"tduel_{duel_id}_cover")
     builder.adjust(2, 2)
     return builder.as_markup()
 
@@ -317,26 +312,29 @@ async def render_tactical_duel(bot, chat_id: int, duel_id: str, message_to_edit=
 
     turn_name = p1['name'] if duel['turn'] == p1['id'] else p2['name']
 
-    p1_cover = "🛡 В укрытии" if p1['cover'] else ""
-    p2_cover = "🛡 В укрытии" if p2['cover'] else ""
+    p1_cover = "🛡 Прячется за бочкой" if p1['cover'] else ""
+    p2_cover = "🛡 Прячется за бочкой" if p2['cover'] else ""
 
-    text = "⚔️ <b>Тактическая Дуэль</b> ⚔️\n\n" + "💰 <b>Банк:</b> " + str(duel['bet'] * 2) + "\n\n" + "🤠 <b>" + p1['name'] + "</b>\n" + "Меткость: " + str(p1['acc']) + "% " + p1_cover + "\n\n" + "🤠 <b>" + p2['name'] + "</b>\n" + "Меткость: " + str(p2['acc']) + "% " + p2_cover + "\n\n"
+    text = (
+        f"🌵 <b>КРОВАВАЯ ДУЭЛЬ</b> 🌵\n\n"
+        f"💰 <b>Куш:</b> {duel['bet'] * 2}\n\n"
+        f"🤠 <b>{p1['name']}</b>\n"
+        f"Меткость: {p1['acc']}% {p1_cover}\n\n"
+        f"🤠 <b>{p2['name']}</b>\n"
+        f"Меткость: {p2['acc']}% {p2_cover}\n\n"
+    )
 
     if action_text:
-        text += "📜 <i>" + action_text + "</i>\n\n"
+        text += f"📜 <i>{action_text}</i>\n\n"
 
-    text += "⏳ Ход игрока: <b>" + turn_name + "</b>"
+    text += f"⏳ Свинец полетит по команде: <b>{turn_name}</b>"
 
-    text = text.replace("\\n", "\n")
-
-    keyboard = get_duel_keyboard(duel_id, duel['turn'])
+    keyboard = get_duel_keyboard(duel_id)
 
     if message_to_edit:
         await message_to_edit.edit_text(text, reply_markup=keyboard)
     else:
-        msg = await bot.send_message(chat_id, text, reply_markup=keyboard)
-        duel['msg_id'] = msg.message_id
-
+        await bot.send_message(chat_id, text, reply_markup=keyboard)
 
 @router.callback_query(F.data.startswith("tduel_"))
 async def callback_tactical_duel(callback: types.CallbackQuery):
@@ -344,17 +342,15 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
     duel_id = parts[1]
     action = parts[2]
 
-
-
     if duel_id not in active_duels:
         return await callback.answer("Дуэль завершена или не найдена.", show_alert=True)
 
     duel = active_duels[duel_id]
     if duel['state'] != 'active':
-        return await callback.answer("Дуэль уже завершена.", show_alert=True)
+        return await callback.answer("Один уже мертв. Дуэль окончена.", show_alert=True)
 
     if duel['turn'] != callback.from_user.id:
-        return await callback.answer("Сейчас не ваш ход!", show_alert=True)
+        return await callback.answer("Спрячь револьвер. Не твой ход!", show_alert=True)
 
     is_p1 = (callback.from_user.id == duel['p1']['id'])
     me = duel['p1'] if is_p1 else duel['p2']
@@ -367,15 +363,15 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
 
     if action == "aim":
         me['acc'] = min(100, me['acc'] + 35)
-        action_text = f"{me['name']} прицеливается! Меткость повышена до {me['acc']}%."
+        action_text = f"{me['name']} прищуривает глаз, выцеливая жертву. Шанс попасть: {me['acc']}%."
 
     elif action == "cover":
         me['cover'] = True
-        action_text = f"{me['name']} уходит в укрытие! Следующий выстрел по нему не пройдет."
+        action_text = f"{me['name']} перекатывается за старую деревянную бочку! В него не попасть."
 
     elif action == "distract":
         enemy['acc'] = 10
-        action_text = f"{me['name']} кидает песок в глаза! Меткость {enemy['name']} сбита до 10%."
+        action_text = f"{me['name']} пинает сапогом песок в глаза противнику! {enemy['name']} ослеплен (меткость 10%)."
 
     elif action == "shoot":
         import secrets
@@ -383,7 +379,7 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
         roll = rand.randint(1, 100)
 
         if enemy['cover']:
-            action_text = f"💥 {me['name']} стреляет... Но {enemy['name']} был в укрытии! Промах! Меткость {me['name']} падает до 10%."
+            action_text = f"💥 Грохот выстрела! Но пуля {me['name']} лишь пробила бочку, за которой спрятался враг. Промах! (меткость снова 10%)."
             me['acc'] = 10
         elif roll <= me['acc']:
             from economy_utils import get_global_tax
@@ -394,18 +390,21 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
 
             await update_user_balance(chat_id, me['id'], win_amount)
 
-            text = "💥 <b>ВЫСТРЕЛ!</b>\n\n" + "🎯 <b>" + me['name'] + "</b> попадает точно в цель (шанс был " + str(me['acc']) + "%)!\n" + "☠️ <b>" + enemy['name'] + "</b> падает замертво.\n\n" + "🏆 Победитель <b>" + me['name'] + "</b> забирает <b>" + str(win_amount) + "</b> сыроежек!"
+            text = (
+                f"💥 <b>СМЕРТЕЛЬНЫЙ ВЫСТРЕЛ!</b> 💥\n\n"
+                f"🎯 <b>{me['name']}</b> нажимает на курок (шанс был {me['acc']}%). В яблочко!\n"
+                f"☠️ <b>{enemy['name']}</b> хватается за грудь и падает в дорожную пыль замертво.\n\n"
+                f"🏆 Победитель <b>{me['name']}</b> забирает <b>{win_amount}</b> сыроежек!"
+            )
 
             if tax_amount > 0:
-                text += "\n<i>(Налог дуэльного клуба: " + str(tax_amount) + ")</i>"
-
-            text = text.replace("\\n", "\n")
+                text += f"\n<i>(Гробовщик забирает свои {tax_amount} монет)</i>"
 
             duel['state'] = 'finished'
             del active_duels[duel_id]
             return await callback.message.edit_text(text)
         else:
-            action_text = f"💥 {me['name']} стреляет (шанс {me['acc']}%)... И ПРОМАЗЫВАЕТ! Меткость падает до 10%."
+            action_text = f"💥 {me['name']} спускает курок (шанс {me['acc']}%)... Щелчок, осечка, мимо! (меткость снова 10%)."
             me['acc'] = 10
 
     duel['turn'] = enemy['id']
