@@ -6,15 +6,26 @@ from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN, FIREBASE_KEY_PATH
 from db import init_db
 from handlers_init import register_all_handlers
 from whitelist_middleware import WhitelistMiddleware
+from system_logger import logger
+import os
 
 async def main():
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    dp = Dispatcher()
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        from aiogram.fsm.storage.redis import RedisStorage
+        storage = RedisStorage.from_url(redis_url)
+        logger.info("✅ Подключен RedisStorage для FSM!")
+    else:
+        storage = MemoryStorage()
+        logger.info("⚠️ REDIS_URL не найден, используется MemoryStorage.")
+
+    dp = Dispatcher(storage=storage)
 
     try:
         init_db(FIREBASE_KEY_PATH)
