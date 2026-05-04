@@ -188,17 +188,17 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 active_duels = {}
 
-@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | (F.text.lower().startswith("дуэль") & ~F.text.lower().in_(["дуэль да", "дуэль нет"])) | F.text.lower().startswith("/duel")))
+@router.message(F.text & (F.text.lower().startswith("вызвать на дуэль") | F.text.lower().startswith("дуэль") | F.text.lower().startswith("/duel")))
 async def cmd_duel(message: types.Message):
     if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение человека, чтобы вызвать его на дуэль.")
+        return await message.answer("🏜 <i>Ветер перекатывает перекати-поле...</i>\n\nОтветьте на сообщение человека, чтобы бросить ему вызов!")
 
     chat_id = message.chat.id
     user_id = message.from_user.id
     target_id = message.reply_to_message.from_user.id
 
     if user_id == target_id or message.reply_to_message.from_user.is_bot:
-        return await message.answer("С этим нельзя устроить дуэль.")
+        return await message.answer("С этим персонажем дуэль не выйдет, ковбой.")
 
     args = message.text.split()
     bet_str = args[-1]
@@ -207,11 +207,11 @@ async def cmd_duel(message: types.Message):
         bet = int(bet_str)
         if bet <= 0: return
     except ValueError:
-        return await message.answer("Укажите ставку: <code>Вызвать на дуэль 1000</code>")
+        return await message.answer("Укажите ставку: <code>дуэль 1000</code>")
 
     user_data = await get_user_data(chat_id, user_id)
     if user_data.get('balance', 0) < bet:
-        return await message.answer("У вас недостаточно средств.")
+        return await message.answer("У вас недостаточно сыроежек для такой ставки.")
 
     import uuid
     duel_id = uuid.uuid4().hex[:10]
@@ -229,61 +229,62 @@ async def cmd_duel(message: types.Message):
         'timestamp': time.time()
     }
 
-    if not hasattr(message.bot, 'pending_text_duels'):
-        message.bot.pending_text_duels = {}
-
-    message.bot.pending_text_duels[f"{chat_id}_{target_id}"] = duel_id
-
-    async def expire_duel(d_id, c_id, t_id):
+    async def expire_duel(d_id):
         await asyncio.sleep(300)
         if d_id in active_duels and active_duels[d_id]['state'] == 'pending':
             del active_duels[d_id]
-            if getattr(message.bot, 'pending_text_duels', {}).get(f"{c_id}_{t_id}") == d_id:
-                del message.bot.pending_text_duels[f"{c_id}_{t_id}"]
+            import contextlib
+            with contextlib.suppress(Exception):
+                await message.bot.send_message(chat_id, f"🕰 Время на раздумья вышло. Вызов от {proposer_name} аннулирован.")
 
-    asyncio.create_task(expire_duel(duel_id, chat_id, target_id))
+    asyncio.create_task(expire_duel(duel_id))
 
-    text = "🔫 <b>" + target_name + "</b>, минуточку внимания!\n" + "<b>" + proposer_name + "</b> вызывает Вас на дуэль на сумму <b>" + str(bet) + "</b> 💰\n" + "💬 Чтобы принять вызов, ответьте или напишите <code>дуэль да</code>, или <code>дуэль нет</code> для отказа.\n" + "⏳ На принятие решения у вас есть 5 минут."
-    text = text.replace("\\n", "\n")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⚔️ Принять вызов", callback_data=f"duel_acc_{duel_id}")
+    builder.button(text="🏃 Сбежать", callback_data=f"duel_dec_{duel_id}")
+    builder.adjust(1, 1)
 
-    await message.answer(text)
+    text = (
+        f"🏜 <b>ДИКИЙ ВЫЗОВ!</b> 🏜\n\n"
+        f"Эй, <b>{target_name}</b>!\n"
+        f"<b>{proposer_name}</b> бросает вам перчатку и ставит на кон <b>{bet}</b> 💰!\n\n"
+        f"<i>У вас есть 5 минут, чтобы достать револьвер или с позором уйти в закат.</i>"
+    )
 
-@router.message(F.text & F.text.lower().in_(["дуэль да", "дуэль нет"]))
-async def text_duel_accept_decline(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+    await message.answer(text, reply_markup=builder.as_markup())
 
-    if not hasattr(message.bot, 'pending_text_duels'):
-        return
 
-    duel_key = f"{chat_id}_{user_id}"
-    duel_id = message.bot.pending_text_duels.get(duel_key)
+@router.callback_query(F.data.startswith("duel_acc_") | F.data.startswith("duel_dec_"))
+async def callback_duel_accept_decline(callback: types.CallbackQuery):
+    action = callback.data.split("_")[1]
+    duel_id = callback.data.split("_")[2]
 
-    if not duel_id or duel_id not in active_duels:
-        return
+    if duel_id not in active_duels:
+        return await callback.answer("Дуэль уже недействительна.", show_alert=True)
 
     duel_info = active_duels[duel_id]
     if duel_info['state'] != 'pending':
-        return
+        return await callback.answer("Эта дуэль уже началась!", show_alert=True)
 
-    is_accept = message.text.lower() == "дуэль да"
+    chat_id = callback.message.chat.id
+    target_id = duel_info['target_id']
 
-    if not is_accept:
+    if callback.from_user.id != target_id:
+        return await callback.answer("Этот вызов бросили не вам!", show_alert=True)
+
+    if action == "dec":
         del active_duels[duel_id]
-        del message.bot.pending_text_duels[duel_key]
-        return await message.answer(f"🏃 <b>{duel_info['target_name']}</b> испугался и отказался от дуэли.")
+        return await callback.message.edit_text(f"🏃 <b>{duel_info['target_name']}</b> трусливо поджал хвост и отказался от дуэли с <b>{duel_info['proposer_name']}</b>.")
 
     bet = duel_info['bet']
     proposer_id = duel_info['proposer_id']
-    target_id = duel_info['target_id']
 
     user_data = await get_user_data(chat_id, proposer_id)
     target_data = await get_user_data(chat_id, target_id)
 
     if user_data.get('balance', 0) < bet or target_data.get('balance', 0) < bet:
         del active_duels[duel_id]
-        del message.bot.pending_text_duels[duel_key]
-        return await message.answer("❌ Дуэль отменена. У одного из участников недостаточно средств.")
+        return await callback.message.edit_text("❌ Дуэль отменена. У одного из ковбоев пустые карманы.")
 
     await update_user_balance(chat_id, proposer_id, -bet)
     await update_user_balance(chat_id, target_id, -bet)
@@ -293,9 +294,7 @@ async def text_duel_accept_decline(message: types.Message):
     duel_info['p2'] = {'id': target_id, 'name': duel_info['target_name'], 'acc': 10, 'cover': False}
     duel_info['turn'] = proposer_id
 
-    del message.bot.pending_text_duels[duel_key]
-
-    await render_tactical_duel(message.bot, chat_id, duel_id)
+    await render_tactical_duel(callback.bot, chat_id, duel_id, message_to_edit=callback.message, action_text="🛎 Гонг пробил! Дуэль начинается!")
 
 
 def get_duel_keyboard(duel_id: str, turn_user_id: int):
