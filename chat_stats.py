@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from db import get_db
 from escape import escape_html
 from config import CREATOR_ID
+from utils import fire_and_forget
 
 router = Router()
 
@@ -48,18 +49,18 @@ async def flush_stats_task():
 
                     if doc.exists:
                         db_data = doc.to_dict()
-                        await ref.update({
+                        fire_and_forget(ref.update({
                             'all_time': db_data.get('all_time', 0) + data["count"],
                             'week': db_data.get('week', 0) + data["count"],
                             'full_name': data["full_name"]
-                        })
+                        }))
                     else:
-                        await ref.set({
+                        fire_and_forget(ref.set({
                             'all_time': data["count"],
                             'week': data["count"],
                             'join_date': current_time,
                             'full_name': data["full_name"]
-                        })
+                        }))
                 except Exception as e:
                     print(f"Error flushing stats for user {user_id} in chat {chat_id}: {e}")
 

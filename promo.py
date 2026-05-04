@@ -4,6 +4,7 @@ from db import get_db
 from user_manager import update_user_balance
 from creator import is_creator
 from escape import escape_html
+from utils import fire_and_forget
 
 router = Router()
 
@@ -28,11 +29,11 @@ async def cmd_createpromo(message: types.Message):
     db = get_db()
     ref = db.collection('bot_settings').document('promocodes').collection('active').document(code)
 
-    await ref.set({
+    fire_and_forget(ref.set({
         'reward': reward,
         'max_activations': max_activations,
         'used_by': []
-    })
+    }))
 
     await message.answer(f"✅ Промокод <b>{code}</b> успешно создан!\nНаграда: {reward} сыроежек\nКоличество активаций: {max_activations}")
 
@@ -69,7 +70,7 @@ async def cmd_promo(message: types.Message):
         return
 
     used_by.append(user_id)
-    await ref.update({'used_by': used_by})
+    fire_and_forget(ref.update({'used_by': used_by}))
 
     await update_user_balance(chat_id, user_id, reward)
     await message.answer(f"🎉 Вы успешно активировали промокод <b>{code}</b> и получили <b>{reward}</b> сыроежек!")
