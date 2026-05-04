@@ -6,8 +6,29 @@ from db import get_db
 from escape import escape_html
 from user_manager import get_user_data, update_user_balance, update_user_field
 from shop import ITEMS
+from utils import fire_and_forget
 
 router = Router()
+
+_bank_cache = {}
+BANK_CACHE_TTL = 10.0
+
+def get_bank_from_cache(chat_id, identifier):
+    key = (chat_id, str(identifier).lower())
+    if key in _bank_cache:
+        cache_entry = _bank_cache[key]
+        if time.time() - cache_entry["timestamp"] < BANK_CACHE_TTL:
+            return cache_entry["data"].copy()
+    return None
+
+def set_bank_in_cache(chat_id, identifier, data):
+    # Cache by ID
+    banker_id_key = (chat_id, str(data.get('banker_id', identifier)).lower())
+    _bank_cache[banker_id_key] = {"data": data.copy(), "timestamp": time.time()}
+    # Cache by Name
+    if 'name' in data:
+        name_key = (chat_id, str(data['name']).lower())
+        _bank_cache[name_key] = {"data": data.copy(), "timestamp": time.time()}
 
 @router.message(Command("profile"))
 async def cmd_profile(message: types.Message):
@@ -102,6 +123,10 @@ async def cmd_profile(message: types.Message):
     await message.answer(text)
 
 async def get_bank_info(chat_id: int, identifier):
+    cached_data = get_bank_from_cache(chat_id, identifier)
+    if cached_data:
+        return cached_data
+
     db = get_db()
     banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
 
@@ -112,6 +137,7 @@ async def get_bank_info(chat_id: int, identifier):
         if doc.exists:
             data = doc.to_dict()
             data['banker_id'] = banker_id
+            set_bank_in_cache(chat_id, banker_id, data)
             return data
     except ValueError:
         pass
@@ -124,14 +150,20 @@ async def get_bank_info(chat_id: int, identifier):
         b_name = b_data.get('name', '').lower()
         if b_name.startswith(search_name) or search_name in b_name:
             b_data['banker_id'] = int(doc.id)
+            set_bank_in_cache(chat_id, identifier, b_data)
             return b_data
 
     return None
 
 async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
+    current_data = await get_bank_info(chat_id, banker_id) or {}
+    current_data.update(data)
+    current_data['banker_id'] = banker_id
+    set_bank_in_cache(chat_id, banker_id, current_data)
+
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(banker_id))
-    await bank_ref.set(data, merge=True)
+    fire_and_forget(bank_ref.set(data, merge=True))
 
 @router.message(Command("bank"))
 async def cmd_bank(message: types.Message):
@@ -632,11 +664,11 @@ async def cmd_incass(message: types.Message):
         rem_min = (18000 - (current_time - last_time)) // 60
         return await message.answer(f"🚛 Машины на техобслуживании. Следующий рейс будет доступен через {rem_min} мин.")
 
-    if bank_data.get('capital', 0) < 5000000:
-        return await message.answer("❌ В капитале банка должно быть минимум 5.000.000 сыроежек (залог на случай ремонта).")
+    if bank_data.get('capital', 0) < 1000000:
+        return await message.answer("❌ В капитале банка должно быть минимум 1.000.000 сыроежек (залог на случай ремонта).")
 
-    if data.get('balance', 0) < 2500000:
-        return await message.answer("❌ У вас на личном счету должно быть минимум 2.500.000 сыр. для оплаты личной страховки рейса.")
+    if data.get('balance', 0) < 500000:
+        return await message.answer("❌ У вас на личном счету должно быть минимум 500.000 сыр. для оплаты личной страховки рейса.")
 
     await create_or_update_bank(chat_id, user_id, {'incass_last_time': current_time})
 
@@ -647,7 +679,7 @@ async def cmd_incass(message: types.Message):
     lvl_earnings = bank_data.get('upgrade_earnings', 0)
     earning_mult = 1.0 + (lvl_earnings * 0.1) # +10% заработка за каждый уровень
 
-    start_money = int(random.randint(2000000, 5000000) * earning_mult)
+    start_money = int(random.randint(400000, 1000000) * earning_mult)
 
     # Храним состояние рейса
     incass_id = f"incass_{chat_id}_{user_id}"
@@ -723,8 +755,8 @@ async def cb_incass(callback: types.CallbackQuery):
         if random.randint(1, 100) <= current_risk:
             del active_incass[incass_id]
 
-            # Штраф 3-5 млн.
-            total_penalty = random.randint(3000000, 5000000)
+            # Штраф 600к-1млн.
+            total_penalty = random.randint(600000, 1000000)
 
             # 50% платит банк, 50% платит лично банкир (нерф банкиров)
             bank_penalty = total_penalty // 2
@@ -744,7 +776,7 @@ async def cb_incass(callback: types.CallbackQuery):
             )
         else:
             state['step'] += 1
-            add_money = int(random.randint(2000000, 5000000) * state['earning_mult'])
+            add_money = int(random.randint(400000, 1000000) * state['earning_mult'])
             state['money'] += add_money
 
             # Генерируем следующий случайный прыжок риска

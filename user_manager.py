@@ -2,6 +2,7 @@ import time
 import asyncio
 import secrets
 from db import get_db
+from utils import fire_and_forget
 
 def get_user_ref(chat_id, user_id):
     db = get_db()
@@ -30,7 +31,7 @@ async def get_user_data(chat_id, user_id, full_name=None):
             cached_data['full_name'] = full_name
             set_in_cache(chat_id, user_id, cached_data)
             ref = get_user_ref(chat_id, user_id)
-            asyncio.create_task(ref.update({'full_name': full_name}))
+            fire_and_forget(ref.update({'full_name': full_name}))
         return cached_data
 
     ref = get_user_ref(chat_id, user_id)
@@ -39,8 +40,8 @@ async def get_user_data(chat_id, user_id, full_name=None):
     if doc.exists:
         data = doc.to_dict()
         if full_name and data.get('full_name') != full_name:
-            await ref.update({'full_name': full_name})
             data['full_name'] = full_name
+            fire_and_forget(ref.update({'full_name': full_name}))
         set_in_cache(chat_id, user_id, data)
         return data
     else:
@@ -63,28 +64,28 @@ async def get_user_data(chat_id, user_id, full_name=None):
             'debts': {},
             'escort_count': 0
         }
-        await ref.set(default_data)
+        fire_and_forget(ref.set(default_data))
         set_in_cache(chat_id, user_id, default_data)
         return default_data
 
 async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False):
-    ref = get_user_ref(chat_id, user_id)
     data = await get_user_data(chat_id, user_id)
-    
     new_balance = data.get('balance', 0) + amount
-    await ref.update({'balance': new_balance})
 
     data['balance'] = new_balance
     set_in_cache(chat_id, user_id, data)
+
+    ref = get_user_ref(chat_id, user_id)
+    fire_and_forget(ref.update({'balance': new_balance}))
     return new_balance
 
 async def update_user_field(chat_id, user_id, field, value):
-    ref = get_user_ref(chat_id, user_id)
-    await ref.update({field: value})
-    
     data = await get_user_data(chat_id, user_id)
     data[field] = value
     set_in_cache(chat_id, user_id, data)
+
+    ref = get_user_ref(chat_id, user_id)
+    fire_and_forget(ref.update({field: value}))
 
 async def check_and_give_bonus(chat_id, user_id, full_name=None):
     data = await get_user_data(chat_id, user_id, full_name)
@@ -154,9 +155,9 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             if bank_deposit > 0 and not data.get('bank_name'):
                 upd['bank_deposit'] = bank_deposit + bank_income
 
-        await ref.update(upd)
         data.update(upd)
         set_in_cache(chat_id, user_id, data)
+        fire_and_forget(ref.update(upd))
 
         return True, {
             'base': base_bonus, 'business': biz_income, 'car': car_income,
@@ -166,24 +167,27 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
     return False, {}
 
 async def add_item_to_inventory(chat_id, user_id, item_name):
-    ref = get_user_ref(chat_id, user_id)
     data = await get_user_data(chat_id, user_id)
     inv = data.get('inventory', {})
     inv[item_name] = inv.get(item_name, 0) + 1
-    await ref.update({'inventory': inv})
+
     data['inventory'] = inv
     set_in_cache(chat_id, user_id, data)
 
-async def remove_item_from_inventory(chat_id, user_id, item_name):
     ref = get_user_ref(chat_id, user_id)
+    fire_and_forget(ref.update({'inventory': inv}))
+
+async def remove_item_from_inventory(chat_id, user_id, item_name):
     data = await get_user_data(chat_id, user_id)
     inv = data.get('inventory', {})
     if inv.get(item_name, 0) > 0:
         inv[item_name] -= 1
         if inv[item_name] <= 0: del inv[item_name]
-        await ref.update({'inventory': inv})
+
         data['inventory'] = inv
         set_in_cache(chat_id, user_id, data)
+
+        fire_and_forget(get_user_ref(chat_id, user_id).update({'inventory': inv}))
         return True
     return False
 
