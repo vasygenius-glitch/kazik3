@@ -140,6 +140,11 @@ async def cmd_pay(message: types.Message):
 
     tax_percent = await get_global_tax()
     
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, sender_id)
+    if 'herpes' in active_diseases:
+        tax_percent = 30 # Герпес: глобальный налог 30% на все переводы
+
     if tax_percent > 0:
         commission = int(amount * (tax_percent / 100.0))
         if commission == 0: commission = 1 
@@ -250,6 +255,11 @@ async def cmd_work(message: types.Message):
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь работать.")
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'hiv' in active_diseases:
+        return await message.answer("🦠 <b>ВИЧ</b>: У тебя совершенно нет сил работать. Зарплата обнулена, работодатель отправил тебя домой лечиться.")
+
     last_work = data.get('last_work_time', 0)
     current_time = time.time()
 
@@ -283,6 +293,10 @@ async def cmd_work(message: types.Message):
     pet_id = pet.get('id') if pet else None
     pet_msg = ""
     
+    if 'hpv' in active_diseases:
+        pet_id = None # Питомец отказывается помогать из-за ВПЧ
+        pet_msg = "\n🦠 <b>ВПЧ</b>: Твой питомец брезгует к тебе подходить и не дал бонусов."
+
     if pet_id == 'cat':
         base_earnings = int(base_earnings * 1.2)
         pet_msg = "\n🐱 Ваш верный кот помог заработать на 20% больше!"
@@ -363,6 +377,9 @@ async def cmd_crime(message: types.Message):
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь совершать преступления.")
         
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+
     if data.get('is_banker', False):
         return await message.answer("🏦 Вы — уважаемый Банкир. Воровать не по статусу. (Крайм отключен для банкиров)")
 
@@ -382,10 +399,20 @@ async def cmd_crime(message: types.Message):
     # --- БОНУС ПИТОМЦА ---
     pet = data.get('pet')
     pet_id = pet.get('id') if pet else None
+
+    if 'hpv' in active_diseases:
+        pet_id = None
+        pet_msg = "\n🦠 <b>ВПЧ</b>: Питомец отказался помогать."
+    else:
+        pet_msg = "\n🐉 Дракон помог провернуть дело!" if pet_id == 'dragon' else ""
+
     dragon_bonus = 0.1 if pet_id == 'dragon' else 0
-    pet_msg = "\n🐉 Дракон помог провернуть дело!" if pet_id == 'dragon' else ""
 
     success_chance = 0.4 + (stealth_level * 0.05) + dragon_bonus
+
+    if 'syphilis' in active_diseases:
+        success_chance /= 2.0
+        pet_msg += "\n🦠 <b>Сифилис</b>: Шанс успеха порезан в 2 раза из-за ужасного самочувствия."
 
     if rand.random() < success_chance:
         base_earnings = rand.randint(1000, 3000)

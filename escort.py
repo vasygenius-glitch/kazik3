@@ -139,7 +139,51 @@ async def callback_escort(callback: types.CallbackQuery):
 
     tax_text = f" (Налог сутенеру: {tax_amount})" if tax_amount > 0 else ""
     
-    await callback.message.edit_text(f"🔞 <b>ЖЕСТКИЙ ИНТИМ!</b>\n\nСделка состоялась! Клиент оплатил <b>{amount}</b> сыроежек.\nПутана получила <b>{net_amount}</b> сыроежек{tax_text}.")
+    result_msg = f"🔞 <b>ЖЕСТКИЙ ИНТИМ!</b>\n\nСделка состоялась! Клиент оплатил <b>{amount}</b> сыроежек.\nПутана получила <b>{net_amount}</b> сыроежек{tax_text}."
+
+    # --- Логика заражения ЗППП ---
+    import random
+    from diseases import infect_user, get_active_diseases
+
+    client_diseases = await get_active_diseases(chat_id, client_id)
+    hooker_diseases = await get_active_diseases(chat_id, hooker_id)
+
+    # Если один из них болен, шанс заразить другого ОЧЕНЬ высок (80%)
+    # Если оба здоровы, есть 30% шанс подхватить случайную болезнь
+
+    new_infections_client = []
+    new_infections_hooker = []
+
+    if client_diseases or hooker_diseases:
+        if random.randint(1, 100) <= 80:
+            if not client_diseases:
+                new_infections_client = await infect_user(chat_id, client_id)
+            if not hooker_diseases:
+                new_infections_hooker = await infect_user(chat_id, hooker_id)
+    else:
+        if random.randint(1, 100) <= 30:
+            infected = random.choice([client_id, hooker_id, "both"])
+            if infected == client_id or infected == "both":
+                new_infections_client = await infect_user(chat_id, client_id)
+            if infected == hooker_id or infected == "both":
+                new_infections_hooker = await infect_user(chat_id, hooker_id)
+
+    if new_infections_client or new_infections_hooker:
+        result_msg += "\n\n⚠️ <b>ОХ НЕПРИЯТНОСТЬ...</b> Кто-то пренебрег защитой!\n"
+
+        if new_infections_client:
+            penalty_client = int(max(0, client_data.get('balance', 0)) * 0.1) # теряет 10% на врачей (только положительный баланс)
+            await update_user_balance(chat_id, client_id, -penalty_client)
+            result_msg += f"👨‍💼 Клиент подцепил: {', '.join(new_infections_client)}. (Потерял {penalty_client} сыр. на лечение)\n"
+
+        if new_infections_hooker:
+            penalty_hooker = int(max(0, hooker_data.get('balance', 0)) * 0.1)
+            await update_user_balance(chat_id, hooker_id, -penalty_hooker)
+            result_msg += f"💃 Путана подцепила: {', '.join(new_infections_hooker)}. (Потеряла {penalty_hooker} сыр. на лечение)\n"
+
+        result_msg += "<i>Проверьте свой статус: /зппп</i>"
+
+    await callback.message.edit_text(result_msg)
 
 @router.message(F.text & (F.text.lower().startswith("топ путан") | F.text.lower().startswith("топ эскорт") | F.text.lower().startswith("/top_escort")))
 async def cmd_top_escort(message: types.Message):

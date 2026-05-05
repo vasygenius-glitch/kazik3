@@ -24,6 +24,7 @@ from economy_features import router as economy_features_router
 from loans import router as loans_router
 from escort import router as escort_router
 from contracts import router as contracts_router
+from diseases import router as diseases_router
 
 from aiogram import Router
 from aiogram.types import Message
@@ -78,6 +79,17 @@ async def catch_all(message: Message):
             import asyncio
             asyncio.create_task(increment_message_count(message.chat.id, message.from_user.id, message.from_user.full_name))
 
+            # --- Логика болезни "Лобковые вши" ---
+            # Избегаем тяжелых запросов в catch_all: запрашиваем профиль 1 раз. Если вшей нет, get_active_diseases не вызывается.
+            from user_manager import get_user_data, update_user_balance
+            u_data = await get_user_data(message.chat.id, message.from_user.id)
+            if u_data and 'lice' in u_data.get('diseases', {}):
+                from diseases import get_active_diseases
+                active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
+                if 'lice' in active_diseases:
+                    if u_data.get('balance', 0) >= 10:
+                        await update_user_balance(message.chat.id, message.from_user.id, -10)
+
         if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
             return
 
@@ -110,4 +122,5 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(loans_router)
     dp.include_router(escort_router)
     dp.include_router(contracts_router)
+    dp.include_router(diseases_router)
     dp.include_router(catch_all_router)

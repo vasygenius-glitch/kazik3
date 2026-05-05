@@ -24,6 +24,11 @@ async def cmd_dice(message: types.Message):
     user_id = message.from_user.id
     data = await get_user_data(chat_id, user_id)
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'gonorrhea' in active_diseases:
+        return await message.answer("🦠 <b>Гонорея</b>: Крупье брезгует пускать тебя за стол. Игра запрещена!")
+
     if data.get('balance', 0) - bet < -5000:
         return await message.answer("Ваш кредитный лимит (-5000) исчерпан. Пополните баланс.")
 
