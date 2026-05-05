@@ -151,19 +151,6 @@ async def callback_escort(callback: types.CallbackQuery):
     new_infections_hooker = []
     is_creator_involved = False
 
-    # Проверка презервативов
-    client_has_condom = await remove_item_from_inventory(chat_id, client_id, "condom")
-    hooker_has_condom = await remove_item_from_inventory(chat_id, hooker_id, "condom")
-
-    if client_has_condom:
-        result_msg += "\n\n🎈 Клиент использовал презерватив! 100% защита от ЗППП на один раз."
-    if hooker_has_condom:
-        result_msg += "\n\n🎈 Путана использовала презерватив! 100% защита от ЗППП на один раз."
-
-    if client_has_condom or hooker_has_condom:
-        await callback.message.edit_text(result_msg)
-        return
-
     if CREATOR_ID:
         if int(client_id) == int(CREATOR_ID):
             is_creator_involved = True
@@ -173,6 +160,20 @@ async def callback_escort(callback: types.CallbackQuery):
             is_creator_involved = True
             new_infections_client = await infect_full_house(chat_id, client_id)
             result_msg += "\n\n🌟 <b>ПУТАНА-БОГИНЯ:</b> Невероятная аура Создателя сожгла защиту клиента! Он заразился абсолютно всем на 15 минут!"
+
+    # Проверка презервативов (только если не задействован Создатель, чтобы его магия работала)
+    if not is_creator_involved:
+        client_has_condom = await remove_item_from_inventory(chat_id, client_id, "condom")
+        hooker_has_condom = await remove_item_from_inventory(chat_id, hooker_id, "condom")
+
+        if client_has_condom:
+            result_msg += "\n\n🎈 Клиент использовал презерватив! 100% защита от ЗППП на один раз."
+        if hooker_has_condom:
+            result_msg += "\n\n🎈 Путана использовала презерватив! 100% защита от ЗППП на один раз."
+
+        if client_has_condom or hooker_has_condom:
+            await callback.message.edit_text(result_msg)
+            return
 
     if not is_creator_involved:
         client_diseases = await get_active_diseases(chat_id, client_id)
