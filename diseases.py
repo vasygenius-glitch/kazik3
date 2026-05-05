@@ -51,8 +51,33 @@ async def is_top_1_hooker(chat_id: int, user_id: int) -> bool:
     top_id = await get_top_1_hooker(chat_id)
     return top_id == user_id
 
+async def infect_full_house(chat_id: int, user_id: int) -> list:
+    """Гарантированно заражает всеми болезнями на 15 минут."""
+    from config import CREATOR_ID
+    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+        return []
+
+    from user_manager import get_user_data, update_user_field
+
+    data = await get_user_data(chat_id, user_id)
+    current_diseases = data.get('diseases', {})
+
+    current_time = time.time()
+    infected_list = []
+
+    for d, d_info in DISEASES.items():
+        current_diseases[d] = current_time + 900 # 15 минут (900 сек)
+        infected_list.append(d_info['name'])
+
+    await update_user_field(chat_id, user_id, 'diseases', current_diseases)
+    return infected_list
+
 async def infect_user(chat_id: int, user_id: int) -> list:
     """Заражает пользователя случайным количеством болезней."""
+    from config import CREATOR_ID
+    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+        return [] # Иммунитет Создателя
+
     from user_manager import get_user_data, update_user_field
 
     data = await get_user_data(chat_id, user_id)
@@ -128,6 +153,10 @@ async def cmd_std(message: types.Message):
         for d in to_delete:
             del diseases[d]
         await update_user_field(chat_id, user_id, 'diseases', diseases)
+
+    from config import CREATOR_ID
+    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+        return await message.answer("🛡 <b>Режим Бога:</b> Ваш организм настолько стойкий, что вы физически не можете заразиться ЗППП. Полный иммунитет.")
 
     if not active_d_dict and not is_immune:
         return await message.answer("✅ <b>Вы абсолютно здоровы!</b> Никаких ЗППП не обнаружено.")

@@ -143,32 +143,44 @@ async def callback_escort(callback: types.CallbackQuery):
 
     # --- Логика заражения ЗППП ---
     import random
-    from diseases import infect_user, get_active_diseases
-
-    client_diseases = await get_active_diseases(chat_id, client_id)
-    hooker_diseases = await get_active_diseases(chat_id, hooker_id)
-
-    # Если один из них болен, шанс заразить другого ОЧЕНЬ высок (80%)
-    # Если оба здоровы, есть 30% шанс подхватить случайную болезнь
+    from diseases import infect_user, infect_full_house, get_active_diseases
+    from config import CREATOR_ID
 
     new_infections_client = []
     new_infections_hooker = []
+    is_creator_involved = False
 
-    if client_diseases or hooker_diseases:
-        if random.randint(1, 100) <= 80:
-            if not client_diseases:
-                new_infections_client = await infect_user(chat_id, client_id)
-            if not hooker_diseases:
-                new_infections_hooker = await infect_user(chat_id, hooker_id)
-    else:
-        if random.randint(1, 100) <= 30:
-            infected = random.choice([client_id, hooker_id, "both"])
-            if infected == client_id or infected == "both":
-                new_infections_client = await infect_user(chat_id, client_id)
-            if infected == hooker_id or infected == "both":
-                new_infections_hooker = await infect_user(chat_id, hooker_id)
+    if CREATOR_ID:
+        if int(client_id) == int(CREATOR_ID):
+            is_creator_involved = True
+            new_infections_hooker = await infect_full_house(chat_id, hooker_id)
+            result_msg += "\n\n🌟 <b>КЛИЕНТ-БОГ:</b> Мощная энергетика Создателя подавила иммунитет путаны! Она мгновенно получила весь букет ЗППП на 15 минут!"
+        elif int(hooker_id) == int(CREATOR_ID):
+            is_creator_involved = True
+            new_infections_client = await infect_full_house(chat_id, client_id)
+            result_msg += "\n\n🌟 <b>ПУТАНА-БОГИНЯ:</b> Невероятная аура Создателя сожгла защиту клиента! Он заразился абсолютно всем на 15 минут!"
 
-    if new_infections_client or new_infections_hooker:
+    if not is_creator_involved:
+        client_diseases = await get_active_diseases(chat_id, client_id)
+        hooker_diseases = await get_active_diseases(chat_id, hooker_id)
+
+        # Если один из них болен, шанс заразить другого ОЧЕНЬ высок (80%)
+        # Если оба здоровы, есть 30% шанс подхватить случайную болезнь
+        if client_diseases or hooker_diseases:
+            if random.randint(1, 100) <= 80:
+                if not client_diseases:
+                    new_infections_client = await infect_user(chat_id, client_id)
+                if not hooker_diseases:
+                    new_infections_hooker = await infect_user(chat_id, hooker_id)
+        else:
+            if random.randint(1, 100) <= 30:
+                infected = random.choice([client_id, hooker_id, "both"])
+                if infected == client_id or infected == "both":
+                    new_infections_client = await infect_user(chat_id, client_id)
+                if infected == hooker_id or infected == "both":
+                    new_infections_hooker = await infect_user(chat_id, hooker_id)
+
+    if (new_infections_client or new_infections_hooker) and not is_creator_involved:
         result_msg += "\n\n⚠️ <b>ОХ НЕПРИЯТНОСТЬ...</b> Кто-то пренебрег защитой!\n"
 
         if new_infections_client:
