@@ -157,6 +157,11 @@ async def rp_and_karma(message: types.Message):
 
     # РП Команды
     if text in RP_COMMANDS:
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
+        if 'chlamydia' in active_diseases:
+            return await message.answer("🦠 <b>Хламидиоз</b>: Партнер шарахается от тебя. Никаких обнимашек, поцелуев и укусов, пока не вылечишься!")
+
         if message.from_user.id == message.reply_to_message.from_user.id:
             return await message.answer("Вы не можете применить это к себе.")
         if message.reply_to_message.from_user.is_bot:

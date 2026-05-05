@@ -119,6 +119,9 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         neg_lvl = data.get('skills', {}).get('negotiation', 0)
         tax_percent = max(0, tax_percent - neg_lvl)
 
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(chat_id, user_id)
+
         biz_income = 0
         car_income = 0
         inventory = data.get('inventory', {})
@@ -138,6 +141,16 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             # Доходы банкиров от бизнесов и машин урезаны до 10%
             biz_income = int(biz_income * 0.1)
             car_income = int(car_income * 0.1)
+
+        if 'candidiasis' in active_diseases:
+            base_bonus = base_bonus // 2
+
+        pet = data.get('pet')
+        if 'hpv' in active_diseases:
+            pet = None
+
+        if pet and pet.get('id') == 'dog':
+            base_bonus = int(base_bonus * 1.5)
 
         extra_income = biz_income + car_income + bank_income
         tax_amt = int(extra_income * (tax_percent / 100.0))

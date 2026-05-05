@@ -38,6 +38,12 @@ async def cmd_bj(message: types.Message, state: FSMContext):
         await message.answer("Вы забанены и не можете играть.")
         return
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'gonorrhea' in active_diseases:
+        await message.answer("🦠 <b>Гонорея</b>: Крупье брезгует пускать тебя за стол. Игра запрещена!")
+        return
+
     args = message.text.split()
     if len(args) < 2:
         await message.answer("Укажите ставку: <code>/bj 100</code>")
@@ -144,6 +150,11 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     from user_manager import get_user_data
     data = await get_user_data(game['chat_id'], game['user_id'])
     luck_level = data.get('skills', {}).get('luck', 0)
+
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(game['chat_id'], game['user_id'])
+    if 'trichomoniasis' in active_diseases:
+        luck_level = 0 # Трихомониаз: удача отключается
 
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
 

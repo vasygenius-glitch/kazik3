@@ -472,6 +472,11 @@ async def cmd_bank_stats(message: types.Message):
     if not data.get('is_banker', False):
         return await message.answer("❌ Эта команда доступна только банкирам.")
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'hepatitis' in active_diseases:
+        return await message.answer("🦠 <b>Гепатит</b>: У вас нет сил на инкассацию, вам нужен покой.")
+
     bank_data = await get_bank_info(chat_id, user_id)
     if not bank_data:
         return await message.answer("❌ У вас нет открытого банка.")
@@ -686,6 +691,11 @@ async def cmd_incass(message: types.Message):
     data = await get_user_data(chat_id, user_id)
     if not data.get('is_banker', False):
         return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'hepatitis' in active_diseases:
+        return await message.answer("🦠 <b>Гепатит</b>: Вы госпитализированы. Доступ к управлению банком временно закрыт.")
 
     bank_data = await get_bank_info(chat_id, user_id)
     if not bank_data:

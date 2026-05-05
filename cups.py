@@ -33,6 +33,11 @@ async def cmd_cups(message: types.Message):
     if data.get('is_banned', False):
         return await message.answer("Вы забанены и не можете играть.")
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'gonorrhea' in active_diseases:
+        return await message.answer("🦠 <b>Гонорея</b>: Крупье брезгует пускать тебя за стол. Игра запрещена!")
+
     args = message.text.split()
     if len(args) < 2:
         await message.answer("Укажите ставку: <code>/cups 100</code>")

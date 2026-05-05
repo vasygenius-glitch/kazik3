@@ -17,6 +17,11 @@ async def cmd_credit(message: types.Message):
     if not data.get('is_banker', False):
         return await message.answer("❌ Только банкиры могут выдавать кредиты.")
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, lender_id)
+    if 'hepatitis' in active_diseases:
+        return await message.answer("🦠 <b>Гепатит</b>: Вы лежите в больнице. Выдача кредитов сейчас невозможна.")
+
     if not message.reply_to_message:
         return await message.answer("Сделайте реплай на сообщение игрока, которому хотите выдать кредит.")
 
