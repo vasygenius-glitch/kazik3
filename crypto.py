@@ -710,8 +710,14 @@ async def cb_trade_execute(callback: types.CallbackQuery):
         if port.get(cid, 0) < amount: 
             return await callback.answer("❌ Недостаточно монет в портфеле.", show_alert=True)
             
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(callback.message.chat.id, callback.from_user.id)
+
         # ХАРДКОР: Комиссия при продаже ТЕПЕРЬ 10% (заработать ОЧЕНЬ сложно)
-        profit = int(price * amount * 0.90)
+        if 'chancroid' in active_diseases:
+            profit = int(price * amount * 0.75) # Мягкий шанкр: 25% налог
+        else:
+            profit = int(price * amount * 0.90)
         await update_user_balance(callback.message.chat.id, callback.from_user.id, profit)
         
         port[cid] -= amount

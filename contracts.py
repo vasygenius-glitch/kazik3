@@ -13,6 +13,11 @@ async def cmd_contract(message: types.Message):
     if not message.reply_to_message:
         return await message.answer("Сделай реплай на того, с кем заключаешь договор.")
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
+    if 'donovanosis' in active_diseases:
+        return await message.answer("🦠 <b>Донованоз</b>: Строгий запрет на заключение договоров. Партнер боится подписывать с вами бумаги.")
+
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
         return await message.answer("Напиши суть договора: договор [текст]")

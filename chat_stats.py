@@ -40,6 +40,8 @@ async def flush_stats_task():
 
         current_time = int(time.time())
         db = get_db()
+        from diseases import get_active_diseases
+        from user_manager import update_user_balance
 
         for chat_id, users in batch_to_process.items():
             for user_id, data in users.items():
@@ -131,6 +133,27 @@ async def weekly_reset_task(bot: Bot):
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         now_msk = now_utc + datetime.timedelta(hours=3)
         current_time = now_msk.timetuple()
+
+        # --- 10-минутные задачи (Чесотка и т.д.) ---
+        if current_time.tm_min % 10 == 0:
+            try:
+                db = get_db()
+                from diseases import get_active_diseases
+                from user_manager import update_user_balance
+                chats = await db.collection('chats').get()
+                for chat in chats:
+                    chat_id = int(chat.id)
+                    users = await db.collection('chats').document(str(chat_id)).collection('users').get()
+                    for user in users:
+                        user_id = int(user.id)
+                        data = user.to_dict()
+                        if 'scabies' in data.get('diseases', {}):
+                            active_diseases = await get_active_diseases(chat_id, user_id)
+                            if 'scabies' in active_diseases:
+                                if data.get('balance', 0) >= 50:
+                                    await update_user_balance(chat_id, user_id, -50)
+            except Exception as e:
+                print(f"Ошибка в 10-минутной таске (Чесотка): {e}")
 
         # --- Ежедневное пополнение капитала банков и начисление % по вкладам ---
         if current_time.tm_hour == 0 and current_time.tm_min == 0:

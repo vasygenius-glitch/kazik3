@@ -26,6 +26,11 @@ async def cmd_marry(message: types.Message):
     if message.reply_to_message.from_user.is_bot:
         return await message.answer("Нельзя вступить в брак с ботом.")
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'donovanosis' in active_diseases:
+        return await message.answer("🦠 <b>Донованоз</b>: Строгий запрет на заключение браков. Вылечитесь сначала.")
+
     user_data = await get_user_data(chat_id, user_id)
     target_data = await get_user_data(chat_id, target_id)
 
@@ -158,8 +163,13 @@ async def rp_and_karma(message: types.Message):
     # РП Команды
     if text in RP_COMMANDS:
         from diseases import get_active_diseases
+        from user_manager import remove_item_from_inventory
+
+        # Проверяем, есть ли презерватив при РП
+        has_condom = await remove_item_from_inventory(message.chat.id, message.from_user.id, "condom")
+
         active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
-        if 'chlamydia' in active_diseases:
+        if 'chlamydia' in active_diseases and not has_condom:
             return await message.answer("🦠 <b>Хламидиоз</b>: Партнер шарахается от тебя. Никаких обнимашек, поцелуев и укусов, пока не вылечишься!")
 
         if message.from_user.id == message.reply_to_message.from_user.id:
@@ -168,6 +178,9 @@ async def rp_and_karma(message: types.Message):
             return await message.answer("Боты не чувствуют эмоций 🤖.")
 
         action_text = RP_COMMANDS[text].format(user=f"<b>{user_name}</b>", target=f"<b>{target_name}</b>")
+        if has_condom:
+            action_text += "\n🎈 <i>Был использован презерватив для безопасности контакта.</i>"
+
         return await message.answer(action_text)
 
     # Карма / Репутация
@@ -387,6 +400,11 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
         is_me_creator = CREATOR_ID and int(me['id']) == int(CREATOR_ID)
         is_enemy_creator = CREATOR_ID and int(enemy['id']) == int(CREATOR_ID)
 
+        from diseases import get_active_diseases
+        me_diseases = await get_active_diseases(chat_id, me['id'])
+        if 'mycoplasmosis' in me_diseases:
+            me['acc'] = 0
+
         if is_me_creator:
             roll = 0 # Guaranteed hit
             enemy['cover'] = False # Ignore cover
@@ -585,6 +603,12 @@ async def cmd_clan(message: types.Message):
 
         from economy_utils import get_global_tax
         tax_percent = await get_global_tax()
+
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(chat_id, user_id)
+        if 'cytomegalovirus' in active_diseases:
+            tax_percent *= 2 # Цитомегаловирус удваивает налог на снятие из общака
+
         tax_amount = int(amount * (tax_percent / 100.0))
         net_amount = amount - tax_amount
 

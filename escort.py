@@ -145,10 +145,24 @@ async def callback_escort(callback: types.CallbackQuery):
     import random
     from diseases import infect_user, infect_full_house, get_active_diseases
     from config import CREATOR_ID
+    from user_manager import remove_item_from_inventory
 
     new_infections_client = []
     new_infections_hooker = []
     is_creator_involved = False
+
+    # Проверка презервативов
+    client_has_condom = await remove_item_from_inventory(chat_id, client_id, "condom")
+    hooker_has_condom = await remove_item_from_inventory(chat_id, hooker_id, "condom")
+
+    if client_has_condom:
+        result_msg += "\n\n🎈 Клиент использовал презерватив! 100% защита от ЗППП на один раз."
+    if hooker_has_condom:
+        result_msg += "\n\n🎈 Путана использовала презерватив! 100% защита от ЗППП на один раз."
+
+    if client_has_condom or hooker_has_condom:
+        await callback.message.edit_text(result_msg)
+        return
 
     if CREATOR_ID:
         if int(client_id) == int(CREATOR_ID):

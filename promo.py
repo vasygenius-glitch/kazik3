@@ -48,6 +48,11 @@ async def cmd_promo(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'tripper' in active_diseases:
+        return await message.answer("🦠 <b>Триппер</b>: Временный запрет на активацию любых промокодов. Вылечитесь!")
+
     db = get_db()
     ref = db.collection('bot_settings').document('promocodes').collection('active').document(code)
     doc = await ref.get()

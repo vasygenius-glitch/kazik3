@@ -20,6 +20,11 @@ async def cmd_skills(message: types.Message):
     data = await get_user_data(chat_id, user_id, full_name)
     skills = data.get('skills', {})
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'gardnerellosis' in active_diseases:
+        return await message.answer("🦠 <b>Гарднереллез</b>: Ваш прогресс заморожен, вы не можете улучшать навыки и получать опыт!")
+
     args = message.text.split()
     if len(args) == 1:
         text = "🎯 <b>Ваши навыки:</b>\n\n"
