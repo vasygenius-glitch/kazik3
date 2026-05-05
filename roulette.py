@@ -37,6 +37,13 @@ async def cmd_roulette(message: types.Message):
     try:
         bet = int(args[1])
         guess = int(args[2])
+
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(chat_id, user_id)
+        if 'balanoposthitis' in active_diseases and bet > 1000:
+            bet = 1000
+            await message.answer("🦠 <b>Баланопостит</b>: Ваша максимальная ставка урезана до 1000 сыроежек.")
+
         if bet < 100:
             await message.answer("Минимальная ставка — 100 сыроежек.")
             return

@@ -35,7 +35,8 @@ ITEMS = {
     
     # ПРОЧЕЕ
     "вип": {"name": "💎 Статус VIP", "price": 1000000, "cat": "other", "action": "other"},
-    "антиварн": {"name": "💊 Снять варн", "price": 250000, "cat": "other", "action": "other"}
+    "антиварн": {"name": "💊 Снять варн", "price": 250000, "cat": "other", "action": "other"},
+    "condom": {"name": "🎈 Презерватив", "price": 340, "cat": "other", "action": "other"}
 }
 
 def get_main_shop_kb():
@@ -78,6 +79,11 @@ async def cmd_shop(message: types.Message):
 
     if data.get('is_banned'): return
     
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
+    if 'ureaplasmosis' in active_diseases:
+        return await message.answer("🦠 <b>Уреаплазмоз</b>: Продавцы боятся заразиться и не пускают вас в магазин!")
+
     text = (
         f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
         f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"

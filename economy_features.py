@@ -43,8 +43,14 @@ async def cmd_steal(message: types.Message, bot: Bot):
     last_steal = data.get('last_steal_time', 0)
     current_time = int(time.time())
 
-    if current_time - last_steal < 3600: # 1 hour cooldown
-        return await message.answer("Вы уже пытались воровать недавно. Залягте на дно (кулдаун 1 час).")
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    cooldown = 7200 if 'treponema' in active_diseases else 3600
+
+    if current_time - last_steal < cooldown:
+        mins = (cooldown - (current_time - last_steal)) // 60
+        disease_msg = "🦠 <b>Бледная трепонема</b> увеличила кулдаун. " if 'treponema' in active_diseases else ""
+        return await message.answer(f"Вы уже пытались воровать недавно. Залягте на дно. {disease_msg}(Осталось {mins} мин.)")
 
     await update_user_field(chat_id, user_id, 'last_steal_time', current_time)
 

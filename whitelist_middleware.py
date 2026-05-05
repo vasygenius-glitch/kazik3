@@ -83,5 +83,42 @@ class WhitelistMiddleware(BaseMiddleware):
 
             return
 
+        # Блокировка команд при СПИДе
+        user_id = event.from_user.id
+        from user_manager import get_user_data
+        from diseases import get_active_diseases
+
+        # Получаем данные пользователя
+        u_data = await get_user_data(chat.id, user_id)
+        if u_data and 'aids' in u_data.get('diseases', {}):
+            active_diseases = await get_active_diseases(chat.id, user_id)
+            if 'aids' in active_diseases:
+                # Проверяем, является ли это командой текстовой или нажатием кнопки
+                is_command = False
+                if isinstance(event, CallbackQuery):
+                    is_command = True
+                elif isinstance(event, Message) and event.text:
+                    text_lower = event.text.lower()
+                    if text_lower.startswith(('/', '!', '?')):
+                        is_command = True
+                    else:
+                        from handlers_init import ALLOWED_TEXT_COMMANDS
+                        for cmd in ALLOWED_TEXT_COMMANDS:
+                            if text_lower.startswith(cmd):
+                                is_command = True
+                                break
+
+                if is_command:
+                    # Разрешаем команду зппп
+                    if isinstance(event, Message) and event.text and event.text.lower().startswith(('/зппп', '!зппп', 'зппп')):
+                        pass
+                    else:
+                        msg = "🦠 <b>СПИД</b>: Вы в реанимации. Полная блокировка всех команд экономики и игр."
+                        if isinstance(event, CallbackQuery):
+                            await event.answer(msg, show_alert=True)
+                        else:
+                            await event.answer(msg)
+                        return
+
         # Проверка прав убрана. Бот работает в группах без ограничений
         return await handler(event, data)
