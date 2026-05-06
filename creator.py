@@ -884,68 +884,86 @@ async def cmd_wipe_mid(message: types.Message):
             "<code>/wipe_mid CONFIRM</code>"
         )
 
-    status_msg = await message.answer("🔄 <i>Начинаю средний вайп экономики... Это займет некоторое время.</i>")
+    status_msg = await message.answer(
+        "🔄 <b>Вайп запущен в фоновом режиме!</b>\n\n"
+        "<i>Пожалуйста, подождите, бот перебирает базу данных... Это может занять несколько минут. Я сообщу, когда закончу.</i>"
+    )
 
-    import time
-    import random
-    from user_manager import _user_cache
-    from utils import get_db
+    import asyncio
 
-    db = get_db()
-
-    # 1. Очищаем оперативную память (кэш), чтобы старые балансы не вернулись
-    _user_cache.clear()
-
-    from whitelist import get_whitelist
-    whitelist_dict = await get_whitelist()
-    users_wiped = 0
-
-    for chat_id in whitelist_dict.keys():
+    async def run_wipe():
         try:
+            import time
+            import random
+            from user_manager import _user_cache
+            from utils import get_db
+
+            db = get_db()
+            _user_cache.clear()
+
+            from whitelist import get_whitelist
+            whitelist_dict = await get_whitelist()
+            users_wiped = 0
+
             # 2. Вайп пользователей (обнуление налички и инвентаря)
-            users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-            user_docs = await users_ref.get()
+            for chat_id in whitelist_dict.keys():
+                try:
+                    users_ref = db.collection('chats').document(str(chat_id)).collection('users')
+                    user_docs = await users_ref.get()
 
-            batch = db.batch()
-            count = 0
-            for doc in user_docs:
-                doc_id = getattr(doc, 'id', None)
-                if doc_id:
-                    batch.set(users_ref.document(doc_id), {
-                        'balance': 500,
-                        'inventory': {},
-                        'is_vip': False
-                    }, merge=True)
-                    users_wiped += 1
-                    count += 1
-                    if count >= 500:
+                    batch = db.batch()
+                    count = 0
+                    for doc in user_docs:
+                        doc_id = getattr(doc, 'id', None)
+                        if doc_id:
+                            batch.set(users_ref.document(doc_id), {
+                                'balance': 500,
+                                'inventory': {},
+                                'is_vip': False
+                            }, merge=True)
+                            users_wiped += 1
+                            count += 1
+                            if count >= 450:
+                                await batch.commit()
+                                batch = db.batch()
+                                count = 0
+
+                    if count > 0:
                         await batch.commit()
-                        batch = db.batch()
-                        count = 0
 
-            if count > 0:
-                await batch.commit()
+                except Exception as e:
+                    print(f"Ошибка при вайпе чата {chat_id}: {e}")
 
-        except Exception as e:
-            print(f"Ошибка при вайпе чата {chat_id}: {e}")
+            # 3. Полный вайп криптовалюты
+            current_time = int(time.time())
+            default_coins = {
+                "chsyr": {"name": "Китайская Сыроежка", "ticker": "CH_SYR", "prices":[random.randint(100, 500)], "creator": 0},
+                "espsyr": {"name": "Испанская Сыроежка", "ticker": "ESP_SYR", "prices":[random.randint(100, 500)], "creator": 0}
+            }
+            await db.collection('bot_settings').document('crypto_coins').set({
+                'coins': default_coins,
+                'last_update': current_time
+            })
 
-    # 3. Полный вайп криптовалюты
-    current_time = int(time.time())
-    default_coins = {
-        "chsyr": {"name": "Китайская Сыроежка", "ticker": "CH_SYR", "prices":[random.randint(100, 500)], "creator": 0},
-        "espsyr": {"name": "Испанская Сыроежка", "ticker": "ESP_SYR", "prices":[random.randint(100, 500)], "creator": 0}
-    }
-    await db.collection('bot_settings').document('crypto_coins').set({
-        'coins': default_coins,
-        'last_update': current_time
-    })
+            try:
+                await status_msg.edit_text(
+                    f"✅ <b>СРЕДНИЙ ВАЙП УСПЕШНО ЗАВЕРШЕН!</b>\n\n"
+                    f"👤 Очищено налички и инвентарей у игроков: <b>{users_wiped}</b>\n"
+                    f"📈 Крипторынок пересоздан с нуля.\n\n"
+                    f"<i>Вклады, долги, кланы и навыки не пострадали.</i>"
+                )
+            except Exception:
+                await status_msg.reply(
+                    f"✅ <b>СРЕДНИЙ ВАЙП УСПЕШНО ЗАВЕРШЕН!</b>\n\n"
+                    f"👤 Очищено: {users_wiped} игроков."
+                )
+        except Exception as fatal_e:
+            import traceback
+            tb = traceback.format_exc()
+            try:
+                await status_msg.reply(f"❌ <b>Критическая ошибка во время вайпа!</b>\n\n<code>{fatal_e}</code>\n{tb[:500]}")
+            except:
+                pass
 
-    try:
-        await status_msg.edit_text(
-            f"✅ <b>СРЕДНИЙ ВАЙП УСПЕШНО ЗАВЕРШЕН!</b>\n\n"
-            f"👤 Очищено налички и инвентарей у игроков: <b>{users_wiped}</b>\n"
-            f"📈 Крипторынок пересоздан с нуля.\n\n"
-            f"<i>Вклады, долги, кланы и навыки не пострадали.</i>"
-        )
-    except Exception as e:
-        await status_msg.reply(f"Вайп завершен! Ошибка статуса: {e}")
+    # Launch task in background
+    asyncio.create_task(run_wipe())
