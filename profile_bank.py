@@ -187,37 +187,54 @@ async def cmd_bank(message: types.Message):
     action = args[1].lower()
 
     if action == "list":
-        db = get_db()
-        banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
-        docs = await banks_ref.get()
-        if not docs:
-            return await message.answer("🏦 В этом чате пока нет банков.")
+        try:
+            db = get_db()
+            banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
+            docs_iterable = await banks_ref.get()
 
-        text = "🏦 <b>Список Банков:</b>\n\n"
-        for doc in docs:
-            b_data = doc.to_dict()
-            rate = b_data.get('deposit_rate', 1.0)
-            text += f"🏛 <b>{escape_html(b_data.get('name', 'Банк'))}</b>\n"
-            text += f"ID Банкира: <code>{doc.id}</code>\n"
-            text += f"Ставка по вкладу: <b>{rate}%</b> в день\n"
-            text += f"Капитал: <b>{b_data.get('capital', 0)}</b> сыр.\n\n"
-        return await message.answer(text)
+            docs = []
+            if hasattr(docs_iterable, '__aiter__'):
+                async for d in docs_iterable:
+                    docs.append(d)
+            else:
+                for d in docs_iterable:
+                    docs.append(d)
+
+            if not docs:
+                return await message.answer("🏦 В этом чате пока нет банков.")
+
+            text = "🏦 <b>Список Банков:</b>\n\n"
+            for doc in docs:
+                b_data = doc.to_dict()
+                rate = b_data.get('deposit_rate', 3.0)
+                text += f"🏛 <b>{escape_html(b_data.get('name', 'Банк'))}</b>\n"
+                text += f"ID Банкира: <code>{doc.id}</code>\n"
+                text += f"Ставка по вкладу: <b>{rate}%</b> в день\n"
+                text += f"Капитал: <b>{b_data.get('capital', 0)}</b> сыр.\n\n"
+            return await message.answer(text)
+        except Exception as e:
+            import traceback
+            print(f"Error in /bank list: {e}")
+            return await message.answer(f"❌ Ошибка получения списка банков:\n<code>{e}</code>\n{traceback.format_exc()[:300]}")
 
     if action == "info":
-        if len(args) < 3:
-            return await message.answer("Укажите название банка или ID: <code>/bank info [Название]</code>")
+        try:
+            if len(args) < 3:
+                return await message.answer("Укажите название банка или ID: <code>/bank info [Название]</code>")
 
-        identifier = " ".join(args[2:])
-        bank_data = await get_bank_info(chat_id, identifier)
-        if not bank_data:
-            return await message.answer("🏦 Банк не найден.")
+            identifier = " ".join(args[2:])
+            bank_data = await get_bank_info(chat_id, identifier)
+            if not bank_data:
+                return await message.answer("🏦 Банк не найден.")
 
-        rate = bank_data.get('deposit_rate', 1.0)
-        text = f"🏛 <b>{escape_html(bank_data.get('name', 'Банк'))}</b>\n\n"
-        text += f"Владелец (ID): <code>{bank_data['banker_id']}</code>\n"
-        text += f"Ставка по вкладу: <b>{rate}%</b> в день\n"
-        text += f"Капитал банка: <b>{bank_data.get('capital', 0)}</b> сыр.\n"
-        return await message.answer(text)
+            rate = bank_data.get('deposit_rate', 3.0)
+            text = f"🏛 <b>{escape_html(bank_data.get('name', 'Банк'))}</b>\n\n"
+            text += f"Владелец (ID): <code>{bank_data['banker_id']}</code>\n"
+            text += f"Ставка по вкладу: <b>{rate}%</b> в день\n"
+            text += f"Капитал банка: <b>{bank_data.get('capital', 0)}</b> сыр.\n"
+            return await message.answer(text)
+        except Exception as e:
+            return await message.answer(f"❌ Ошибка получения инфо:\n<code>{e}</code>")
 
     if len(args) < 3: return await message.answer("Укажите сумму.")
 
