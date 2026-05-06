@@ -819,3 +819,43 @@ async def cmd_wipe_economy(message: types.Message):
         )
     except Exception as e:
         await status_msg.reply(f"Вайп завершен! Ошибка статуса: {e}")
+from lock_system import toggle_lock
+
+@router.message(Command("lockbot"))
+async def cmd_lockbot(message: types.Message):
+    if not is_creator(message):
+        return await message.answer("❌ Нет доступа.")
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/lockbot [ID группы]</code>")
+
+    try:
+        chat_id = int(args[1])
+        is_enabled = await toggle_lock(chat_id)
+
+        if is_enabled:
+            await message.answer(f"🔒 <b>Группа {chat_id} заблокирована.</b> Бот потребует права администратора для работы.")
+        else:
+            await message.answer(f"🔓 <b>Группа {chat_id} разблокирована.</b> Бот работает в штатном режиме.")
+    except ValueError:
+        await message.answer("ID группы должен быть числом.")
+
+@router.message(Command("checkadmin"))
+async def cmd_checkadmin(message: types.Message, bot: Bot):
+    if not is_creator(message):
+        return await message.answer("❌ Нет доступа.")
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/checkadmin [ID группы]</code>")
+
+    try:
+        chat_id = int(args[1])
+        bot_member = await bot.get_chat_member(chat_id, bot.id)
+        if bot_member.status in ['administrator', 'creator']:
+            await message.answer(f"✅ Бот <b>является</b> администратором в группе {chat_id}.")
+        else:
+            await message.answer(f"❌ Бот <b>не является</b> администратором в группе {chat_id}. Текущий статус: {bot_member.status}")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка проверки: {e}")

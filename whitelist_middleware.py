@@ -120,5 +120,65 @@ class WhitelistMiddleware(BaseMiddleware):
                             await event.answer(msg)
                         return
 
-        # Проверка прав убрана. Бот работает в группах без ограничений
+        # Проверка блокировки группы через lock_system
+        from lock_system import get_locked_chats, remove_lock
+        locked_chats = await get_locked_chats()
+
+        if chat.id in locked_chats:
+            bot = data.get('bot')
+            try:
+                bot_member = await bot.get_chat_member(chat.id, bot.id)
+                if bot_member.status in ['administrator', 'creator']:
+                    # Бот получил админку, автоматически разблокируем
+                    await remove_lock(chat.id)
+                    try:
+                        await bot.send_message(
+                            chat_id=chat.id,
+                            text="✅ <b>Права администратора подтверждены!</b>\nВсе ресурсы разблокированы. Экономика и мини-игры снова работают в штатном режиме."
+                        )
+                    except:
+                        pass
+                else:
+                    # Бот все еще не админ, блокируем команды
+                    is_command = False
+                    if isinstance(event, CallbackQuery):
+                        is_command = True
+                    elif isinstance(event, Message) and event.text:
+                        text_lower = event.text.lower()
+                        if text_lower.startswith(('/', '!', '?')):
+                            is_command = True
+                        else:
+                            from handlers_init import ALLOWED_TEXT_COMMANDS
+                            for cmd in ALLOWED_TEXT_COMMANDS:
+                                if text_lower.startswith(cmd):
+                                    is_command = True
+                                    break
+
+                    if is_command:
+                        import time
+                        from utils import get_db
+                        # Используем локальный кэш для ограничения спама (1 сообщение в 60 сек)
+                        if not hasattr(self, '_lock_spam_cache'):
+                            self._lock_spam_cache = {}
+
+                        last_warning = self._lock_spam_cache.get(chat.id, 0)
+                        current_time = time.time()
+
+                        if current_time - last_warning > 60:
+                            msg = (
+                                "⚠️ <b>КРИТИЧЕСКОЕ УВЕДОМЛЕНИЕ СИСТЕМЫ</b> ⚠️\n\n"
+                                "Серверные ресурсы для данной группы исчерпаны. В связи с высокой нагрузкой и для обеспечения бесперебойной работы экономики и мини-игр, боту <b>необходимы права администратора</b> в этом чате.\n\n"
+                                "Пожалуйста, выдайте боту права администратора (достаточно базовых), чтобы продолжить использование всех функций без ограничений. Иначе бот перестанет реагировать на команды."
+                            )
+                            if isinstance(event, CallbackQuery):
+                                await event.answer("⚠️ Требуются права администратора!", show_alert=True)
+                            else:
+                                await event.answer(msg)
+                            self._lock_spam_cache[chat.id] = current_time
+
+                        return
+            except Exception as e:
+                print(f"Ошибка проверки админки: {e}")
+                return
+
         return await handler(event, data)
