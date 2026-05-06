@@ -44,6 +44,35 @@ def get_main_shop_kb():
     builder.button(text="🏢 Бизнесы", callback_data="shop_cat_biz")
     builder.button(text="🚗 Машины", callback_data="shop_cat_cars")
     builder.button(text="💎 Прочее", callback_data="shop_cat_other")
+    builder.button(text="💰 Продать имущество", callback_data="shop_sell_menu")
+    builder.adjust(2, 1)
+    return builder.as_markup()
+
+def get_sell_menu_kb(inventory, is_vip):
+    builder = InlineKeyboardBuilder()
+    has_items = False
+
+    for item_id, count in inventory.items():
+        if count > 0 and item_id in ITEMS:
+            info = ITEMS[item_id]
+            sell_price = int(info['price'] * 0.75)
+            builder.button(text=f"Продать: {info['name']} ({count} шт) - {sell_price} сыр.", callback_data=f"sell_ask_{item_id}")
+            has_items = True
+
+    if is_vip:
+        info = ITEMS["вип"]
+        sell_price = int(info['price'] * 0.75)
+        builder.button(text=f"Продать: {info['name']} - {sell_price} сыр.", callback_data="sell_ask_вип")
+        has_items = True
+
+    builder.button(text="⬅️ Назад", callback_data="shop_main")
+    builder.adjust(1)
+    return builder.as_markup(), has_items
+
+def get_sell_confirm_kb(item_id):
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да, продать", callback_data=f"sell_confirm_{item_id}")
+    builder.button(text="❌ Отмена", callback_data="shop_sell_menu")
     builder.adjust(2)
     return builder.as_markup()
 
@@ -60,8 +89,14 @@ def get_category_kb(category):
 async def cmd_shop(message: types.Message):
     data = await get_user_data(message.chat.id, message.from_user.id)
 
-    debts = data.get('debts', {})
+    if data.get('is_banned'): return
 
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
+    if 'ureaplasmosis' in active_diseases:
+        return await message.answer("🦠 <b>Уреаплазмоз</b>: Продавцы боятся заразиться и не пускают вас в магазин!")
+
+    debts = data.get('debts', {})
     current_time = time.time()
     has_overdue_debt = False
 
@@ -74,19 +109,13 @@ async def cmd_shop(message: types.Message):
                     has_overdue_debt = True
                     break
 
+    warning_text = ""
     if has_overdue_debt:
-        return await message.answer("❌ На вас наложен арест! У вас есть просроченный долг перед банком. Покупки запрещены.")
-
-    if data.get('is_banned'): return
-    
-    from diseases import get_active_diseases
-    active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
-    if 'ureaplasmosis' in active_diseases:
-        return await message.answer("🦠 <b>Уреаплазмоз</b>: Продавцы боятся заразиться и не пускают вас в магазин!")
+        warning_text = "\n\n⚠️ <b>ВНИМАНИЕ: На вас наложен арест за просроченный долг! Вы не можете покупать новые вещи, но можете продать старые для погашения долга.</b>"
 
     text = (
         f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
-        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
+        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.{warning_text}\n"
         f"Выбери категорию товаров ниже:"
     )
     await message.answer(text, reply_markup=get_main_shop_kb())
@@ -117,6 +146,22 @@ async def process_buy(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     data = await get_user_data(chat_id, user_id)
 
+    debts = data.get('debts', {})
+    current_time = time.time()
+    has_overdue_debt = False
+
+    for k, v in debts.items():
+        if k.startswith("bank_") and v > 0:
+            parts = k.split("_")
+            if len(parts) >= 3:
+                due_date = int(parts[2])
+                if current_time > due_date:
+                    has_overdue_debt = True
+                    break
+
+    if has_overdue_debt:
+        return await callback.answer("❌ У вас просроченный долг! Покупки запрещены.", show_alert=True)
+
     if data.get('balance', 0) < item['price']:
         return await callback.answer("Недостаточно денег!", show_alert=True)
 
@@ -139,3 +184,58 @@ async def process_buy(callback: types.CallbackQuery):
 
     await callback.answer(f"Куплено: {item['name']}!", show_alert=True)
     await show_category(callback)
+@router.callback_query(F.data == "shop_sell_menu")
+async def show_sell_menu(callback: types.CallbackQuery):
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    data = await get_user_data(chat_id, user_id)
+
+    inventory = data.get('inventory', {})
+    is_vip = data.get('is_vip', False)
+
+    kb, has_items = get_sell_menu_kb(inventory, is_vip)
+
+    if not has_items:
+        text = "🤷‍♂️ У вас нет имущества для продажи."
+    else:
+        text = "💰 <b>ПРОДАЖА ИМУЩЕСТВА</b>\n\nВыбери предмет, который хочешь продать (ты получишь 75% от его стоимости):"
+
+    await callback.message.edit_text(text, reply_markup=kb)
+
+@router.callback_query(F.data.startswith("sell_ask_"))
+async def ask_sell_confirm(callback: types.CallbackQuery):
+    item_id = callback.data.replace("sell_ask_", "")
+    item = ITEMS.get(item_id)
+    if not item: return
+
+    sell_price = int(item['price'] * 0.75)
+    text = f"❓ Вы уверены, что хотите продать <b>{item['name']}</b> за <b>{sell_price}</b> сыр.?"
+
+    await callback.message.edit_text(text, reply_markup=get_sell_confirm_kb(item_id))
+
+@router.callback_query(F.data.startswith("sell_confirm_"))
+async def process_sell_confirm(callback: types.CallbackQuery):
+    item_id = callback.data.replace("sell_confirm_", "")
+    item = ITEMS.get(item_id)
+    if not item: return
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    data = await get_user_data(chat_id, user_id)
+
+    # Verify user still has the item
+    if item_id == "вип":
+        if not data.get('is_vip'):
+            return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
+        await update_user_field(chat_id, user_id, 'is_vip', False)
+    else:
+        from user_manager import remove_item_from_inventory
+        success = await remove_item_from_inventory(chat_id, user_id, item_id)
+        if not success:
+            return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
+
+    sell_price = int(item['price'] * 0.75)
+    await update_user_balance(chat_id, user_id, sell_price)
+
+    await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
+    await show_sell_menu(callback)
