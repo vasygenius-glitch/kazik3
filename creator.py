@@ -896,7 +896,7 @@ async def cmd_wipe_mid(message: types.Message):
             import time
             import random
             from user_manager import _user_cache
-            from utils import get_db
+            from db import get_db
 
             db = get_db()
             _user_cache.clear()
