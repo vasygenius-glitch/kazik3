@@ -571,12 +571,18 @@ async def cmd_clan(message: types.Message):
 
     elif action == "deposit":
         if not clan_name: return
-        if len(args) < 3: return await message.answer("Укажите сумму.")
-        try: amount = int(args[2])
-        except ValueError: return
-        if amount <= 0: return
+        if len(args) < 3: return await message.answer("Укажите сумму или 'all'.")
 
-        if data.get('balance', 0) < amount: return await message.answer("Недостаточно средств.")
+        balance = data.get('balance', 0)
+        amount_str = args[2].lower()
+        if amount_str in ["all", "всё", "все"]:
+            amount = balance
+        else:
+            try: amount = int(amount_str)
+            except ValueError: return await message.answer("Сумма должна быть числом или 'all'.")
+
+        if amount <= 0: return
+        if balance < amount: return await message.answer("Недостаточно средств.")
 
         await update_user_balance(chat_id, user_id, -amount)
         clan_ref = await get_clan_ref(chat_id, clan_name)
@@ -593,12 +599,18 @@ async def cmd_clan(message: types.Message):
 
         if user_id != clan_data['leader_id']: return await message.answer("Снимать может только Лидер.")
 
-        if len(args) < 3: return await message.answer("Укажите сумму.")
-        try: amount = int(args[2])
-        except ValueError: return
-        if amount <= 0: return
+        if len(args) < 3: return await message.answer("Укажите сумму или 'all'.")
 
         treasury = clan_data.get('treasury', 0)
+
+        amount_str = args[2].lower()
+        if amount_str in ["all", "всё", "все"]:
+            amount = treasury
+        else:
+            try: amount = int(amount_str)
+            except ValueError: return await message.answer("Сумма должна быть числом или 'all'.")
+
+        if amount <= 0: return
         if treasury < amount: return await message.answer(f"В казне недостаточно средств (Доступно: {treasury}).")
 
         from economy_utils import get_global_tax

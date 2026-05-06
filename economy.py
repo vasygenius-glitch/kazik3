@@ -126,24 +126,47 @@ async def cmd_pay(message: types.Message):
 
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Укажи сумму: <code>/pay 100</code>")
+        await message.answer("Укажи сумму: <code>/pay 100</code> или <code>/pay all</code>")
         return
 
-    try:
-        amount = int(args[1])
+    amount_str = args[1].lower()
+    if amount_str in ["all", "всё", "все"]:
+        # If user wants to pay all, we need to calculate how much they can send after tax
+        tax_percent = await get_global_tax()
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(chat_id, sender_id)
+        if 'herpes' in active_diseases:
+            tax_percent = 30
+
+        balance = sender_data.get('balance', 0)
+        if balance <= 0:
+            return await message.answer("У вас нет денег.")
+
+        # math: amount + (amount * tax / 100) = balance => amount = balance / (1 + tax/100)
+        if tax_percent > 0:
+            amount = int(balance / (1 + (tax_percent / 100.0)))
+            if amount == balance and tax_percent > 0: # Ensure minimum 1 tax logic if any
+                amount -= 1
+        else:
+            amount = balance
+
         if amount <= 0:
-            await message.answer("Сумма должна быть больше нуля.")
+            return await message.answer("После уплаты налога отправлять нечего.")
+    else:
+        try:
+            amount = int(amount_str)
+            if amount <= 0:
+                await message.answer("Сумма должна быть больше нуля.")
+                return
+        except ValueError:
+            await message.answer("Сумма должна быть числом или 'all'.")
             return
-    except ValueError:
-        await message.answer("Сумма должна быть числом.")
-        return
 
-    tax_percent = await get_global_tax()
-    
-    from diseases import get_active_diseases
-    active_diseases = await get_active_diseases(chat_id, sender_id)
-    if 'herpes' in active_diseases:
-        tax_percent = 30 # Герпес: глобальный налог 30% на все переводы
+        tax_percent = await get_global_tax()
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(chat_id, sender_id)
+        if 'herpes' in active_diseases:
+            tax_percent = 30 # Герпес: глобальный налог 30% на все переводы
 
     if tax_percent > 0:
         commission = int(amount * (tax_percent / 100.0))
