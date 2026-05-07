@@ -542,8 +542,8 @@ async def cmd_rob_bank(message: types.Message):
     rand = secrets.SystemRandom()
     stealth_level = data.get('skills', {}).get('stealth', 0)
 
-    # Базовый шанс успеха - 25% + 2% за каждый уровень стелса
-    success_chance = 0.25 + (stealth_level * 0.02)
+    # Базовый шанс успеха - 5% + 2% за каждый уровень стелса
+    success_chance = 0.05 + (stealth_level * 0.02)
 
     if rand.random() < success_chance:
         # Украли от 1% до 5% от капитала банка
@@ -556,7 +556,7 @@ async def cmd_rob_bank(message: types.Message):
         await message.answer(f"🥷 <b>УСПЕШНОЕ ОГРАБЛЕНИЕ!</b>\n\nВы ворвались в банк <b>{escape_html(bank_data.get('name'))}</b>, вскрыли сейф и вынесли <b>{stolen_amount}</b> сыроежек!\n<i>Банк понес убытки.</i>")
     else:
         # Провал
-        penalty = rand.randint(5000, 20000)
+        penalty = rand.randint(50000, 150000)
         await update_user_balance(chat_id, user_id, -penalty)
 
         # Выдаем временный мут через aiogram
