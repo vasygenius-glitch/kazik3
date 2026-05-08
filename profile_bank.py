@@ -187,22 +187,36 @@ async def cmd_bank(message: types.Message):
     action = args[1].lower()
 
     if action == "list":
-        from db import get_db
-        db = get_db()
-        banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
-        docs = await banks_ref.get()
-        if not docs:
-            return await message.answer("🏦 В этом чате пока нет банков.")
+        try:
+            from db import get_db
+            db = get_db()
+            banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
+            docs_iterable = await banks_ref.get()
 
-        text = "🏦 <b>Список Банков:</b>\n\n"
-        for doc in docs:
-            b_data = doc.to_dict()
-            rate = b_data.get('deposit_rate', 1.0)
-            text += f"🏛 <b>{escape_html(b_data.get('name', 'Банк'))}</b>\n"
-            text += f"ID Банкира: <code>{doc.id}</code>\n"
-            text += f"Ставка по вкладу: <b>{rate}%</b> в день\n"
-            text += f"Капитал: <b>{b_data.get('capital', 0)}</b> сыр.\n\n"
-        return await message.answer(text)
+            docs = []
+            if hasattr(docs_iterable, '__aiter__'):
+                async for d in docs_iterable:
+                    docs.append(d)
+            else:
+                for d in docs_iterable:
+                    docs.append(d)
+
+            if not docs:
+                return await message.answer("🏦 В этом чате пока нет банков.")
+
+            text = "🏦 <b>Список Банков:</b>\n\n"
+            for doc in docs:
+                b_data = doc.to_dict()
+                rate = b_data.get('deposit_rate', 1.0)
+                text += f"🏛 <b>{escape_html(b_data.get('name', 'Банк'))}</b>\n"
+                text += f"ID Банкира: <code>{doc.id}</code>\n"
+                text += f"Ставка по вкладу: <b>{rate}%</b> в день\n"
+                text += f"Капитал: <b>{b_data.get('capital', 0)}</b> сыр.\n\n"
+            return await message.answer(text)
+        except Exception as e:
+            import traceback
+            print(f"Error in /bank list: {e}")
+            return await message.answer(f"❌ Ошибка получения списка банков:\n<code>{e}</code>\n{traceback.format_exc()[:300]}")
 
     if action == "info":
         if len(args) < 3:
@@ -421,7 +435,6 @@ def get_bank_stats_kb(banker_id: int):
     return builder.as_markup()
 
 async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
-    from db import get_db
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
     user_docs = await users_ref.get()
@@ -507,7 +520,6 @@ async def cb_bank_stats(callback: types.CallbackQuery):
     if not bank_data:
         return await callback.answer("❌ Банк не найден.", show_alert=True)
 
-    from db import get_db
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
 
