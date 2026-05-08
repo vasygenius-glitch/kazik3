@@ -187,6 +187,7 @@ async def cmd_bank(message: types.Message):
     action = args[1].lower()
 
     if action == "list":
+        from db import get_db
         db = get_db()
         banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
         docs = await banks_ref.get()
@@ -420,6 +421,7 @@ def get_bank_stats_kb(banker_id: int):
     return builder.as_markup()
 
 async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
+    from db import get_db
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
     user_docs = await users_ref.get()
@@ -505,6 +507,7 @@ async def cb_bank_stats(callback: types.CallbackQuery):
     if not bank_data:
         return await callback.answer("❌ Банк не найден.", show_alert=True)
 
+    from db import get_db
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
 
