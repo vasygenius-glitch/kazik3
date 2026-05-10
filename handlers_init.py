@@ -28,6 +28,7 @@ from escort import router as escort_router
 from contracts import router as contracts_router
 from diseases import router as diseases_router
 from inventory import router as inventory_router
+from admin_pm import router as admin_pm_router
 
 from aiogram import Router
 from aiogram.types import Message
@@ -129,4 +130,5 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(contracts_router)
     dp.include_router(diseases_router)
     dp.include_router(inventory_router)
+    dp.include_router(admin_pm_router)
     dp.include_router(catch_all_router)
