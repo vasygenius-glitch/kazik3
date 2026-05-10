@@ -3,6 +3,7 @@ from aiogram.filters import Command
 import time
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import get_user_data, update_user_balance, add_item_to_inventory, update_user_field
+from economy_utils import calculate_progressive_tax, get_global_tax
 from escape import escape_html
 
 router = Router()
@@ -76,11 +77,15 @@ def get_sell_confirm_kb(item_id):
     builder.adjust(2)
     return builder.as_markup()
 
-def get_category_kb(category):
+def get_category_kb(category, balance, base_tax, negotiation_skill=0):
     builder = InlineKeyboardBuilder()
+    tax_rate = calculate_progressive_tax(balance, base_tax, negotiation_skill)
+    
     for item_id, info in ITEMS.items():
         if info.get('cat') == category:
-            builder.button(text=f"{info['name']} - {info['price']} сыр.", callback_data=f"buy_{item_id}")
+            markup = int(info['price'] * (tax_rate / 100.0))
+            final_price = info['price'] + markup
+            builder.button(text=f"{info['name']} - {final_price} сыр.", callback_data=f"buy_{item_id}")
     builder.button(text="⬅️ Назад", callback_data="shop_main")
     builder.adjust(1)
     return builder.as_markup()
@@ -113,9 +118,13 @@ async def cmd_shop(message: types.Message):
     if has_overdue_debt:
         warning_text = "\n\n⚠️ <b>ВНИМАНИЕ: На вас наложен арест за просроченный долг! Вы не можете покупать новые вещи, но можете продать старые для погашения долга.</b>"
 
+    base_tax = await get_global_tax()
+    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
+
     text = (
         f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
-        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.{warning_text}\n"
+        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
+        f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{warning_text}\n"
         f"Выбери категорию товаров ниже:"
     )
     await message.answer(text, reply_markup=get_main_shop_kb())
@@ -123,8 +132,12 @@ async def cmd_shop(message: types.Message):
 @router.callback_query(F.data == "shop_main")
 async def shop_back(callback: types.CallbackQuery):
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    base_tax = await get_global_tax()
+    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
+    
     text = (f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
             f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
+            f"📈 Твоя наценка: <b>{tax_rate}%</b>\n"
             f"Выбери категорию:")
     await callback.message.edit_text(text, reply_markup=get_main_shop_kb())
 
@@ -134,11 +147,14 @@ async def shop_to_inv(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("shop_cat_"))
 async def show_category(callback: types.CallbackQuery):
+    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    base_tax = await get_global_tax()
+    
     category = callback.data.replace("shop_cat_", "")
     cats_names = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}
     
-    text = f"📂 <b>Категория: {cats_names.get(category)}</b>\n\nВыбери товар для покупки:"
-    await callback.message.edit_text(text, reply_markup=get_category_kb(category))
+    text = f"📂 <b>Категория: {cats_names.get(category)}</b>\n\nВыбери товар для покупки (цены указаны с учетом твоего налога):"
+    await callback.message.edit_text(text, reply_markup=get_category_kb(category, data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0)))
 
 @router.callback_query(F.data.startswith("buy_"))
 async def process_buy(callback: types.CallbackQuery):
@@ -166,8 +182,12 @@ async def process_buy(callback: types.CallbackQuery):
     if has_overdue_debt:
         return await callback.answer("❌ У вас просроченный долг! Покупки запрещены.", show_alert=True)
 
-    if data.get('balance', 0) < item['price']:
-        return await callback.answer("Недостаточно денег!", show_alert=True)
+    base_tax = await get_global_tax()
+    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
+    final_price = item['price'] + int(item['price'] * (tax_rate / 100.0))
+
+    if data.get('balance', 0) < final_price:
+        return await callback.answer(f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True)
 
     if item.get('cat') == "biz":
         limit = 4 if data.get('is_vip') else 2
@@ -179,7 +199,7 @@ async def process_buy(callback: types.CallbackQuery):
         if biz_count >= limit:
             return await callback.answer(f"Лимит бизнесов ({limit}) достигнут!", show_alert=True)
 
-    await update_user_balance(chat_id, user_id, -item['price'])
+    await update_user_balance(chat_id, user_id, -final_price)
     
     if item_id == "вип":
         await update_user_field(chat_id, user_id, 'is_vip', True)
