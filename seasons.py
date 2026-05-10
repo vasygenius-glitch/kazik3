@@ -15,7 +15,7 @@ DEFAULT_SEASON = {
     "bonus_target": "crime", # На что действует бонус (work/crime/games)
     "multiplier": 1.25,      # Множитель +25%
     "end_time": int(time.time()) + 86400 * 7, # Конец через неделю
-    "active": True
+    "active": False
 }
 
 async def get_season_config():
