@@ -60,8 +60,8 @@ async def cmd_help(message: types.Message):
     text += "<code>эскорт/проститут [сумма] [реплай]</code> - Предложить услуги.\n\n"
 
     text += "🛒 <b>МАГАЗИН И ПРОКАЧКА:</b>\n"
-    text += "<code>/shop</code> - Бизнесы, машины, VIP.\n"
-    text += "<code>/upgrade [название]</code> - Улучшить бизнес.\n"
+    text += "<code>/shop</code> - Покупка бизнесов, машин, VIP.\n"
+    text += "<code>/inv</code> - Ваш инвентарь (Улучшение и продажа).\n"
     text += "<code>/skills</code> - Прокачка навыков.\n"
     text += "<code>/pets</code>, <code>/feed</code> - Питомцы.\n\n"
 
