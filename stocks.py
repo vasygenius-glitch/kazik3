@@ -38,37 +38,50 @@ def fmt(num: float | int) -> str:
 def _generate_stock_chart_sync(name: str, prices: list) -> bytes:
     if not prices: prices = [100]
     is_growing = prices[-1] >= prices[0]
-    line_color = '#00E5FF' if is_growing else '#FF2D55'
-    bg_color = '#0F0F0F'
     
-    fig = Figure(figsize=(8, 4.5), dpi=100)
+    # ПРЕМИУМ ЦВЕТА: Золотой для роста, Стальной для падения
+    main_color = '#FBC02D' if is_growing else '#90A4AE' 
+    bg_color = '#050A12' # Глубокий темно-синий (корпоративный)
+    grid_color = '#1C2735'
+    
+    fig = Figure(figsize=(9, 5), dpi=100)
     canvas = FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
+    
     fig.patch.set_facecolor(bg_color)
     ax.set_facecolor(bg_color)
     
     x = list(range(len(prices)))
     
-    # Красивая градиентная заливка
-    ax.fill_between(x, prices, min(prices)*0.95, color=line_color, alpha=0.1)
+    # 1. Градиентная заливка (Area)
+    ax.fill_between(x, prices, min(prices)*0.9, color=main_color, alpha=0.08)
     
-    # Свечение линии
-    for alpha, width in [(0.05, 12), (0.1, 7), (0.2, 3)]:
-        ax.plot(x, prices, color=line_color, linewidth=width, alpha=alpha)
+    # 2. Основная линия с небольшим свечением
+    ax.plot(x, prices, color=main_color, linewidth=3, zorder=10, solid_capstyle='round')
+    ax.plot(x, prices, color=main_color, linewidth=6, alpha=0.1, zorder=9)
     
-    ax.plot(x, prices, color=line_color, linewidth=2.5, zorder=10)
+    # 3. Узлы (Dots) на каждой точке для "технического" вида
+    ax.scatter(x, prices, color=main_color, s=20, zorder=11, alpha=0.5)
+    ax.scatter(x[-1], prices[-1], color='white', s=60, zorder=12, edgecolors=main_color, linewidth=2)
+
+    # 4. Сетка (только горизонтальная для чистоты)
+    ax.yaxis.grid(True, color=grid_color, linestyle='--', linewidth=0.5, alpha=0.5)
+    ax.xaxis.grid(False)
     
-    # Точка текущей цены
-    ax.scatter(x[-1], prices[-1], color=line_color, s=50, zorder=15, edgecolors='white')
+    # 5. Оформление осей
+    ax.tick_params(axis='both', colors='#546E7A', labelsize=9)
+    ax.set_title(f"CORPORATE INDEX: {name.upper()}", color='white', fontsize=16, pad=25, fontweight='bold', loc='center', fontname='sans-serif')
     
-    ax.grid(color='#262626', linestyle='--', linewidth=0.5, alpha=0.6)
-    ax.tick_params(axis='both', colors='#666666', labelsize=9)
-    ax.set_title(f"STOCK MARKET: {name}", color='white', fontsize=15, pad=20, fontweight='bold', loc='left')
-    
-    # Скрываем рамки
-    for spine in ax.spines.values():
-        spine.set_visible(False)
+    # Убираем все лишние рамки
+    for side in ['top', 'right', 'bottom', 'left']:
+        ax.spines[side].set_visible(False)
         
+    # Добавляем плашку с текущей ценой
+    last_price = prices[-1]
+    ax.text(x[-1], last_price, f" {fmt(last_price)} ", color='black', fontweight='bold', 
+            bbox=dict(facecolor=main_color, edgecolor='none', boxstyle='round,pad=0.2'),
+            ha='left', va='center', fontsize=10)
+
     fig.tight_layout()
     buf = io.BytesIO()
     canvas.print_png(buf)
