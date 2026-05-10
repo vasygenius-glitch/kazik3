@@ -135,12 +135,17 @@ async def cmd_pay(message: types.Message):
     amount_str = args[1].lower()
     if amount_str in ["all", "всё", "все"]:
         # If user wants to pay all, we need to calculate how much they can send after tax
-        tax_percent = await get_global_tax()
+        from economy_utils import get_global_tax, calculate_progressive_tax
+        base_tax = await get_global_tax()
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, sender_id)
-        if 'herpes' in active_diseases:
-            tax_percent = 30
 
+        neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
+        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl)
+
+        if 'herpes' in active_diseases:
+            tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
+        
         balance = sender_data.get('balance', 0)
         if balance <= 0:
             return await message.answer("У вас нет денег.")
@@ -165,11 +170,15 @@ async def cmd_pay(message: types.Message):
             await message.answer("Сумма должна быть числом или 'all'.")
             return
 
-        tax_percent = await get_global_tax()
+        from economy_utils import get_global_tax, calculate_progressive_tax
+        base_tax = await get_global_tax()
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, sender_id)
+        neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
+        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl)
+
         if 'herpes' in active_diseases:
-            tax_percent = 30 # Герпес: глобальный налог 30% на все переводы
+            tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
 
     if tax_percent > 0:
         commission = int(amount * (tax_percent / 100.0))

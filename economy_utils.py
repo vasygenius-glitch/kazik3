@@ -30,3 +30,13 @@ async def set_global_tax(tax: int):
 
     db = get_db()
     fire_and_forget(db.collection('bot_settings').document('economy').set({'tax': tax}, merge=True))
+
+def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: int = 0) -> int:
+    """
+    Calculates tax rate: base_tax + 2% for every 1,000,000 in balance.
+    Negotiation skill reduces the rate. Cap is 90%.
+    """
+    wealth_surcharge = (balance // 1000000) * 2
+    total_tax = base_tax + wealth_surcharge
+    total_tax = max(0, total_tax - negotiation_skill)
+    return min(90, total_tax)

@@ -613,13 +613,15 @@ async def cmd_clan(message: types.Message):
         if amount <= 0: return
         if treasury < amount: return await message.answer(f"В казне недостаточно средств (Доступно: {treasury}).")
 
-        from economy_utils import get_global_tax
-        tax_percent = await get_global_tax()
+        from economy_utils import get_global_tax, calculate_progressive_tax
+        base_tax = await get_global_tax()
+        neg_lvl = data.get('skills', {}).get('negotiation', 0)
+        tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl)
 
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, user_id)
         if 'cytomegalovirus' in active_diseases:
-            tax_percent *= 2 # Цитомегаловирус удваивает налог на снятие из общака
+            tax_percent = min(90, tax_percent * 2) # Цитомегаловирус удваивает налог на снятие из общака
 
         tax_amount = int(amount * (tax_percent / 100.0))
         net_amount = amount - tax_amount

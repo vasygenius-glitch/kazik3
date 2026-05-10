@@ -114,11 +114,11 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
                 else: bank_income = int(bank_deposit * 0.002)
 
         from shop import ITEMS
-        from economy_utils import get_global_tax
+        from economy_utils import get_global_tax, calculate_progressive_tax
 
-        tax_percent = await get_global_tax()
+        base_tax = await get_global_tax()
         neg_lvl = data.get('skills', {}).get('negotiation', 0)
-        tax_percent = max(0, tax_percent - neg_lvl)
+        tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl)
 
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, user_id)
