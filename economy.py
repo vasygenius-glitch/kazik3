@@ -8,6 +8,8 @@ from escape import escape_html
 
 router = Router()
 
+active_work_games = {}
+
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
@@ -294,14 +296,11 @@ async def cmd_work(message: types.Message):
     await update_user_field(chat_id, user_id, 'last_work_time', current_time)
 
     rand = secrets.SystemRandom()
-    base_earnings = rand.randint(500, 1500)
+    is_banker = data.get('is_banker', False)
+    base_earnings = rand.randint(50, 100) if is_banker else rand.randint(100, 300)
     
     bank_profit_msg = ""
-    if data.get('is_banker', False):
-        # Доход банкиров от работы урезан до 10-20%
-        base_earnings = int(base_earnings * 0.15)
-        if base_earnings < 1:
-            base_earnings = 1
+    if is_banker:
 
         # Банкир также приносит пользу своему банку
         bank_contribution = rand.randint(1000, 5000)
@@ -388,8 +387,85 @@ async def cmd_work(message: types.Message):
 
     job = rand.choice(jobs)
 
-    await message.answer(f"💼 Ты <b>{job}</b> и заработал <b>{base_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}")
+    afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{base_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}"
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    import uuid
+    builder = InlineKeyboardBuilder()
+    game_id = str(uuid.uuid4())[:8]
+    
+    bonus = rand.randint(400, 1000) if is_banker else rand.randint(800, 2000)
+    
+    if is_banker:
+        a = rand.randint(100, 500)
+        b = rand.randint(100, 500)
+        correct_ans = a + b
+        options = [correct_ans, correct_ans + rand.randint(10, 50), correct_ans - rand.randint(10, 50)]
+        rand.shuffle(options)
+        
+        game_text = f"\n\n🎮 <b>ПРЕМИЯ:</b> Сведите баланс! <b>{a} + {b} = ?</b>"
+        
+        for opt in options:
+            cb_data = f"work_btn_{game_id}_1" if opt == correct_ans else f"work_btn_{game_id}_0"
+            builder.button(text=str(opt), callback_data=cb_data)
+    else:
+        fruits = ["🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐"]
+        target = rand.choice(fruits)
+        options = rand.sample(fruits, 3)
+        if target not in options:
+            options[0] = target
+        rand.shuffle(options)
+        
+        game_text = f"\n\n🎮 <b>ПРЕМИЯ:</b> Собери нужный товар! Нажми на <b>{target}</b>"
+        
+        for opt in options:
+            cb_data = f"work_btn_{game_id}_1" if opt == target else f"work_btn_{game_id}_0"
+            builder.button(text=opt, callback_data=cb_data)
+            
+    builder.adjust(3)
+    
+    active_work_games[game_id] = {
+        'user_id': user_id,
+        'bonus': bonus,
+        'expires': time.time() + 60
+    }
+    
+    await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
 
+@router.callback_query(F.data.startswith("work_btn_"))
+async def process_work_btn(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) < 4: return
+    game_id = parts[2]
+    is_correct = parts[3] == "1"
+    
+    game = active_work_games.get(game_id)
+    if not game:
+        return await callback.answer("⏳ Время вышло или игра уже завершена!", show_alert=True)
+        
+    if game['user_id'] != callback.from_user.id:
+        return await callback.answer("Это не твоя работа!", show_alert=True)
+        
+    if time.time() > game['expires']:
+        del active_work_games[game_id]
+        await callback.message.edit_reply_markup(reply_markup=None)
+        return await callback.answer("⏳ Время вышло!", show_alert=True)
+        
+    del active_work_games[game_id]
+    
+    # aiogram 3.x html_text
+    original_html = callback.message.html_text if hasattr(callback.message, 'html_text') else callback.message.text
+    if not original_html:
+        original_html = ""
+        
+    if is_correct:
+        chat_id = callback.message.chat.id
+        await update_user_balance(chat_id, callback.from_user.id, game['bonus'])
+        new_text = original_html + f"\n\n✅ <b>Успех!</b> Ты получил премию <b>{game['bonus']}</b> сыр.!"
+        await callback.message.edit_text(new_text, reply_markup=None)
+    else:
+        new_text = original_html + "\n\n❌ <b>Ошибка!</b> Ты запорол работу, премия сгорела."
+        await callback.message.edit_text(new_text, reply_markup=None)
 @router.message(Command("crime"))
 async def cmd_crime(message: types.Message):
     chat_id = message.chat.id
