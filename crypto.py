@@ -166,14 +166,14 @@ async def update_coins(coins_dict: Dict[str, Any]) -> bool:
 
 def _generate_single_chart_sync(coin_name: str, prices: list) -> bytes:
     """
-    Синхронная функция генерации графика монеты.
+    Синхронная функция генерации графика монеты (PREMIUM DESIGN).
     """
     if not prices:
-        prices =[0]
+        prices = [0]
         
     is_growing = prices[-1] >= prices[0]
     line_color = '#00FFA3' if is_growing else '#FF3B30'
-    bg_color = '#121212'
+    bg_color = '#0B0E14' # Глубокий темный фон
     
     fig = Figure(figsize=(7, 4.5), dpi=100)
     canvas = FigureCanvasAgg(fig)
@@ -182,51 +182,64 @@ def _generate_single_chart_sync(coin_name: str, prices: list) -> bytes:
     ax.set_facecolor(bg_color)
     
     x = list(range(len(prices)))
-    volumes =[abs(prices[i] - prices[i-1]) * 1500 if i > 0 else 5000 for i in x]
-    vol_colors =['#00FFA3' if i == 0 or prices[i] >= prices[i-1] else '#FF3B30' for i in x]
+    
+    # Объемы (нижние бары)
+    volumes = [abs(prices[i] - prices[i-1]) * 1500 if i > 0 else 5000 for i in x]
+    vol_colors = ['#00FFA3' if i == 0 or prices[i] >= prices[i-1] else '#FF3B30' for i in x]
     
     ax2 = ax.twinx()
-    ax2.bar(x, volumes, color=vol_colors, alpha=0.2, width=0.6)
-    ax2.set_ylim(0, max(volumes) * 3 if max(volumes) > 0 else 100)
+    ax2.bar(x, volumes, color=vol_colors, alpha=0.15, width=0.5)
+    ax2.set_ylim(0, max(volumes) * 4 if max(volumes) > 0 else 100)
     ax2.axis('off')
     
-    sma =[sum(prices[max(0, i-2):i+1])/len(prices[max(0, i-2):i+1]) for i in x]
-    ax.plot(x, sma, color='#666666', linestyle=':', linewidth=1.2, alpha=0.8)
+    # SMA (Скользящая средняя)
+    sma = [sum(prices[max(0, i-2):i+1])/len(prices[max(0, i-2):i+1]) for i in x]
+    ax.plot(x, sma, color='#4A4D54', linestyle='--', linewidth=1.5, alpha=0.6)
     
-    for alpha, width in[(0.05, 10), (0.1, 6), (0.2, 3)]:
+    # Неоновое свечение (Glow Effect)
+    for alpha, width in [(0.03, 12), (0.06, 8), (0.1, 5)]:
         ax.plot(x, prices, color=line_color, linewidth=width, alpha=alpha)
         
-    ax.plot(x, prices, color=line_color, linewidth=2, zorder=5)
-    ax.fill_between(x, prices, min(prices) * 0.9, color=line_color, alpha=0.05)
+    # Основная линия
+    ax.plot(x, prices, color=line_color, linewidth=2.5, zorder=5)
     
+    # Градиентная заливка (Glassmorphism fill)
+    for alpha, offset in [(0.15, 0.95), (0.08, 0.90), (0.03, 0.85)]:
+        ax.fill_between(x, prices, min(prices) * offset, color=line_color, alpha=alpha, zorder=4)
+    
+    # Текущая цена (плашка)
     ax.text(
-        x[-1], prices[-1], f'  {fmt(prices[-1])}', 
-        color='white', fontsize=10, fontweight='bold', 
-        bbox=dict(facecolor=line_color, alpha=0.4, edgecolor='none', boxstyle='round,pad=0.3')
+        x[-1], prices[-1], f'  {fmt(prices[-1])}  ', 
+        color='#FFFFFF', fontsize=11, fontweight='bold', 
+        bbox=dict(facecolor=line_color, alpha=0.5, edgecolor=line_color, boxstyle='round,pad=0.4')
     )
     
-    ax.grid(color='#2A2A2A', linestyle='-', linewidth=0.5, alpha=0.5)
+    # Сетка и оси
+    ax.grid(color='#1A1D24', linestyle='--', linewidth=0.5, alpha=0.8)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.tick_params(axis='both', colors='#888888', labelsize=9)
-    ax.set_title(f"DATA: {coin_name}", color='white', fontsize=14, pad=20, fontweight='bold', loc='left')
+    ax.spines['left'].set_color('#1A1D24')
+    ax.spines['bottom'].set_color('#1A1D24')
+    ax.tick_params(axis='both', colors='#6B7280', labelsize=9)
+    
+    # Заголовок
+    ax.set_title(f" {coin_name} ", color='#FFFFFF', fontsize=15, pad=20, fontweight='bold', loc='left')
     
     fig.tight_layout()
     buf = io.BytesIO()
     canvas.print_png(buf)
     buf.seek(0)
     
-    # Очистка без использования plt.close, чтобы не ломать многопоточность
     ax.clear()
     fig.clear()
     return buf.read()
 
 def _generate_global_chart_sync(coins_dict: Dict[str, Any]) -> bytes:
     """
-    Генерация глобального индекса по топовым монетам.
+    Генерация глобального индекса по топовым монетам (PREMIUM DESIGN).
     """
-    bg_color = '#121212'
-    colors =['#00FFA3', '#FF3B30', '#00B8FF', '#FFD600', '#FF00FF']
+    bg_color = '#0B0E14'
+    colors = ['#00FFA3', '#FF3B30', '#00B8FF', '#FFD600', '#FF00FF']
     fig = Figure(figsize=(8, 5), dpi=100)
     canvas = FigureCanvasAgg(fig)
     ax = fig.add_subplot(111)
@@ -239,15 +252,22 @@ def _generate_global_chart_sync(coins_dict: Dict[str, Any]) -> bytes:
             continue
         x = range(len(prices))
         color = colors[idx % len(colors)]
-        ax.plot(x, prices, color=color, linewidth=2.5, alpha=0.8, label=data["ticker"])
+        
+        # Легкое свечение
+        ax.plot(x, prices, color=color, linewidth=6, alpha=0.1)
+        ax.plot(x, prices, color=color, linewidth=2.5, alpha=0.9, label=data["ticker"])
     
-    ax.grid(color='#2A2A2A', linestyle='-', linewidth=0.5, alpha=0.7)
-    ax.tick_params(axis='both', colors='#888888', labelsize=9)
-    ax.set_title("GLOBAL MARKET INDEX", color='white', fontsize=16, pad=20, fontweight='bold')
+    ax.grid(color='#1A1D24', linestyle='--', linewidth=0.5, alpha=0.8)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['left'].set_color('#1A1D24')
+    ax.spines['bottom'].set_color('#1A1D24')
+    ax.tick_params(axis='both', colors='#6B7280', labelsize=9)
+    ax.set_title("GLOBAL MARKET INDEX", color='#FFFFFF', fontsize=16, pad=20, fontweight='bold', loc='center')
     
-    legend = ax.legend(facecolor='#1A1A1A', edgecolor='#333333', fontsize=9, loc='upper left')
+    legend = ax.legend(facecolor='#12151C', edgecolor='#1A1D24', fontsize=10, loc='upper left')
     for text in legend.get_texts(): 
-        text.set_color('white')
+        text.set_color('#FFFFFF')
     
     fig.tight_layout()
     buf = io.BytesIO()
@@ -550,7 +570,7 @@ async def cmd_cr_send(message: types.Message):
 
 def get_crypto_main_kb():
     builder = InlineKeyboardBuilder()
-    builder.button(text="📈 Состояние рынка", callback_data="crypto_market")
+    builder.button(text="📈 Состояние рынка", callback_data="crypto_market_0")
     builder.button(text="💼 Мой портфель", callback_data="crypto_portfolio")
     builder.button(text="🪙 Листинг монеты", callback_data="crypto_create")
     builder.adjust(1)
@@ -568,10 +588,27 @@ async def cb_crypto_main(callback: types.CallbackQuery):
     await callback.answer()
     await smart_edit(callback, "📊 <b>SYROEZHKA CRYPTO EXCHANGE</b>\n\nГлавное меню.", get_crypto_main_kb())
 
-@router.callback_query(F.data == "crypto_market")
+@router.callback_query(F.data.startswith("crypto_market_"))
 async def cb_crypto_market(callback: types.CallbackQuery):
     await callback.answer()
     coins = await get_all_coins()
+    
+    # Пагинация
+    try:
+        page = int(callback.data.split("_")[-1])
+    except ValueError:
+        page = 0
+        
+    per_page = 5
+    coins_items = list(coins.items())
+    total_pages = max(1, (len(coins_items) + per_page - 1) // per_page)
+    
+    if page < 0: page = 0
+    if page >= total_pages: page = total_pages - 1
+    
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    current_coins = coins_items[start_idx:end_idx]
     
     builder = InlineKeyboardBuilder()
     text = "📊 <b>ТЕКУЩИЕ КОТИРОВКИ</b>\n\n"
@@ -579,16 +616,30 @@ async def cb_crypto_market(callback: types.CallbackQuery):
     if not coins: 
         text += "Рынок пуст. Станьте первым, кто выпустит монету!"
         
-    for cid, coin in coins.items():
+    for cid, coin in current_coins:
         curr = coin["prices"][-1]
         prev = coin["prices"][-2] if len(coin["prices"]) > 1 else curr
         emoji = "🚀" if curr >= prev else "🩸"
         text += f"<b>{coin['ticker']}</b>: {fmt(curr)} сыр. {emoji}\n"
-        builder.button(text=f"{coin['ticker']} | {fmt(curr)}", callback_data=f"cr_view_{cid}")
+        builder.button(text=f"{coin['ticker']} | {fmt(curr)}", callback_data=f"cr_view_{cid}_{page}")
         
-    builder.button(text="📉 Общий индекс", callback_data="crypto_global_chart")
-    builder.button(text="⬅️ Назад", callback_data="crypto_main")
-    builder.adjust(1)
+    # Кнопки навигации по страницам
+    from aiogram.types import InlineKeyboardButton
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️ Пред.", callback_data=f"crypto_market_{page-1}"))
+    
+    if total_pages > 1:
+        nav_buttons.append(InlineKeyboardButton(text=f"[ {page+1} / {total_pages} ]", callback_data="ignore"))
+        
+    if page < total_pages - 1:
+        nav_buttons.append(InlineKeyboardButton(text="След. ➡️", callback_data=f"crypto_market_{page+1}"))
+    
+    if nav_buttons:
+        builder.row(*nav_buttons)
+        
+    builder.row(InlineKeyboardButton(text="📉 Общий индекс", callback_data="crypto_global_chart"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад в меню", callback_data="crypto_main"))
     
     await smart_edit(callback, text, builder.as_markup())
 
@@ -604,7 +655,7 @@ async def cb_global_chart(callback: types.CallbackQuery):
     chart = BufferedInputFile(chart_bytes, filename="global.png")
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ К списку монет", callback_data="crypto_market")
+    builder.button(text="⬅️ К списку монет", callback_data="crypto_market_0")
     
     await load.delete()
     await callback.message.answer_photo(photo=chart, caption="🌐 <b>Глобальное состояние рынка</b>", reply_markup=builder.as_markup())
@@ -615,7 +666,10 @@ async def cb_coin_view(callback: types.CallbackQuery):
     REAL-TIME ОБНОВЛЕНИЕ ГРАФИКА:
     Если график уже открыт, мы не пересоздаем сообщение, а бесшовно меняем картинку (edit_media).
     """
-    cid = callback.data.replace("cr_view_", "")
+    parts = callback.data.split("_")
+    cid = parts[2]
+    page = parts[3] if len(parts) > 3 else "0"
+    
     coins = await get_all_coins()
     
     if cid not in coins: 
@@ -632,8 +686,8 @@ async def cb_coin_view(callback: types.CallbackQuery):
     builder.button(text="Продать (10 шт) 📉", callback_data=f"cr_do_sell_10_{cid}")
     
     # Кнопка для Real-time обновления
-    builder.button(text="🔄 Обновить график", callback_data=f"cr_view_{cid}")
-    builder.button(text="⬅️ Назад", callback_data="crypto_market")
+    builder.button(text="🔄 Обновить график", callback_data=f"cr_view_{cid}_{page}")
+    builder.button(text="⬅️ Назад", callback_data=f"crypto_market_{page}")
     
     builder.adjust(2, 2, 1, 1)
     caption = f"💰 <b>{coin['name']} ({coin['ticker']})</b>\n\nТекущий курс: <b>{fmt(coin['prices'][-1])}</b> сыр.\n<i>(Рынок обновляется раз в 10 минут)</i>"
