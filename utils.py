@@ -29,3 +29,20 @@ async def schedule_delete(*messages, delay: int = 40):
         if msg and hasattr(msg, 'delete'):
             with suppress(Exception):
                 await msg.delete()
+
+async def check_maintenance():
+    """Checks if maintenance mode is active in the database."""
+    from db import get_db
+    from utils_pkg.cache_manager import global_cache
+    
+    cached = global_cache.get("maintenance_mode")
+    if cached is not None: return cached
+    
+    try:
+        db = get_db()
+        doc = await db.collection('bot_settings').document('maintenance').get()
+        status = doc.to_dict().get('active', False) if doc.exists else False
+        global_cache.set("maintenance_mode", status, ttl=60)
+        return status
+    except Exception:
+        return False

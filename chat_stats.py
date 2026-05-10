@@ -143,15 +143,15 @@ async def weekly_reset_task(bot: Bot):
                 chats = await db.collection('chats').get()
                 for chat in chats:
                     chat_id = int(chat.id)
-                    users = await db.collection('chats').document(str(chat_id)).collection('users').get()
+                    # ОПТИМИЗАЦИЯ: Ищем только тех, у кого ЕСТЬ болезни
+                    users = await db.collection('chats').document(str(chat_id)).collection('users').where('diseases.scabies', '!=', None).get()
                     for user in users:
                         user_id = int(user.id)
                         data = user.to_dict()
-                        if 'scabies' in data.get('diseases', {}):
-                            active_diseases = await get_active_diseases(chat_id, user_id)
-                            if 'scabies' in active_diseases:
-                                if data.get('balance', 0) >= 50:
-                                    await update_user_balance(chat_id, user_id, -50)
+                        active_diseases = await get_active_diseases(chat_id, user_id)
+                        if 'scabies' in active_diseases:
+                            if data.get('balance', 0) >= 50:
+                                await update_user_balance(chat_id, user_id, -50)
             except Exception as e:
                 print(f"Ошибка в 10-минутной таске (Чесотка): {e}")
 
@@ -168,62 +168,58 @@ async def weekly_reset_task(bot: Bot):
                     bank_docs = await banks_ref.get()
                     banks_data = {doc.id: doc.to_dict() for doc in bank_docs}
 
-                    # 2. Начисляем % всем вкладчикам
+                    # 2. Начисляем % только тем, у кого ЕСТЬ вклад
                     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-                    user_docs = await users_ref.get()
-                    for user_doc in user_docs:
+                    users_with_deposits = await users_ref.where('bank_deposit', '>', 0).get()
+                    
+                    for user_doc in users_with_deposits:
                         u_data = user_doc.to_dict()
                         deposit = u_data.get('bank_deposit', 0)
                         bank_id_str = str(u_data.get('bank_name', ''))
 
-                        if deposit > 0 and bank_id_str in banks_data:
+                        if bank_id_str in banks_data:
                             base_rate = banks_data[bank_id_str].get('deposit_rate', 3.0)
 
                             # Лояльность (бонус за дни)
-                            deposit_start_time = u_data.get('deposit_start_time', current_time.tm_sec)
-                            # Приближенная калькуляция дней
-                            days_held = (time.time() - deposit_start_time) // 86400 if 'deposit_start_time' in u_data else 0
-                            loyalty_bonus = min(5.0, days_held * 0.5) # Максимум +5%
+                            deposit_start_time = u_data.get('deposit_start_time', time.time())
+                            days_held = (time.time() - deposit_start_time) // 86400
+                            loyalty_bonus = min(5.0, days_held * 0.5) 
 
                             final_rate = base_rate + loyalty_bonus
                             profit = int(deposit * (final_rate / 100))
 
                             if profit > 0:
-                                # Проверяем, есть ли у банка деньги выплатить %
                                 if banks_data[bank_id_str].get('capital', 0) >= profit:
                                     banks_data[bank_id_str]['capital'] -= profit
-                                    await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', deposit + profit)
-
-                                    # Оффшорная комиссия (если счет скрытый)
+                                    new_dep = deposit + profit
+                                    
                                     if u_data.get('is_offshore', False):
-                                        fee = int(deposit * 0.005) # 0.5% за обслуживание оффшора
-                                        new_dep = deposit + profit - fee
-                                        await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
+                                        fee = int(new_dep * 0.005)
+                                        new_dep -= fee
+                                    
+                                    await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
 
-                    # 3. Обновляем капитал банков (вычитаем выплаченные %, добавляем гос. субсидию 50М, налог на сверхприбыль, банкротство)
+                    # 3. Обновляем капитал банков и проверяем банкротство
                     for b_id, b_data in banks_data.items():
                         current_cap = b_data.get('capital', 0)
 
                         # Банкротство
                         if current_cap < 0:
-                            # Возвращаем вкладчикам 50% из фонда ЦБ, если банк обанкротился
-                            for user_doc in user_docs:
-                                u_data = user_doc.to_dict()
-                                if str(u_data.get('bank_name', '')) == b_id:
-                                    deposit = u_data.get('bank_deposit', 0)
-                                    if deposit > 0:
-                                        refund = int(deposit * 0.5)
-                                        await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', 0)
-                                        await update_user_balance(chat_id, int(user_doc.id), refund)
-                                        await update_user_field(chat_id, int(user_doc.id), 'bank_name', None)
-                                        try:
-                                            await bot.send_message(chat_id, f"🏛 Банк <b>{b_data.get('name')}</b> обанкротился! ЦБ компенсировал 50% вашего вклада ({refund} сыр.) на наличный счет.")
-                                        except Exception: pass
+                            # Оптимизация: ищем только вкладчиков этого конкретного банка
+                            bankrupt_vips = await users_ref.where('bank_name', '==', b_id).get()
+                            count_refunded = 0
+                            for v_doc in bankrupt_vips:
+                                dep = v_doc.to_dict().get('bank_deposit', 0)
+                                refund = int(dep * 0.5)
+                                await update_user_field(chat_id, int(v_doc.id), 'bank_deposit', 0)
+                                await update_user_balance(chat_id, int(v_doc.id), refund)
+                                await update_user_field(chat_id, int(v_doc.id), 'bank_name', None)
+                                count_refunded += 1
 
                             await banks_ref.document(b_id).delete()
                             await update_user_field(chat_id, int(b_id), 'is_banker', False)
                             try:
-                                await bot.send_message(chat_id, f"💥 <b>ДЕФОЛТ!</b> Банк <b>{b_data.get('name')}</b> признан банкротом и закрыт. Банкир отстранен.")
+                                await bot.send_message(chat_id, f"💥 <b>ДЕФОЛТ!</b> Банк <b>{b_data.get('name')}</b> признан банкротом и закрыт. ЦБ компенсировал 50% вкладов для {count_refunded} чел.")
                             except Exception: pass
                             continue
 
@@ -234,7 +230,8 @@ async def weekly_reset_task(bot: Bot):
 
                         # Подсчет выданных кредитов для мультипликатора субсидии
                         total_loans_given = 0
-                        for user_doc in user_docs:
+                        debt_users = await users_ref.where('debts', '!=', {}).get()
+                        for user_doc in debt_users:
                             u_data = user_doc.to_dict()
                             debts = u_data.get('debts', {})
                             for k, v in debts.items():

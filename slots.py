@@ -30,6 +30,10 @@ async def cmd_slots(message: types.Message):
     chat_id, user_id = message.chat.id, message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
+    from utils import schedule_delete, check_maintenance
+    if await check_maintenance() and user_id != CREATOR_ID:
+        return await message.answer("🛠 <b>Бот на техническом обслуживании.</b>\nИгровые команды временно отключены.")
+
     data = await get_user_data(chat_id, user_id, full_name)
     if data.get('is_banned', False): return await message.answer("🚫")
 
@@ -102,7 +106,7 @@ async def cmd_slots(message: types.Message):
         else: pair = final_slots[1]
         if pair == "7️⃣": profit, mult = bet * 2, "PAIRS x2!"
         elif pair in ["💎", "🔔"]: profit, mult = int(bet * 1.5), "PAIRS x1.5!"
-        else: profit, mult = 0, ""
+        else: profit, mult = int(bet * 0.5), "PAIRS x0.5!"
         
         if profit > 0: status = f"🎉 <b>ПОБЕДА!</b>\n  +{profit} сыр. | {mult}"
         else: status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр."
@@ -110,7 +114,7 @@ async def cmd_slots(message: types.Message):
         status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр."
 
     if profit > 0:
-        if data.get('is_banker'): profit = int(profit * 0.5)
+        if data.get('is_banker'): profit = int(profit * 1.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(chat_id, user_id, bet + profit)
 

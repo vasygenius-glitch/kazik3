@@ -1,9 +1,17 @@
+import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import get_user_data, update_user_balance, update_user_field
 from shop import ITEMS
 from escape import escape_html
+
+_inv_locks = {}
+def get_inv_lock(chat_id, user_id):
+    key = (chat_id, user_id)
+    if key not in _inv_locks:
+        _inv_locks[key] = asyncio.Lock()
+    return _inv_locks[key]
 
 router = Router()
 
@@ -119,33 +127,39 @@ async def inv_upgrade(callback: types.CallbackQuery):
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    data = await get_user_data(chat_id, user_id)
     
-    inventory = data.get('inventory', {})
-    if inventory.get(item_id, 0) <= 0:
-        return await callback.answer("У вас нет этого бизнеса!", show_alert=True)
+    lock = get_inv_lock(chat_id, user_id)
+    if lock.locked():
+        return await callback.answer("⏳ Обработка...", show_alert=False)
+        
+    async with lock:
+        data = await get_user_data(chat_id, user_id)
+        
+        inventory = data.get('inventory', {})
+        if inventory.get(item_id, 0) <= 0:
+            return await callback.answer("У вас нет этого бизнеса!", show_alert=True)
 
-    biz_levels = data.get('biz_levels', {})
-    current_level = biz_levels.get(item_id, 1)
-    
-    if current_level >= MAX_BIZ_LEVEL:
-        return await callback.answer("Достигнут максимальный уровень!", show_alert=True)
+        biz_levels = data.get('biz_levels', {})
+        current_level = biz_levels.get(item_id, 1)
+        
+        if current_level >= MAX_BIZ_LEVEL:
+            return await callback.answer("Достигнут максимальный уровень!", show_alert=True)
 
-    upgrade_cost = int(info['price'] * 0.5 * current_level)
-    
-    if data.get('balance', 0) < upgrade_cost:
-        return await callback.answer("Недостаточно сыроежек для улучшения!", show_alert=True)
+        upgrade_cost = int(info['price'] * 0.5 * current_level)
+        
+        if data.get('balance', 0) < upgrade_cost:
+            return await callback.answer("Недостаточно сыроежек для улучшения!", show_alert=True)
 
-    await update_user_balance(chat_id, user_id, -upgrade_cost)
-    
-    biz_levels[item_id] = current_level + 1
-    await update_user_field(chat_id, user_id, 'biz_levels', biz_levels)
-    
-    await callback.answer(f"🎉 Бизнес {info['name']} улучшен до уровня {current_level + 1}!", show_alert=True)
-    
-    # We can fake the callback data to reload item info
-    callback.data = f"inv_item_{item_id}"
-    await inv_item_info(callback)
+        await update_user_balance(chat_id, user_id, -upgrade_cost)
+        
+        biz_levels[item_id] = current_level + 1
+        await update_user_field(chat_id, user_id, 'biz_levels', biz_levels)
+        
+        await callback.answer(f"🎉 Бизнес {info['name']} улучшен до уровня {current_level + 1}!", show_alert=True)
+        
+        # We can fake the callback data to reload item info
+        callback.data = f"inv_item_{item_id}"
+        await inv_item_info(callback)
 
 @router.callback_query(F.data.startswith("inv_sell_confirm_"))
 async def confirm_inv_sell(callback: types.CallbackQuery):

@@ -5,6 +5,7 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from db import get_db
 from utils_pkg.cache_manager import global_cache
+from config import CREATOR_ID
 from user_manager import update_user_balance
 
 router = Router()
@@ -104,7 +105,7 @@ async def cmd_season(message: types.Message):
 
 @router.message(Command("set_season", "start_season_1"))
 async def cmd_set_season(message: types.Message):
-    if message.from_user.id not in [6154129759]: return
+    if message.from_user.id != CREATOR_ID: return
     
     args = message.text.split()
     if message.text.startswith("/start_season_1"):

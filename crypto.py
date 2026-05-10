@@ -523,6 +523,10 @@ async def cmd_cr_send(message: types.Message):
     if not message.reply_to_message: 
         return
         
+    target_id = message.reply_to_message.from_user.id
+    if int(user_id) == int(target_id):
+        return await message.answer("❌ Нельзя переводить крипту самому себе.")
+        
     args = message.text.split()
     if len(args) < 3: 
         return await message.answer("ℹ️ Использование: /cr_send [ТИКЕР][Сумма]")
