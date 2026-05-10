@@ -4,6 +4,7 @@ import secrets
 import time
 from economy_utils import get_global_tax
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users
+from seasons import apply_season_bonus
 from escape import escape_html
 
 router = Router()
@@ -32,6 +33,7 @@ async def cmd_help(message: types.Message):
 
     text += "🚀 <b>ПОСЛЕДНИЕ ОБНОВЛЕНИЯ:</b>\n"
     text += "• <b>Фондовая Биржа:</b> Команда <code>/stocks</code> — инвестируй в ГазСыр и SpaceMilk!\n"
+    text += "• <b>Сезоны:</b> Команда <code>/season</code> — тематические события с бонусами!\n"
     text += "• <b>Налог на богатство:</b> Чем больше у тебя сыроежек, тем выше комиссия в <code>/pay</code> и цены в <code>/shop</code>.\n"
     text += "• <b>Мини-игры:</b> В <code>/work</code> и <code>/crime</code> теперь нужно играть, чтобы получить бонус.\n"
     text += "• <b>Реактивный инвентарь:</b> <code>/inv</code> и операции с балансом стали работать мгновенно.\n"
@@ -389,6 +391,7 @@ async def cmd_work(message: types.Message):
     elif pet_id == 'dragon' and (debts or balance < 0):
          pet_msg += "\n🐉 Ваш дракон отпугнул поджидавших вас коллекторов!"
 
+    final_earnings = await apply_season_bonus(final_earnings, "work")
     if final_earnings > 0:
         await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
 
@@ -580,6 +583,7 @@ async def cmd_crime(message: types.Message):
         elif pet_id == 'dragon' and (debts or balance < 0):
             pet_msg += " И отпугнул коллекторов!"
 
+        final_earnings = await apply_season_bonus(final_earnings, "crime")
         if final_earnings > 0:
             await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
         
