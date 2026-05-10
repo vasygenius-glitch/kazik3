@@ -66,22 +66,37 @@ async def cmd_season(message: types.Message):
 
 @router.message(Command("start_season_1"))
 async def cmd_start_season_1(message: types.Message):
-    # Только для админа (проверка по ID или правам, тут упрощено)
-    # if message.from_user.id != ADMIN_ID: return
-    
+    # Установка конфига в БД
     db = get_db()
     await db.collection('bot_settings').document('season').set(SEASON_1_CONFIG)
     global_cache.delete("current_season")
     
-    announce = (
-        "📢 <b>ВНИМАНИЕ! ОБЪЯВЛЕНО НАЧАЛО 1 СЕЗОНА!</b>\n\n"
-        "🌑 <b>ТЕМА: ЗАКУЛИСЬЕ (BACKROOMS)</b> 🌑\n"
-        "🗓 <b>СРОК: 1 МЕСЯЦ</b>\n\n"
-        "Мир изменился. Теперь за каждым углом может ждать опасность, а деньги добывать стало в разы сложнее.\n"
-        "Готовы ли вы выжить в 1 сезоне?\n\n"
-        "👉 Пиши <code>/season</code> чтобы узнать подробности!"
+    # Красивый текст анонса
+    announce_text = (
+        "🏆 <b>1 СЕЗОН: ЗАКУЛИСЬЕ</b> 🏆\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🚪 <b>Вы провалились в другой мир...</b>\n"
+        "🗓 Длительность: <b>1 МЕСЯЦ</b>\n\n"
+        "Сможете ли вы выжить там, где реальность дает сбой? \n"
+        "Доходы упали, но шансы найти артефакты возросли!\n\n"
+        "👉 Подробности: <code>/season</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
-    await message.answer(announce)
+    
+    # Глобальный анонс по всем чатам из вайтлиста
+    from whitelist import get_whitelist
+    whitelist = await get_whitelist()
+    
+    count = 0
+    for chat_id in whitelist:
+        try:
+            await message.bot.send_message(chat_id=chat_id, text=announce_text)
+            count += 1
+            await asyncio.sleep(0.05) # Защита от флуда
+        except Exception:
+            continue
+            
+    await message.answer(f"✅ Сезон 1 запущен! Сообщение отправлено в <b>{count}</b> чатов.")
 
 # Улучшенная логика бонусов/штрафов
 async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tuple[int, str]:
