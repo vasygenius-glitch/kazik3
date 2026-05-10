@@ -1,0 +1,136 @@
+import asyncio
+import random
+import secrets
+from aiogram import Router, types
+from aiogram.filters import Command
+
+from user_manager import get_user_data, update_user_balance, check_and_give_bonus
+from chances import get_game_chance
+from escape import escape_html
+from config import CREATOR_ID
+from utils import schedule_delete
+
+router = Router()
+
+secure_random = secrets.SystemRandom()
+
+@router.message(Command("roulette"))
+async def cmd_roulette(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    full_name = escape_html(message.from_user.full_name)
+
+    data = await get_user_data(chat_id, user_id, full_name)
+    if data.get('is_banned', False):
+        return await message.answer("Вы забанены и не можете играть.")
+
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    if 'gonorrhea' in active_diseases:
+        return await message.answer("🦠 <b>Гонорея</b>: Крупье брезгует пускать тебя за стол. Игра запрещена!")
+
+    args = message.text.split()
+    if len(args) < 3:
+        await message.answer("Использование: <code>/roulette [ставка] [число от 1 до 36]</code>\nПример: <code>/roulette 100 15</code>")
+        return
+
+    try:
+        bet = int(args[1])
+        guess = int(args[2])
+
+        from diseases import get_active_diseases
+        active_diseases = await get_active_diseases(chat_id, user_id)
+        if 'balanoposthitis' in active_diseases and bet > 1000:
+            bet = 1000
+            await message.answer("🦠 <b>Баланопостит</b>: Ваша максимальная ставка урезана до 1000 сыроежек.")
+
+        if bet < 100:
+            await message.answer("Минимальная ставка — 100 сыроежек.")
+            return
+        if not (1 <= guess <= 36):
+            await message.answer("Число должно быть от 1 до 36.")
+            return
+    except ValueError:
+        await message.answer("Ставка и число должны быть целыми числами.")
+        return
+
+    bonus_given, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
+    bonus_text = f"🎁 Вы получили ежедневный бонус: {receipt.get('total', 0)} сыроежек!\n" if bonus_given else ""
+
+    # Re-fetch data after bonus check
+    data = await get_user_data(chat_id, user_id, full_name)
+    balance = data.get('balance', 0)
+
+    if balance - bet < -5000:
+        await message.answer(f"{bonus_text}Ваш кредитный лимит (-5000) исчерпан. Пополните баланс.")
+        return
+
+    await update_user_balance(chat_id, user_id, -bet)
+
+    # Проверка шансов (Подкрутка)
+    chance = await get_game_chance('roulette')
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
+    if is_creator:
+        result_number = guess
+    elif chance != -1:
+        is_forced_win = (secure_random.randint(1, 100) <= chance)
+        if is_forced_win:
+            # Даем победу (разброс от 0 до 4)
+            diff = secure_random.randint(0, 4)
+            result_number = guess + secure_random.choice([-diff, diff])
+            if result_number < 1: result_number = 1
+            if result_number > 36: result_number = 36
+        else:
+            # Принудительный проигрыш (разброс больше 4)
+            result_number = secure_random.randint(1, 36)
+            while abs(result_number - guess) <= 4:
+                result_number = secure_random.randint(1, 36)
+    else:
+        result_number = secure_random.randint(1, 36)
+
+    diff = abs(result_number - guess)
+
+    if diff == 0:
+        total_win = bet * 3
+        multiplier_text = "x3 (Точное совпадение!)"
+    elif diff <= 2:
+        total_win = int(bet * 1.5)
+        multiplier_text = "x1.5 (Разница 1-2 числа)"
+    elif diff <= 4:
+        total_win = int(bet * 1.1)
+        multiplier_text = "x1.1 (Разница 3-4 числа)"
+    else:
+        total_win = 0
+        multiplier_text = "Проигрыш (Слишком далеко)"
+
+    if total_win > 0:
+        profit = total_win - bet
+        is_vip = data.get('is_vip', False)
+        is_banker = data.get('is_banker', False)
+        vip_bonus_text = ""
+
+        if is_banker:
+            profit = int(profit * 0.5)
+            vip_bonus_text = f" (🏦 Банкирам выплачивается только 50% от прибыли)"
+        elif is_vip:
+            vip_profit_bonus = int(profit * 0.1)
+            profit += vip_profit_bonus
+            vip_bonus_text = f" (👑 VIP бонус: +{vip_profit_bonus})"
+
+        final_win_amount = bet + profit
+        await update_user_balance(chat_id, user_id, final_win_amount)
+        result_text = f"<b>Вы выиграли {profit} сыроежек!</b>{vip_bonus_text}"
+    else:
+        result_text = f"<b>Вы проиграли {bet} сыроежек!</b>"
+
+    text = (
+        f"{bonus_text}"
+        f"🎯 Рулетка крутится...\n"
+        f"Выпало число: <b>{result_number}</b> (Ваш выбор: {guess})\n\n"
+        f"{result_text}\n"
+        f"Множитель: {multiplier_text}"
+    )
+
+    msg = await message.answer(text)
+    asyncio.create_task(schedule_delete(msg, message))
