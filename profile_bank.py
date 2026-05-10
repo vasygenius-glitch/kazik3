@@ -7,6 +7,7 @@ from escape import escape_html
 from user_manager import get_user_data, update_user_balance, update_user_field
 from shop import ITEMS
 from utils import fire_and_forget
+from seasons import get_season_string
 
 router = Router()
 
@@ -91,11 +92,15 @@ async def cmd_profile(message: types.Message):
 
     bank_deposit = data.get('bank_deposit', 0)
 
+    balance_label = await get_season_string("balance", "💰 Баланс")
+    bank_label = await get_season_string("bank_label", "🏦 В банке")
+    profile_header = await get_season_string("profile", "Профиль")
+
     # Скрываем банк если оффшор и мы смотрим чужой профиль
     if data.get('is_offshore', False) and message.from_user.id != target_id:
-        bank_text = "🏦 В банке: <i>Скрыто (Оффшор)</i>\n\n"
+        bank_text = f"{bank_label}: <i>Скрыто (Оффшор)</i>\n\n"
     else:
-        bank_text = f"🏦 В банке: <b>{bank_deposit}</b> сыр.\n\n"
+        bank_text = f"{bank_label}: <b>{bank_deposit}</b> сыр.\n\n"
 
     # Статистика сообщений (из отдельной коллекции)
     db = get_db()
@@ -105,13 +110,13 @@ async def cmd_profile(message: types.Message):
     bio = escape_html(data.get('bio', 'Нет описания.'))
 
     text = (
-        f"👤 <b>Профиль: {target_name}</b>\n"
+        f"👤 <b>{profile_header}: {target_name}</b>\n"
         f"<i>{bio}</i>\n\n"
         f"Статус: {vip_status}\n"
         f"Репутация: {rep} 📈\n"
         f"Предупреждения: {warns}/3 ⚠️{escort_text}\n"
         f"{debt_display}\n" # Список реальных долгов перед людьми
-        f"💰 Баланс: <b>{balance}</b> сыр.\n"
+        f"{balance_label}: <b>{balance}</b> сыр.\n"
         f"{bank_text}"
         f"🛡 Клан: {clan}\n"
         f"💍 Брак: {partner_text}\n\n"

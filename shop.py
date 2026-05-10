@@ -5,6 +5,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import get_user_data, update_user_balance, add_item_to_inventory, update_user_field
 from economy_utils import calculate_progressive_tax, get_global_tax
 from escape import escape_html
+from seasons import get_season_string
 
 router = Router()
 
@@ -40,10 +41,13 @@ ITEMS = {
     "condom": {"name": "🎈 Презерватив", "price": 340, "cat": "other", "action": "other"}
 }
 
-def get_main_shop_kb():
+async def get_main_shop_kb():
+    biz_label = await get_season_string("shop_biz", "🏢 Бизнесы")
+    cars_label = await get_season_string("shop_cars", "🚗 Машины")
+    
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏢 Бизнесы", callback_data="shop_cat_biz")
-    builder.button(text="🚗 Машины", callback_data="shop_cat_cars")
+    builder.button(text=biz_label, callback_data="shop_cat_biz")
+    builder.button(text=cars_label, callback_data="shop_cat_cars")
     builder.button(text="💎 Прочее", callback_data="shop_cat_other")
     builder.button(text="🎒 Мой инвентарь", callback_data="shop_to_inv")
     builder.adjust(2, 2)
@@ -121,13 +125,15 @@ async def cmd_shop(message: types.Message):
     base_tax = await get_global_tax()
     tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
 
-    text = (
-        f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
+    shop_title = await get_season_string("shop", "🛒 Магазин Сыроежек")
+    
+    await message.answer(
+        f"<b>{shop_title}</b>\n\n"
         f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
         f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{warning_text}\n"
-        f"Выбери категорию товаров ниже:"
+        "Выберите категорию товаров:",
+        reply_markup=await get_main_shop_kb()
     )
-    await message.answer(text, reply_markup=get_main_shop_kb())
 
 @router.callback_query(F.data == "shop_main")
 async def shop_back(callback: types.CallbackQuery):

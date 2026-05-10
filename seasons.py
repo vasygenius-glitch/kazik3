@@ -66,24 +66,26 @@ async def cmd_season(message: types.Message):
 
 @router.message(Command("start_season_1"))
 async def cmd_start_season_1(message: types.Message):
-    # Установка конфига в БД
     db = get_db()
     await db.collection('bot_settings').document('season').set(SEASON_1_CONFIG)
     global_cache.delete("current_season")
     
-    # Красивый текст анонса
+    # Торжественный текст анонса
     announce_text = (
-        "🏆 <b>1 СЕЗОН: ЗАКУЛИСЬЕ</b> 🏆\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "🚪 <b>Вы провалились в другой мир...</b>\n"
-        "🗓 Длительность: <b>1 МЕСЯЦ</b>\n\n"
-        "Сможете ли вы выжить там, где реальность дает сбой? \n"
-        "Доходы упали, но шансы найти артефакты возросли!\n\n"
-        "👉 Подробности: <code>/season</code>\n"
-        "━━━━━━━━━━━━━━━━━━━━"
+        "✨ <b>ТОРЖЕСТВЕННОЕ ОТКРЫТИЕ 1 СЕЗОНА</b> ✨\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "🌀 <b>ТЕМА:</b> <code>ЗАКУЛИСЬЕ / BACKROOMS</code>\n"
+        "⏳ <b>СРОК:</b> <code>30 ДНЕЙ</code>\n\n"
+        "🚪 <b>ГРАНИЦА РЕАЛЬНОСТИ СТЕРТА.</b>\n"
+        "Вы провалились в бесконечные лабиринты... Здесь не работают привычные законы физики и экономики. \n\n"
+        "📉 <b>КРИЗИС:</b> Доходы от работ снижены на 30%.\n"
+        "🍶 <b>ШАНС:</b> Ищите миндальную воду для выживания.\n"
+        "👾 <b>РИСК:</b> Опасайтесь сущностей во тьме.\n\n"
+        "<i>Это будет долгий месяц. Готов ли ты сохранить рассудок?</i>\n\n"
+        "👉 Начни выживание: <code>/season</code>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
     
-    # Глобальный анонс по всем чатам из вайтлиста
     from whitelist import get_whitelist
     whitelist = await get_whitelist()
     
@@ -92,11 +94,30 @@ async def cmd_start_season_1(message: types.Message):
         try:
             await message.bot.send_message(chat_id=chat_id, text=announce_text)
             count += 1
-            await asyncio.sleep(0.05) # Защита от флуда
+            await asyncio.sleep(0.05)
         except Exception:
             continue
             
-    await message.answer(f"✅ Сезон 1 запущен! Сообщение отправлено в <b>{count}</b> чатов.")
+    await message.answer(f"🎊 <b>Сезон 1 торжественно запущен!</b>\nРассылка завершена для <b>{count}</b> чатов.")
+
+# --- СИСТЕМНАЯ АДАПТАЦИЯ (ТЕМАТИЗАЦИЯ) ---
+async def get_season_string(key: str, default: str) -> str:
+    """Адаптирует системные строки под тему текущего сезона."""
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "season_1_backrooms":
+        return default
+    
+    mapping = {
+        "tax": "📦 Утечка реальности (Налог)",
+        "balance": "🔋 Энергия (Баланс)",
+        "shop": "🏚️ Склад Забытых Вещей",
+        "shop_biz": "🏗️ Заброшенные объекты",
+        "shop_cars": "🚲 Средства побега",
+        "work": "🔦 Исследование коридоров",
+        "crime": "👣 Мародерство во тьме",
+        "bonus": "🍶 Запас Миндальной Воды"
+    }
+    return mapping.get(key, default)
 
 # Улучшенная логика бонусов/штрафов
 async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tuple[int, str]:
