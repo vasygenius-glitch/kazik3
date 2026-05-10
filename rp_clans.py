@@ -461,7 +461,7 @@ async def cmd_clan(message: types.Message):
     if len(args) < 2:
         return await message.answer(
             "🛡 <b>Кланы:</b>\n"
-            "<code>/clan create [Название]</code> — создать (5кк сыроежек)\n"
+            "<code>/clan create [Название]</code> — создать (50к сыроежек)\n"
             "<code>/clan invite [reply]</code> — пригласить\n"
             "<code>/clan kick [reply]</code> — выгнать\n"
             "<code>/clan deposit [сумма]</code> — положить в казну\n"
@@ -481,15 +481,15 @@ async def cmd_clan(message: types.Message):
             return await message.answer("Укажите название: <code>/clan create Название</code>")
 
         new_clan_name = args[2]
-        if data.get('balance', 0) < 5000000:
-            return await message.answer("Для создания клана нужно 5.000.000 сыроежек.")
+        if data.get('balance', 0) < 50000:
+            return await message.answer("Для создания клана нужно 50.000 сыроежек.")
 
         clan_ref = await get_clan_ref(chat_id, new_clan_name)
         doc = await clan_ref.get()
         if doc.exists:
             return await message.answer("Клан с таким названием уже существует.")
 
-        await update_user_balance(chat_id, user_id, -5000000)
+        await update_user_balance(chat_id, user_id, -50000)
         await clan_ref.set({
             'leader_id': user_id,
             'deputy_ids':[],
