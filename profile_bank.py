@@ -180,6 +180,7 @@ async def cmd_bank(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
+    args = message.text.split()
     bank_title = await get_season_string("bank_title", "🏦 Банки Сыроежек")
     if len(args) < 2:
         return await message.answer(

@@ -98,14 +98,15 @@ async def main():
         print(f"❌ Ошибка проверки токена: {e}")
 
     # Бесконечный цикл поллинга для защиты от падений сети на Hugging Face Spaces
-    while True:
-        try:
-            await dp.start_polling(bot, handle_signals=False)
-        except Exception as e:
-            print(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}")
-            await asyncio.sleep(5)
-
-    await bot.session.close()
+    try:
+        while True:
+            try:
+                await dp.start_polling(bot, handle_signals=False)
+            except Exception as e:
+                print(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}")
+                await asyncio.sleep(5)
+    finally:
+        await bot.session.close()
 
 if __name__ == "__main__":
     # Flask сервер для keep-alive на Hugging Face Spaces (порт 7860)

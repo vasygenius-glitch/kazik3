@@ -40,12 +40,12 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     - Negotiation skill: Reduces rate by skill_lvl, but cannot reduce more than 50% of the calculated tax.
     - Total tax is capped at 95% and increased by seasonal multiplier.
     """
-    from seasons import get_season_config
+    # Сезонный множитель налога (используем только кэш, т.к. функция sync)
     from utils_pkg.cache_manager import global_cache
     cfg = global_cache.get("current_season")
     
     tax_multiplier = 1.0
-    if cfg and cfg.get("active") and cfg.get("id") == "backrooms":
+    if cfg and isinstance(cfg, dict) and cfg.get("active") and cfg.get("id") == "backrooms":
         tax_multiplier = 1.5
     
     # Налог на богатство: +5% за каждый миллион (было 2%)

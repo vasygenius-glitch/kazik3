@@ -27,53 +27,45 @@ def get_slots_frame(slots, status_text, bet, title):
 
 @router.message(Command("slots"))
 async def cmd_slots(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
+    chat_id, user_id = message.chat.id, message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
     data = await get_user_data(chat_id, user_id, full_name)
-    if data.get('is_banned', False):
-        return await message.answer("🚫 Вы забанены.")
+    if data.get('is_banned', False): return await message.answer("🚫")
 
     from diseases import get_active_diseases
-    active_diseases = await get_active_diseases(chat_id, user_id)
-    if 'gonorrhea' in active_diseases:
-        return await message.answer("🦠 <b>Гонорея</b>: Крупье брезгует пускать тебя за стол.")
+    if 'gonorrhea' in await get_active_diseases(chat_id, user_id):
+        return await message.answer("🦠 Крупье брезгует вами.")
 
     args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Укажите ставку: <code>/slots 100</code>")
-
+    if len(args) < 2: return await message.answer("Укажите ставку: <code>/slots 100</code>")
     try:
         bet = int(args[1])
-        if bet < 10: return await message.answer("Минимальная ставка — 10 сыроежек.")
-    except ValueError: return await message.answer("Ставка должна быть числом.")
+        if bet < 10: return await message.answer("Минимальная ставка — 10.")
+    except Exception: return await message.answer("Числом!")
 
-    if data.get('balance', 0) - bet < -5000:
-        return await message.answer("Кредитный лимит исчерпан.")
-
+    if data.get('balance', 0) - bet < -5000: return await message.answer("Кредит!")
     await update_user_balance(chat_id, user_id, -bet)
 
-    from seasons import get_season_string, get_glitch_text
+    from seasons import get_season_string, get_glitch_text, get_season_config
+    cfg = await get_season_config()
     casino_title = await get_season_string("bj_start", "КАЗИНО ЗАКУЛИСЬЕ")
     
-    # Анимация 1: Запуск
-    msg = await message.answer(get_slots_frame(["❓", "❓", "❓"], "Подготовка барабанов...", bet, casino_title))
+    msg = await message.answer(get_slots_frame(["❓", "❓", "❓"], "Подготовка...", bet, casino_title))
     
-    # Анимация 2: Вращение с прогресс-баром
-    frames = ["░░░░░", "▓░░░░", "▓▓░░░", "▓▓▓░░", "▓▓▓▓░", "▓▓▓▓▓"]
-    for i in range(len(frames)):
-        await asyncio.sleep(0.4)
+    # Оптимизированная анимация: 3 шага
+    frames = ["▓░░░░", "▓▓▓░░", "▓▓▓▓▓"]
+    for status in frames:
+        await asyncio.sleep(0.5)
         temp_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        if i % 2 == 0: # Глитчим через раз
-            temp_slots = [await get_glitch_text(s) if random.random() < 0.3 else s for s in temp_slots]
-        
-        status = f"Вращение: {frames[i]}"
+        if random.random() < 0.15:
+            glitches = ["ζ", "⧫", "☠", "⌬", "╳"]
+            temp_slots[random.randint(0,2)] = secure_random.choice(glitches)
+            
         try:
-            await msg.edit_text(get_slots_frame(temp_slots, status, bet, casino_title))
-        except: break
+            await msg.edit_text(get_slots_frame(temp_slots, f"Вращение: {status}", bet, casino_title))
+        except Exception: break
 
-    # Логика результата
     chance = await get_game_chance('slots')
     is_forced_win = False
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
@@ -84,7 +76,7 @@ async def cmd_slots(message: types.Message):
     if is_forced_win:
         if is_creator: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
         else:
-            win_types = ["jackpot", "mega", "three", "pair_mega", "pair_7"]
+            win_types = ["jackpot", "mega", "three"]
             chosen_win = secure_random.choice(win_types)
             if chosen_win == "jackpot": final_slots = ["7️⃣", "7️⃣", "7️⃣"]
             elif chosen_win == "mega":
@@ -95,37 +87,37 @@ async def cmd_slots(message: types.Message):
                 final_slots = [sym, sym, sym]
     else:
         final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        if chance != -1: # Гарантируем проигрыш
-            while final_slots[0] == final_slots[1] or final_slots[1] == final_slots[2] or final_slots[0] == final_slots[2]:
-                final_slots = [secure_random.choice(["🍒", "🍋"]), secure_random.choice(["🍉", "🍇"]), secure_random.choice(["💎", "🔔"])]
+        if chance != -1:
+            while final_slots[0] == final_slots[1] == final_slots[2]:
+                final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
 
     profit = 0
-    multiplier_text = ""
-
     if final_slots[0] == final_slots[1] == final_slots[2]:
-        if final_slots[0] == "7️⃣": profit, multiplier_text = bet * 20, "JACKPOT x20! 🏆🏆🏆"
-        elif final_slots[0] in ["💎", "🔔"]: profit, multiplier_text = bet * 10, "MEGA WIN x10! 💎💎"
-        else: profit, multiplier_text = bet * 5, "WIN x5! 🍇"
+        if final_slots[0] == "7️⃣": profit, mult = bet * 20, "JACKPOT x20! 🏆"
+        elif final_slots[0] in ["💎", "🔔"]: profit, mult = bet * 10, "MEGA x10! 💎"
+        else: profit, mult = bet * 5, "WIN x5! 🍒"
+        status = f"🎉 <b>ПОБЕДА!</b>\n  +{profit} сыр. | {mult}"
     elif final_slots[0] == final_slots[1] or final_slots[1] == final_slots[2] or final_slots[0] == final_slots[2]:
-        if final_slots[0] == final_slots[1] or final_slots[0] == final_slots[2]: pair_emoji = final_slots[0]
-        else: pair_emoji = final_slots[1]
-        if pair_emoji == "7️⃣": profit, multiplier_text = bet * 2, "PAIRS x2! 7️⃣"
-        elif pair_emoji in ["💎", "🔔"]: profit, multiplier_text = int(bet * 1.5), "PAIRS x1.5! 🔔"
+        if final_slots[0] == final_slots[1] or final_slots[0] == final_slots[2]: pair = final_slots[0]
+        else: pair = final_slots[1]
+        if pair == "7️⃣": profit, mult = bet * 2, "PAIRS x2!"
+        elif pair in ["💎", "🔔"]: profit, mult = int(bet * 1.5), "PAIRS x1.5!"
+        else: profit, mult = 0, ""
+        
+        if profit > 0: status = f"🎉 <b>ПОБЕДА!</b>\n  +{profit} сыр. | {mult}"
+        else: status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр."
+    else:
+        status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр."
 
     if profit > 0:
-        is_banker = data.get('is_banker', False)
-        if is_banker: profit = int(profit * 0.5)
-        elif data.get('is_vip', False): profit += int(profit * 0.1)
-
+        if data.get('is_banker'): profit = int(profit * 0.5)
+        elif data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(chat_id, user_id, bet + profit)
-        status = f"🎉 <b>ПОБЕДА!</b>\n  +{profit} сыр. | {multiplier_text}"
-    else:
-        status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр. Попробуй еще раз!"
 
     final_text = get_slots_frame(final_slots, status, bet, casino_title)
     final_text = await get_glitch_text(final_text)
 
     try:
         await msg.edit_text(final_text)
-    except: pass
+    except Exception: pass
     asyncio.create_task(schedule_delete(msg, message))

@@ -1,4 +1,5 @@
 import asyncio
+import random
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -59,7 +60,7 @@ async def cmd_bj(message: types.Message, state: FSMContext):
     try:
         bet = int(args[1])
         if bet < 100: return await message.answer("От 100.")
-    except: return
+    except Exception: return
 
     if data.get('balance', 0) - bet < -5000: return await message.answer("Кредит!")
     await update_user_balance(chat_id, user_id, -bet)
@@ -74,7 +75,7 @@ async def cmd_bj(message: types.Message, state: FSMContext):
     p_score = calculate_score(player_cards)
     d_score = calculate_score(dealer_cards)
 
-    from seasons import get_season_string, get_glitch_text
+    from seasons import get_season_string
     title = await get_season_string("bj_start", "БЛЭКДЖЕК: LEVEL 0")
 
     if p_score == 21:
@@ -82,8 +83,8 @@ async def cmd_bj(message: types.Message, state: FSMContext):
         if data.get('is_banker'): profit = int(profit * 0.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(chat_id, user_id, bet + profit)
-        text = get_bj_frame(player_cards, dealer_cards, 21, d_score, f"🎊 <b>БЛЭКДЖЕК! +{profit}</b>", full_name, bet, title, False)
-        msg = await message.answer(await get_glitch_text(text))
+        text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
+        msg = await message.answer(text)
         asyncio.create_task(schedule_delete(msg, message))
         return
 
@@ -98,15 +99,14 @@ async def cmd_bj(message: types.Message, state: FSMContext):
 async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     if await state.get_state() != BlackjackState.playing.state: return await callback.answer()
     game = await state.get_data()
-    if callback.from_user.id != game['user_id']: return await callback.answer("Не ваше!")
+    if callback.from_user.id != game['user_id']: return await callback.answer()
 
     game['player_cards'].append(get_random_card())
     p_score = calculate_score(game['player_cards'])
     
-    # Creator/Luck save
     if p_score > 21:
         is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-        if is_creator or random.randint(1, 100) <= 5: # 5% base luck
+        if is_creator or random.randint(1, 100) <= 5:
              game['player_cards'].pop()
              game['player_cards'].append({'rank': '2', 'suit': '♣'})
              p_score = calculate_score(game['player_cards'])
@@ -137,15 +137,14 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict):
     p_score = calculate_score(game['player_cards'])
     dealer_cards = game['dealer_cards']
     
-    # Анимация дилера
     while calculate_score(dealer_cards) <= 16:
         dealer_cards.append(get_random_card())
         d_score = calculate_score(dealer_cards)
         text = get_bj_frame(game['player_cards'], dealer_cards, p_score, d_score, "Дилер берет карту...", game['full_name'], game['bet'], game['title'], False)
         try:
             await callback.message.edit_text(text)
-            await asyncio.sleep(1.0)
-        except: break
+            await asyncio.sleep(0.7) # Снизил до 0.7 для скорости
+        except Exception: break
 
     d_score = calculate_score(dealer_cards)
     bet = game['bet']
@@ -161,9 +160,10 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict):
         res = f"❌ <b>ПРОИГРЫШ! -{bet}</b>"
     else:
         await update_user_balance(game['chat_id'], game['user_id'], bet)
-        res = "🤝 <b>НИЧЬЯ! Возврат.</b>"
+        res = "🤝 <b>НИЧЬЯ!</b>"
 
     text = get_bj_frame(game['player_cards'], dealer_cards, p_score, d_score, res, game['full_name'], bet, game['title'], False)
     try:
         await callback.message.edit_text(await get_glitch_text(text))
-    except: pass
+    except Exception: pass
+    asyncio.create_task(schedule_delete(callback.message))
