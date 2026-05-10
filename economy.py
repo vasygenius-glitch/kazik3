@@ -150,7 +150,9 @@ async def cmd_pay(message: types.Message):
         active_diseases = await get_active_diseases(chat_id, sender_id)
 
         neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
-        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl)
+        pet_data = sender_data.get('pet', {})
+        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl, pet_id)
 
         if 'herpes' in active_diseases:
             tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
@@ -184,7 +186,9 @@ async def cmd_pay(message: types.Message):
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, sender_id)
         neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
-        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl)
+        pet_data = sender_data.get('pet', {})
+        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl, pet_id)
 
         if 'herpes' in active_diseases:
             tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
@@ -396,19 +400,27 @@ async def cmd_work(message: types.Message):
         await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
 
 
-    jobs =[
-        "разгрузил вагоны",
-        "написал код за еду",
-        "доставил пиццу",
-        "отработал смену на заводе",
-        "собрал металлолом"
-    ]
-    if data.get('is_banker', False):
-        jobs = ["поработал с документами", "провел встречу с инвесторами", "свел дебет с кредитом", "продал акции банка"]
+    from seasons import get_season_config, get_glitch_text
+    cfg = await get_season_config()
+    job_list = cfg.get('strings', {}).get('job_list') if cfg.get('active') else None
+    
+    if job_list:
+        job = rand.choice(job_list)
+    else:
+        jobs =[
+            "разгрузил вагоны",
+            "написал код за еду",
+            "доставил пиццу",
+            "отработал смену на заводе",
+            "собрал металлолом"
+        ]
+        if data.get('is_banker', False):
+            jobs = ["поработал с документами", "провел встречу с инвесторами", "свел дебет с кредитом", "продал акции банка"]
+        job = rand.choice(jobs)
 
-    job = rand.choice(jobs)
-
+    season_msg = await get_glitch_text(season_msg)
     afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{final_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}{season_msg}"
+    afk_text = await get_glitch_text(afk_text)
     
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     import uuid
@@ -588,7 +600,10 @@ async def cmd_crime(message: types.Message):
         if final_earnings > 0:
             await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
         
+        from seasons import get_glitch_text
+        season_msg = await get_glitch_text(season_msg)
         afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{base_earnings}</b> сыр. на столе.{pet_msg}{collector_msg}{season_msg}"
+        afk_text = await get_glitch_text(afk_text)
         
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         import uuid

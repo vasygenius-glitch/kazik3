@@ -303,10 +303,16 @@ async def weekly_reset_task(bot: Bot):
                         if msg_count > 0:
                             # Выдаем 1500 сыроежек
                             await update_user_balance(chat_id, winner_id, 1500)
+                            
+                            from seasons import get_season_string, get_glitch_text
+                            seasonal_reward_title = await get_season_string("top_winner", "Самый активный участник")
+                            seasonal_reward_title = await get_glitch_text(seasonal_reward_title)
+                            winner_name = await get_glitch_text(winner_name)
+
                             try:
                                 await bot.send_message(
                                     chat_id=chat_id,
-                                    text=f"🎉 <b>Итоги недели!</b>\n\nСамый активный участник: <b>{escape_html(winner_name)}</b> ({msg_count} сообщений).\nОн получает премию: <b>1500</b> сыроежек! 💰"
+                                    text=f"🎉 <b>Итоги недели!</b>\n\n{seasonal_reward_title}: <b>{escape_html(winner_name)}</b> ({msg_count} сообщений).\nОн получает премию: <b>1500</b> сыроежек! 💰"
                                 )
                             except:
                                 pass

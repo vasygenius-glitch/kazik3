@@ -95,20 +95,25 @@ async def cmd_profile(message: types.Message):
     balance_label = await get_season_string("balance", "💰 Баланс")
     bank_label = await get_season_string("bank_label", "🏦 В банке")
     profile_header = await get_season_string("profile", "Профиль")
+    
+    from seasons import get_glitch_text
+    profile_header = await get_glitch_text(profile_header)
+    target_name = await get_glitch_text(target_name)
 
     # Скрываем банк если оффшор и мы смотрим чужой профиль
     if data.get('is_offshore', False) and message.from_user.id != target_id:
         bank_text = f"{bank_label}: <i>Скрыто (Оффшор)</i>\n\n"
     else:
         bank_text = f"{bank_label}: <b>{bank_deposit}</b> сыр.\n\n"
-
+    
     # Статистика сообщений (из отдельной коллекции)
     db = get_db()
     stats_doc = await db.collection('chats').document(str(chat_id)).collection('stats').document(str(target_id)).get()
     msg_count = stats_doc.to_dict().get('all_time', 0) if stats_doc.exists else 0
-
+    
     bio = escape_html(data.get('bio', 'Нет описания.'))
-
+    bio = await get_glitch_text(bio)
+    
     text = (
         f"👤 <b>{profile_header}: {target_name}</b>\n"
         f"<i>{bio}</i>\n\n"
@@ -175,10 +180,10 @@ async def cmd_bank(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    args = message.text.split()
+    bank_title = await get_season_string("bank_title", "🏦 Банки Сыроежек")
     if len(args) < 2:
         return await message.answer(
-            "🏦 <b>Банки Сыроежек</b>\n\n"
+            f"{bank_title}\n\n"
             "Вы можете вложить свои деньги в банк под процент.\n"
             "Команды:\n"
             "<code>/bank info [Название или ID]</code> - Информация о банке\n"

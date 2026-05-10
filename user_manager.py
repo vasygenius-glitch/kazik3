@@ -11,7 +11,14 @@ def get_user_ref(chat_id, user_id):
 # Кэш пользователей
 _user_cache = {}
 _dirty_cache = set()
+_user_locks = {} # Хранилище локов для предотвращения race condition
 CACHE_TTL = 60.0 
+
+def get_user_lock(chat_id, user_id):
+    key = (chat_id, user_id)
+    if key not in _user_locks:
+        _user_locks[key] = asyncio.Lock()
+    return _user_locks[key]
 
 def get_from_cache(chat_id, user_id):
     key = (chat_id, user_id)
@@ -37,13 +44,11 @@ async def flush_user_data_task():
                 continue
             
             to_flush = list(_dirty_cache)
-            _dirty_cache.clear()
-            
             for key in to_flush:
-                chat_id, user_id = key
+                _dirty_cache.discard(key) # Удаляем только то, что собираемся записать
                 cached_entry = _user_cache.get(key)
                 if cached_entry:
-                    ref = get_user_ref(chat_id, user_id)
+                    ref = get_user_ref(key[0], key[1])
                     # Синхронизируем всё состояние пользователя
                     fire_and_forget(ref.set(cached_entry["data"], merge=True))
         except Exception as e:
@@ -90,27 +95,32 @@ async def get_user_data(chat_id, user_id, full_name=None):
             'debts': {},
             'escort_count': 0
         }
-        fire_and_forget(ref.set(default_data))
         set_in_cache(chat_id, user_id, default_data)
+        mark_dirty(chat_id, user_id)
         return default_data
 
 async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False):
-    data = await get_user_data(chat_id, user_id)
-    new_balance = data.get('balance', 0) + amount
-
-    data['balance'] = new_balance
-    set_in_cache(chat_id, user_id, data)
-    mark_dirty(chat_id, user_id)
-    return new_balance
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        data = await get_user_data(chat_id, user_id)
+        new_balance = data.get('balance', 0) + amount
+        data['balance'] = new_balance
+        set_in_cache(chat_id, user_id, data)
+        mark_dirty(chat_id, user_id)
+        return new_balance
 
 async def update_user_field(chat_id, user_id, field, value):
-    data = await get_user_data(chat_id, user_id)
-    data[field] = value
-    set_in_cache(chat_id, user_id, data)
-    mark_dirty(chat_id, user_id)
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        data = await get_user_data(chat_id, user_id)
+        data[field] = value
+        set_in_cache(chat_id, user_id, data)
+        mark_dirty(chat_id, user_id)
 
 async def check_and_give_bonus(chat_id, user_id, full_name=None):
-    data = await get_user_data(chat_id, user_id, full_name)
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        data = await get_user_data(chat_id, user_id, full_name)
     if data.get('is_banned', False):
         return False, {}
 
@@ -139,7 +149,9 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
 
         base_tax = await get_global_tax()
         neg_lvl = data.get('skills', {}).get('negotiation', 0)
-        tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl)
+        pet_data = data.get('pet', {})
+        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+        tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl, pet_id)
 
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, user_id)
@@ -174,8 +186,9 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         if 'hpv' in active_diseases:
             pet = None
 
-        if pet and pet.get('id') == 'dog':
-            base_bonus = int(base_bonus * 1.5)
+        # Собака теперь дает бонус только к налогам, убираем множитель к базе
+        # if pet and pet.get('id') == 'dog':
+        #     base_bonus = int(base_bonus * 1.5)
 
         extra_income = biz_income + car_income + bank_income
         tax_amt = int(extra_income * (tax_percent / 100.0))
@@ -205,26 +218,30 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
     return False, {}
 
 async def add_item_to_inventory(chat_id, user_id, item_name):
-    data = await get_user_data(chat_id, user_id)
-    inv = data.get('inventory', {})
-    inv[item_name] = inv.get(item_name, 0) + 1
-
-    data['inventory'] = inv
-    set_in_cache(chat_id, user_id, data)
-    mark_dirty(chat_id, user_id)
-
-async def remove_item_from_inventory(chat_id, user_id, item_name):
-    data = await get_user_data(chat_id, user_id)
-    inv = data.get('inventory', {})
-    if inv.get(item_name, 0) > 0:
-        inv[item_name] -= 1
-        if inv[item_name] <= 0: del inv[item_name]
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        data = await get_user_data(chat_id, user_id)
+        inv = data.get('inventory', {})
+        inv[item_name] = inv.get(item_name, 0) + 1
 
         data['inventory'] = inv
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
-        return True
-    return False
+
+async def remove_item_from_inventory(chat_id, user_id, item_name):
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        data = await get_user_data(chat_id, user_id)
+        inv = data.get('inventory', {})
+        if inv.get(item_name, 0) > 0:
+            inv[item_name] -= 1
+            if inv[item_name] <= 0: del inv[item_name]
+
+            data['inventory'] = inv
+            set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+            return True
+        return False
 
 async def get_top_users(chat_id, limit=10):
     db = get_db()

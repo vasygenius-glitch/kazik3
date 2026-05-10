@@ -41,13 +41,19 @@ ITEMS = {
     "condom": {"name": "🎈 Презерватив", "price": 340, "cat": "other", "action": "other"}
 }
 
+# Кэш для кнопок магазина (чтобы не авейтить каждый раз сезонные строки)
+_shop_kb_cache = {"biz": "🏢 Бизнесы", "cars": "🚗 Машины", "ts": 0}
+
 async def get_main_shop_kb():
-    biz_label = await get_season_string("shop_biz", "🏢 Бизнесы")
-    cars_label = await get_season_string("shop_cars", "🚗 Машины")
+    global _shop_kb_cache
+    if time.time() - _shop_kb_cache["ts"] > 60:
+        _shop_kb_cache["biz"] = await get_season_string("shop_biz", "🏢 Бизнесы")
+        _shop_kb_cache["cars"] = await get_season_string("shop_cars", "🚗 Машины")
+        _shop_kb_cache["ts"] = time.time()
     
     builder = InlineKeyboardBuilder()
-    builder.button(text=biz_label, callback_data="shop_cat_biz")
-    builder.button(text=cars_label, callback_data="shop_cat_cars")
+    builder.button(text=_shop_kb_cache["biz"], callback_data="shop_cat_biz")
+    builder.button(text=_shop_kb_cache["cars"], callback_data="shop_cat_cars")
     builder.button(text="💎 Прочее", callback_data="shop_cat_other")
     builder.button(text="🎒 Мой инвентарь", callback_data="shop_to_inv")
     builder.adjust(2, 2)
@@ -123,9 +129,13 @@ async def cmd_shop(message: types.Message):
         warning_text = "\n\n⚠️ <b>ВНИМАНИЕ: На вас наложен арест за просроченный долг! Вы не можете покупать новые вещи, но можете продать старые для погашения долга.</b>"
 
     base_tax = await get_global_tax()
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
+    pet_data = data.get('pet', {})
+    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
 
     shop_title = await get_season_string("shop", "🛒 Магазин Сыроежек")
+    from seasons import get_glitch_text
+    shop_title = await get_glitch_text(shop_title)
     
     await message.answer(
         f"<b>{shop_title}</b>\n\n"
@@ -137,15 +147,18 @@ async def cmd_shop(message: types.Message):
 
 @router.callback_query(F.data == "shop_main")
 async def shop_back(callback: types.CallbackQuery):
+    await callback.answer()
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
     base_tax = await get_global_tax()
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
+    pet_data = data.get('pet', {})
+    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
     
     text = (f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
             f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
             f"📈 Твоя наценка: <b>{tax_rate}%</b>\n"
             f"Выбери категорию:")
-    await callback.message.edit_text(text, reply_markup=get_main_shop_kb())
+    await callback.message.edit_text(text, reply_markup=await get_main_shop_kb())
 
 @router.callback_query(F.data == "shop_to_inv")
 async def shop_to_inv(callback: types.CallbackQuery):
@@ -153,6 +166,7 @@ async def shop_to_inv(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("shop_cat_"))
 async def show_category(callback: types.CallbackQuery):
+    await callback.answer()
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
     base_tax = await get_global_tax()
     
@@ -189,7 +203,9 @@ async def process_buy(callback: types.CallbackQuery):
         return await callback.answer("❌ У вас просроченный долг! Покупки запрещены.", show_alert=True)
 
     base_tax = await get_global_tax()
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0))
+    pet_data = data.get('pet', {})
+    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
     final_price = item['price'] + int(item['price'] * (tax_rate / 100.0))
 
     if data.get('balance', 0) < final_price:

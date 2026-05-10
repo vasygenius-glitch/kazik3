@@ -102,17 +102,30 @@ async def generate_stock_chart(name: str, prices: list) -> bytes:
 async def get_stocks_db():
     db = get_db()
     doc = await db.collection('bot_settings').document('stocks').get()
+    
+    from seasons import get_season_config
+    cfg = await get_season_config()
+    seasonal_stocks = cfg.get('strings', {}).get('stocks', {})
+    
+    # Объединяем базовые и сезонные компании
+    ALL_COMPANIES = {**COMPANIES, **seasonal_stocks}
+    
     if doc.exists:
-        return doc.to_dict()
+        data = doc.to_dict()
+        # Добавляем новые компании в цены если их там нет
+        for cid in ALL_COMPANIES:
+            if cid not in data['prices']:
+                data['prices'][cid] = [random.randint(1000, 5000)]
+        return data, ALL_COMPANIES
     
     # Инициализация
     data = {
         'last_update': int(time.time()),
-        'prices': {cid: [random.randint(1000, 5000)] for cid in COMPANIES},
+        'prices': {cid: [random.randint(1000, 5000)] for cid in ALL_COMPANIES},
         'news': "Рынок стабилен."
     }
     await db.collection('bot_settings').document('stocks').set(data)
-    return data
+    return data, ALL_COMPANIES
 
 async def update_stocks_task():
     """Фоновая задача обновления рынка акций раз в 10 минут."""
@@ -121,32 +134,38 @@ async def update_stocks_task():
             await asyncio.sleep(600)
             db = get_db()
             doc = await db.collection('bot_settings').document('stocks').get()
+            
+            from seasons import get_season_config
+            cfg = await get_season_config()
+            seasonal_stocks = cfg.get('strings', {}).get('stocks', {})
+            ALL_COMPANIES = {**COMPANIES, **seasonal_stocks}
+
             data = doc.to_dict() if doc.exists else {}
             
-            prices = data.get('prices', {cid: [random.randint(1000, 5000)] for cid in COMPANIES})
+            prices = data.get('prices', {cid: [random.randint(1000, 5000)] for cid in ALL_COMPANIES})
             
             new_news = "На рынке без существенных изменений."
             # Шанс новости 20%
             if random.random() < 0.2:
-                cid = random.choice(list(COMPANIES.keys()))
+                cid = random.choice(list(ALL_COMPANIES.keys()))
                 event = random.choice(["jump", "drop"])
                 if event == "jump":
                     impact = random.uniform(1.1, 1.25)
-                    new_news = f"🚀 ПОЗИТИВ: Акции {COMPANIES[cid]['ticker']} взлетели на фоне отличного отчета!"
+                    new_news = f"🚀 ПОЗИТИВ: Акции {ALL_COMPANIES[cid]['ticker']} взлетели на фоне отличного отчета!"
                 else:
                     impact = random.uniform(0.75, 0.9)
-                    new_news = f"📉 НЕГАТИВ: Инвесторы избавляются от {COMPANIES[cid]['ticker']} после скандала!"
+                    new_news = f"📉 НЕГАТИВ: Инвесторы избавляются от {ALL_COMPANIES[cid]['ticker']} после скандала!"
             else:
                 impact = 1.0
             
-            for cid in COMPANIES:
+            for cid in ALL_COMPANIES:
                 history = prices.get(cid, [1000])
                 last = history[-1]
                 
                 # Базовый шум +/- 3%
                 change = random.uniform(0.97, 1.03)
                 # Применяем влияние новости если это та компания
-                if impact != 1.0 and COMPANIES[cid]['ticker'] in new_news:
+                if impact != 1.0 and ALL_COMPANIES[cid]['ticker'] in new_news:
                     change *= impact
                 
                 new_p = max(100, int(last * change))
@@ -166,14 +185,14 @@ async def update_stocks_task():
 # --- ХЕНДЛЕРЫ ---
 @router.message(Command("stocks"))
 async def cmd_stocks(message: types.Message):
-    data = await get_stocks_db()
+    data, ALL_COMPANIES = await get_stocks_db()
     prices = data.get('prices', {})
     news = data.get('news', "Нет новостей.")
     
     text = f"🏦 <b>ФОНДОВАЯ БИРЖА</b>\n\n📢 <b>Новости:</b> {news}\n\n"
     builder = InlineKeyboardBuilder()
     
-    for cid, info in COMPANIES.items():
+    for cid, info in ALL_COMPANIES.items():
         curr = prices.get(cid, [1000])[-1]
         prev = prices.get(cid, [1000])[-2] if len(prices.get(cid, [])) > 1 else curr
         emoji = "📈" if curr >= prev else "📉"
@@ -186,14 +205,14 @@ async def cmd_stocks(message: types.Message):
 
 @router.callback_query(F.data == "stk_main")
 async def cb_stk_main(callback: types.CallbackQuery):
-    data = await get_stocks_db()
+    data, ALL_COMPANIES = await get_stocks_db()
     prices = data.get('prices', {})
     news = data.get('news', "Нет новостей.")
     
     text = f"🏦 <b>ФОНДОВАЯ БИРЖА</b>\n\n📢 <b>Новости:</b> {news}\n\n"
     builder = InlineKeyboardBuilder()
     
-    for cid, info in COMPANIES.items():
+    for cid, info in ALL_COMPANIES.items():
         curr = prices.get(cid, [1000])[-1]
         prev = prices.get(cid, [1000])[-2] if len(prices.get(cid, [])) > 1 else curr
         emoji = "📈" if curr >= prev else "📉"
@@ -214,16 +233,18 @@ async def cb_stk_view(callback: types.CallbackQuery):
     cid = callback.data.replace("stk_view_", "")
     if cid not in COMPANIES: return
     
-    data = await get_stocks_db()
+    data, ALL_COMPANIES = await get_stocks_db()
+    if cid not in ALL_COMPANIES: return
+    
     prices = data.get('prices', {}).get(cid, [1000])
     curr = prices[-1]
     
-    chart_bytes = await generate_stock_chart(COMPANIES[cid]['ticker'], prices)
+    chart_bytes = await generate_stock_chart(ALL_COMPANIES[cid]['ticker'], prices)
     photo = BufferedInputFile(chart_bytes, filename=f"{cid}.png")
     
     text = (
-        f"📊 <b>{COMPANIES[cid]['name']}</b>\n\n"
-        f"📝 {COMPANIES[cid]['desc']}\n"
+        f"📊 <b>{ALL_COMPANIES[cid]['name']}</b>\n\n"
+        f"📝 {ALL_COMPANIES[cid]['desc']}\n"
         f"💰 Текущая цена: <b>{fmt(curr)}</b> сыр.\n\n"
         f"<i>Графики обновляются раз в 10 минут.</i>"
     )
@@ -251,8 +272,8 @@ async def cb_stk_buy(callback: types.CallbackQuery):
     qty = int(parts[2])
     cid = parts[3]
     
-    market_data = await get_stocks_db()
-    price = market_data.get('prices', {}).get(cid, [1000])[-1]
+    data, ALL_COMPANIES = await get_stocks_db()
+    price = data.get('prices', {}).get(cid, [1000])[-1]
     
     # Налог на роскошь при покупке
     base_tax = await get_global_tax()
@@ -270,7 +291,7 @@ async def cb_stk_buy(callback: types.CallbackQuery):
     portfolio[cid] = portfolio.get(cid, 0) + qty
     await update_user_field(callback.message.chat.id, callback.from_user.id, 'stocks_portfolio', portfolio)
     
-    await callback.answer(f"✅ Куплено {qty} акций {COMPANIES[cid]['ticker']}!")
+    await callback.answer(f"✅ Куплено {qty} акций {ALL_COMPANIES[cid]['ticker']}!")
     await cb_stk_view(callback)
 
 @router.callback_query(F.data.startswith("stk_sell_"))
@@ -289,8 +310,8 @@ async def cb_stk_sell(callback: types.CallbackQuery):
     if portfolio[cid] < qty:
         return await callback.answer("❌ Недостаточно акций для продажи.", show_alert=True)
     
-    market_data = await get_stocks_db()
-    price = market_data.get('prices', {}).get(cid, [1000])[-1]
+    data, ALL_COMPANIES = await get_stocks_db()
+    price = data.get('prices', {}).get(cid, [1000])[-1]
     
     # Комиссия при продаже (фиксированная 5% + прогрессивный налог)
     base_tax = await get_global_tax()
@@ -312,8 +333,8 @@ async def cb_stk_sell(callback: types.CallbackQuery):
 async def cb_stk_portfolio(callback: types.CallbackQuery):
     ud = await get_user_data(callback.message.chat.id, callback.from_user.id)
     portfolio = ud.get('stocks_portfolio', {})
-    market_data = await get_stocks_db()
-    prices = market_data.get('prices', {})
+    data, ALL_COMPANIES = await get_stocks_db()
+    prices = data.get('prices', {})
     
     text = "💼 <b>ВАШ ИНВЕСТИЦИОННЫЙ ПОРТФЕЛЬ</b>\n\n"
     total_value = 0
@@ -322,11 +343,11 @@ async def cb_stk_portfolio(callback: types.CallbackQuery):
         text += "<i>Вы пока не владеете акциями.</i>"
     else:
         for cid, qty in portfolio.items():
-            if cid in COMPANIES:
+            if cid in ALL_COMPANIES:
                 curr_p = prices.get(cid, [1000])[-1]
                 val = qty * curr_p
                 total_value += val
-                text += f"▪️ <b>{COMPANIES[cid]['ticker']}</b>: {qty} шт. (≈ {fmt(val)} сыр.)\n"
+                text += f"▪️ <b>{ALL_COMPANIES[cid]['ticker']}</b>: {qty} шт. (≈ {fmt(val)} сыр.)\n"
     
     text += f"\n💰 Оценка активов: <b>{fmt(total_value)}</b> сыр."
     

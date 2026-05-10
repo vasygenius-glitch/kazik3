@@ -152,16 +152,29 @@ RP_COMMANDS = {
     "укусить": "🧛‍♂️ {user} укусил(а) {target}"
 }
 
+async def get_seasonal_rp_commands():
+    from seasons import get_season_config
+    cfg = await get_season_config()
+    if cfg.get("active") and cfg.get("id") == "backrooms":
+        return {
+            "поделиться водой": "🍶 {user} поделился миндальной водой с {target}",
+            "вместе бежать": "🏃‍♂️ {user} и {target} вместе убегают от Сущности!",
+            "напугать": "👻 {user} выскочил(а) из-за угла и напугал(а) {target}!"
+        }
+    return {}
+
 karma_triggers_global = ['+', 'спасибо', 'спс', 'rep', 'реп', 'уважение']
 
 @router.message(F.reply_to_message & F.text & (F.text.lower().in_(RP_COMMANDS.keys()) | F.text.lower().in_(karma_triggers_global)))
 async def rp_and_karma(message: types.Message):
-    text = message.text.lower().strip() if message.text else ""
-    user_name = escape_html(message.from_user.full_name)
     target_name = escape_html(message.reply_to_message.from_user.full_name)
 
+    # Объединяем базовые и сезонные РП команды
+    seasonal_rp = await get_seasonal_rp_commands()
+    ALL_RP = {**RP_COMMANDS, **seasonal_rp}
+
     # РП Команды
-    if text in RP_COMMANDS:
+    if text in ALL_RP:
         from diseases import get_active_diseases
         from user_manager import remove_item_from_inventory
 
@@ -177,9 +190,12 @@ async def rp_and_karma(message: types.Message):
         if message.reply_to_message.from_user.is_bot:
             return await message.answer("Боты не чувствуют эмоций 🤖.")
 
-        action_text = RP_COMMANDS[text].format(user=f"<b>{user_name}</b>", target=f"<b>{target_name}</b>")
+        action_text = ALL_RP[text].format(user=f"<b>{user_name}</b>", target=f"<b>{target_name}</b>")
         if has_condom:
             action_text += "\n🎈 <i>Был использован презерватив для безопасности контакта.</i>"
+        
+        from seasons import get_glitch_text
+        action_text = await get_glitch_text(action_text)
 
         return await message.answer(action_text)
 
