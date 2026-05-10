@@ -29,29 +29,36 @@ async def cmd_start(message: types.Message):
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
     text = "📜 <b>ПОЛНЫЙ СПИСОК КОМАНД БОТА</b> 📜\n\n"
+
+    text += "🚀 <b>ПОСЛЕДНИЕ ОБНОВЛЕНИЯ:</b>\n"
+    text += "• <b>Фондовая Биржа:</b> Команда <code>/stocks</code> — инвестируй в ГазСыр и SpaceMilk!\n"
+    text += "• <b>Налог на богатство:</b> Чем больше у тебя сыроежек, тем выше комиссия в <code>/pay</code> и цены в <code>/shop</code>.\n"
+    text += "• <b>Мини-игры:</b> В <code>/work</code> и <code>/crime</code> теперь нужно играть, чтобы получить бонус.\n"
+    text += "• <b>Оптимизация:</b> Бот стал работать в 5 раз быстрее благодаря новой системе кэширования.\n\n"
     
     text += "💰 <b>ЭКОНОМИКА И БАНК:</b>\n"
     text += "<code>/profile</code> - Профиль (деньги, клан, брак, варны).\n"
     text += "<code>/bank</code> - Главное меню банков (вклады, листы, инфо).\n"
     text += "<code>/bank_offshore</code> - Скрыть счет в банке за комиссию.\n"
     text += "<code>ограбить банк [Имя]</code> - Попытка кражи из банка.\n"
-    text += "<code>/bonus</code> - Собрать прибыль и бонус.\n"
-    text += "<code>/work</code>, <code>/crime</code> - Способы заработка.\n"
-    text += "<code>/pay [сумма][реплай]</code> - Перевод денег.\n"
+    text += "<code>/bonus</code> - Собрать прибыль (учитывает налог на богатство).\n"
+    text += "<code>/work</code>, <code>/crime</code> - Работа и криминал с мини-играми.\n"
+    text += "<code>/pay [сумма][реплай]</code> - Перевод (комиссия зависит от баланса).\n"
     text += "<code>долг [сумма] [%][реплай]</code> - Дать в долг (P2P).\n"
     text += "<code>выплатить[сумма] [реплай]</code> - Вернуть долг.\n"
     text += "<code>украсть</code> [реплай] - Карманная кража.\n\n"
+
+    text += "📈 <b>БИРЖА (АКЦИИ И КРИПТА):</b>\n"
+    text += "<code>/stocks</code> - <b>НОВОЕ!</b> Фондовая биржа с графиками компаний.\n"
+    text += "<code>/криптосыроежка</code> - Главное меню крипторынка.\n"
+    text += "<code>/createcoin [ТИКЕР] [Название]</code> - Создать свою монету.\n"
+    text += "<code>/cr_send [ТИКЕР] [Кол-во]</code> - Перевод крипты.\n\n"
 
     text += "🏦 <b>ДЛЯ БАНКИРОВ:</b>\n"
     text += "<code>создать банк [Имя]</code> - Открыть свой банк.\n"
     text += "<code>/bankrate [3-13]</code> - Установить % по вкладам.\n"
     text += "<code>/bank_stats</code> - Панель управления (вклады, кредиты).\n"
     text += "<code>кредит [сумма] [%] [дни] [поручитель] [реплай]</code> - Выдать кредит игроку.\n\n"
-
-    text += "📈 <b>КРИПТОБИРЖА:</b>\n"
-    text += "<code>/криптосыроежка</code> - Главное меню рынка и графики.\n"
-    text += "<code>/createcoin [ТИКЕР] [Цена] [Название]</code> - Создать монету.\n"
-    text += "<code>/cr_send [ТИКЕР] [Кол-во]</code> - Перевод крипты (реплай, налог 2%).\n\n"
 
     text += "🤝 <b>СДЕЛКИ И ДОГОВОРЫ:</b>\n"
     text += "<code>договор [текст]</code> - Заключить словесный контракт.\n"
@@ -63,9 +70,9 @@ async def cmd_help(message: types.Message):
     text += "<code>эскорт/проститут [сумма] [реплай]</code> - Предложить услуги.\n\n"
 
     text += "🛒 <b>МАГАЗИН И ПРОКАЧКА:</b>\n"
-    text += "<code>/shop</code> - Покупка бизнесов, машин, VIP.\n"
+    text += "<code>/shop</code> - Покупка бизнесов и VIP (цены динамические!).\n"
     text += "<code>/inv</code> - Ваш инвентарь (Улучшение и продажа).\n"
-    text += "<code>/skills</code> - Прокачка навыков.\n"
+    text += "<code>/skills</code> - Прокачка (Переговоры снижают налоги!).\n"
     text += "<code>/pets</code>, <code>/feed</code> - Питомцы.\n\n"
 
     text += "🛡 <b>КЛАНЫ И СЕМЬИ:</b>\n"
@@ -74,17 +81,16 @@ async def cmd_help(message: types.Message):
 
     text += "🎰 <b>ИГРЫ:</b>\n"
     text += "<code>/bj</code>, <code>/slots</code>, <code>/roulette [ставка] [число/цвет]</code>.\n"
-    text += "<code>Вызвать на дуэль [ставка]</code> - Тактическая дуэль на пистолетах!\n<code>/lottery</code> - розыгрыш.\n\n"
+    text += "<code>Вызвать на дуэль [ставка]</code> - Тактическая дуэль!\n<code>/lottery</code> - розыгрыш.\n\n"
 
-    text += "👮‍♂️ <b>АДМИНЫ (В Т.Ч. КРИПТО):</b>\n"
+    text += "👮‍♂️ <b>АДМИНИСТРАЦИЯ:</b>\n"
     text += "<code>мут</code>, <code>бан</code>, <code>варн</code>, <code>повысить</code>, <code>снять</code>.\n"
     text += "<code>кто админ</code>, <code>+правила</code>, <code>антивойс</code>, <code>антилинк</code>.\n"
-    text += "<code>/cr_wipe</code> - Вайп рынка. <code>/cr_delcoin [тикер]</code> - Удалить монету.\n"
-    text += "<code>/cr_crash[тикер]</code> - Обрушить курс. <code>бан/разбан крипты</code>.\n\n"
+    text += "<code>/cr_wipe</code>, <code>/cr_crash</code>, <code>бан/разбан крипты</code>.\n\n"
 
     text += "🎭 <b>РП И ИНТЕРАКТИВ:</b>\n"
     text += "<code>Обнять</code>, <code>Поцеловать</code>, <code>Ударить</code>, <code>Кусь</code>.\n"
-    text += "<code>Диктор [вопрос]</code>, <code>/bio [текст]</code>, <code>/rules</code>.\n"
+    text += "<code>Диктор [вопрос]</code>, <code>/bio [текст]</code>.\n"
     text += "Репутация: <code>+</code>, <code>спасибо</code>, <code>реп</code>."
     
     await message.answer(text)
