@@ -1,0 +1,99 @@
+import random
+import time
+from aiogram import Router, types, Bot, F
+from escape import escape_html
+from user_manager import get_user_data, update_user_balance, update_user_field
+
+router = Router()
+
+@router.message(F.text.lower().startswith("диктор"))
+async def cmd_dictor(message: types.Message):
+    answers = [
+        "Бесспорно", "Предрешено", "Никаких сомнений", "Определённо да", "Можешь быть уверен в этом",
+        "Мне кажется — «да»", "Вероятнее всего", "Хорошие перспективы", "Знаки говорят — «да»", "Да",
+        "Пока не ясно, попробуй снова", "Спроси позже", "Лучше не рассказывать", "Сейчас нельзя предсказать",
+        "Сконцентрируйся и спроси опять", "Даже не думай", "Мой ответ — «нет»", "По моим данным — «нет»",
+        "Перспективы не очень хорошие", "Весьма сомнительно"
+    ]
+    await message.answer(f"🎱 <b>Диктор говорит:</b> {random.choice(answers)}")
+
+@router.message(F.text.lower().startswith("украсть") | F.text.lower().startswith("/steal"))
+async def cmd_steal(message: types.Message, bot: Bot):
+    if not message.reply_to_message:
+        return await message.answer("Сделайте реплай на сообщение того, кого хотите ограбить.")
+
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    target_id = message.reply_to_message.from_user.id
+
+    if user_id == target_id: return await message.answer("Вы не можете украсть у себя.")
+    if message.reply_to_message.from_user.is_bot: return await message.answer("У бота денег нет.")
+
+    from config import CREATOR_ID
+    if int(target_id) == int(CREATOR_ID):
+        return await message.answer("Невозможно ограбить Создателя!")
+
+    try:
+        target_member = await bot.get_chat_member(chat_id, target_id)
+        if target_member.status in['administrator', 'creator']:
+            return await message.answer("Невозможно ограбить Администрацию!")
+    except Exception: pass
+
+    data = await get_user_data(chat_id, user_id)
+    last_steal = data.get('last_steal_time', 0)
+    current_time = int(time.time())
+
+    from diseases import get_active_diseases
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    cooldown = 7200 if 'treponema' in active_diseases else 3600
+
+    if current_time - last_steal < cooldown:
+        mins = (cooldown - (current_time - last_steal)) // 60
+        disease_msg = "🦠 <b>Бледная трепонема</b> увеличила кулдаун. " if 'treponema' in active_diseases else ""
+        return await message.answer(f"Вы уже пытались воровать недавно. Залягте на дно. {disease_msg}(Осталось {mins} мин.)")
+
+    await update_user_field(chat_id, user_id, 'last_steal_time', current_time)
+
+    target_data = await get_user_data(chat_id, target_id)
+    target_balance = target_data.get('balance', 0)
+
+    if target_balance <= 0:
+        return await message.answer("У жертвы пустые карманы, воровать нечего.")
+
+    user_balance = data.get('balance', 0)
+
+    if user_balance < 500:
+        return await message.answer("Вам нужно минимум 500 сыроежек на балансе, чтобы оплатить штраф в случае провала.")
+
+    chance = 25 # Базовый шанс без улучшений 25%
+
+    if target_data.get('is_vip'): chance -= 10
+
+    if target_data.get('is_banker'):
+        from profile_bank import get_bank_info
+        bank_data = await get_bank_info(chat_id, target_id)
+        if bank_data:
+            # Улучшение охраны. Макс уровень (5) дает снижение до 5%
+            # Базовый шанс 25. Каждый уровень снимает 4%. На 5-ом уровне снимает 20%. Итого: 25 - 20 = 5%
+            sec_lvl = bank_data.get('upgrade_security', 0)
+            chance -= (sec_lvl * 4)
+
+    if random.randint(1, 100) <= chance:
+        steal_amount = random.randint(int(target_balance * 0.05), int(target_balance * 0.20))
+        steal_amount = min(steal_amount, target_balance)
+
+        await update_user_balance(chat_id, target_id, -steal_amount)
+        await update_user_balance(chat_id, user_id, steal_amount)
+
+        await message.answer(f"💰 <b>Успех!</b>\nВы незаметно вытащили <b>{steal_amount}</b> сыроежек у {escape_html(message.reply_to_message.from_user.full_name)}!")
+    else:
+        penalty = 1000
+        actual_penalty = penalty if user_balance <= 0 else min(penalty, user_balance)
+
+        await update_user_balance(chat_id, user_id, -actual_penalty, is_debt_repayment=True)
+        await update_user_balance(chat_id, target_id, actual_penalty)
+
+        if target_data.get('is_banker') and target_data.get('bank_security'):
+            await message.answer(f"🚨 <b>Провал! Вооруженная охрана банка скрутила вас!</b>\nВ качестве компенсации вы отдаете <b>{actual_penalty}</b> сыроежек в капитал банка.")
+        else:
+            await message.answer(f"🚨 <b>Провал!</b>\nВас поймали за руку! В качестве компенсации вы отдаете <b>{actual_penalty}</b> сыроежек жертве.")
