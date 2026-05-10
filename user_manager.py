@@ -10,7 +10,8 @@ def get_user_ref(chat_id, user_id):
 
 # Кэш пользователей
 _user_cache = {}
-CACHE_TTL = 10.0 
+_dirty_cache = set()
+CACHE_TTL = 60.0 
 
 def get_from_cache(chat_id, user_id):
     key = (chat_id, user_id)
@@ -23,6 +24,30 @@ def get_from_cache(chat_id, user_id):
 def set_in_cache(chat_id, user_id, data):
     key = (chat_id, user_id)
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
+
+def mark_dirty(chat_id, user_id):
+    _dirty_cache.add((chat_id, user_id))
+
+async def flush_user_data_task():
+    """Фоновая задача для синхронизации кэша с БД раз в 15 секунд."""
+    while True:
+        try:
+            await asyncio.sleep(15)
+            if not _dirty_cache:
+                continue
+            
+            to_flush = list(_dirty_cache)
+            _dirty_cache.clear()
+            
+            for key in to_flush:
+                chat_id, user_id = key
+                cached_entry = _user_cache.get(key)
+                if cached_entry:
+                    ref = get_user_ref(chat_id, user_id)
+                    # Синхронизируем всё состояние пользователя
+                    fire_and_forget(ref.set(cached_entry["data"], merge=True))
+        except Exception as e:
+            print(f"⚠️ Ошибка при синхронизации кэша: {e}")
 
 async def get_user_data(chat_id, user_id, full_name=None):
     cached_data = get_from_cache(chat_id, user_id)
@@ -75,18 +100,14 @@ async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False)
 
     data['balance'] = new_balance
     set_in_cache(chat_id, user_id, data)
-
-    ref = get_user_ref(chat_id, user_id)
-    fire_and_forget(ref.update({'balance': new_balance}))
+    mark_dirty(chat_id, user_id)
     return new_balance
 
 async def update_user_field(chat_id, user_id, field, value):
     data = await get_user_data(chat_id, user_id)
     data[field] = value
     set_in_cache(chat_id, user_id, data)
-
-    ref = get_user_ref(chat_id, user_id)
-    fire_and_forget(ref.update({field: value}))
+    mark_dirty(chat_id, user_id)
 
 async def check_and_give_bonus(chat_id, user_id, full_name=None):
     data = await get_user_data(chat_id, user_id, full_name)
@@ -174,7 +195,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
 
         data.update(upd)
         set_in_cache(chat_id, user_id, data)
-        fire_and_forget(ref.update(upd))
+        mark_dirty(chat_id, user_id)
 
         return True, {
             'base': base_bonus, 'business': biz_income, 'car': car_income,
@@ -190,9 +211,7 @@ async def add_item_to_inventory(chat_id, user_id, item_name):
 
     data['inventory'] = inv
     set_in_cache(chat_id, user_id, data)
-
-    ref = get_user_ref(chat_id, user_id)
-    fire_and_forget(ref.update({'inventory': inv}))
+    mark_dirty(chat_id, user_id)
 
 async def remove_item_from_inventory(chat_id, user_id, item_name):
     data = await get_user_data(chat_id, user_id)
@@ -203,8 +222,7 @@ async def remove_item_from_inventory(chat_id, user_id, item_name):
 
         data['inventory'] = inv
         set_in_cache(chat_id, user_id, data)
-
-        fire_and_forget(get_user_ref(chat_id, user_id).update({'inventory': inv}))
+        mark_dirty(chat_id, user_id)
         return True
     return False
 

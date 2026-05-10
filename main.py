@@ -87,9 +87,11 @@ async def main():
         print("✅ Начинаю слушать сообщения (polling)...")
         from log_system import flush_logs
         from chat_stats import weekly_reset_task, flush_stats_task
+        from user_manager import flush_user_data_task
         asyncio.create_task(flush_logs(bot))
         asyncio.create_task(weekly_reset_task(bot))
         asyncio.create_task(flush_stats_task())
+        asyncio.create_task(flush_user_data_task())
     except Exception as e:
         print(f"❌ Ошибка проверки токена: {e}")
 
