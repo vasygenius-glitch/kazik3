@@ -1,5 +1,6 @@
 from aiogram import Dispatcher
 from crypto import router as crypto_router
+from stocks import router as stocks_router
 from economy import router as economy_router
 from blackjack import router as blackjack_router
 from roulette import router as roulette_router
@@ -38,7 +39,7 @@ ALLOWED_TEXT_COMMANDS = (
     "выплатить", "вернуть", "кредит", "приветствие", "заметка", "антилинк", "антивойс",
     "био", "+правила", "правила", "+", "спасибо", "реп", "стата", "топ",
     "казино", "блэкджек", "рулетка", "слоты", "кости", "крапс", "банка", "шлюха", "договор",
-    "профиль", "банк", "инвентарь", "inv", "inventory"
+    "профиль", "банк", "инвентарь", "inv", "inventory", "stocks"
 )
 
 def is_valid_command(text: str) -> bool:
@@ -97,6 +98,7 @@ async def catch_all(message: Message):
 def register_all_handlers(dp: Dispatcher):
     # Твоя биржа
     dp.include_router(crypto_router)
+    dp.include_router(stocks_router)
     
     # Остальные модули
     dp.include_router(economy_router)
