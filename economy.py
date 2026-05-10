@@ -4,7 +4,7 @@ import secrets
 import time
 from economy_utils import get_global_tax
 from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users
-from seasons import apply_season_bonus
+from seasons import apply_season_logic
 from escape import escape_html
 
 router = Router()
@@ -391,9 +391,10 @@ async def cmd_work(message: types.Message):
     elif pet_id == 'dragon' and (debts or balance < 0):
          pet_msg += "\n🐉 Ваш дракон отпугнул поджидавших вас коллекторов!"
 
-    final_earnings = await apply_season_bonus(final_earnings, "work")
+    final_earnings, season_msg = await apply_season_logic(chat_id, user_id, final_earnings)
     if final_earnings > 0:
         await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
+
 
     jobs =[
         "разгрузил вагоны",
@@ -407,7 +408,7 @@ async def cmd_work(message: types.Message):
 
     job = rand.choice(jobs)
 
-    afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{base_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}"
+    afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{final_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}{season_msg}"
     
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     import uuid
@@ -583,11 +584,11 @@ async def cmd_crime(message: types.Message):
         elif pet_id == 'dragon' and (debts or balance < 0):
             pet_msg += " И отпугнул коллекторов!"
 
-        final_earnings = await apply_season_bonus(final_earnings, "crime")
+        final_earnings, season_msg = await apply_season_logic(chat_id, user_id, final_earnings)
         if final_earnings > 0:
             await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
         
-        afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{base_earnings}</b> сыр. на столе.{pet_msg}{collector_msg}"
+        afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{base_earnings}</b> сыр. на столе.{pet_msg}{collector_msg}{season_msg}"
         
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         import uuid
