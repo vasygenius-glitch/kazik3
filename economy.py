@@ -9,6 +9,7 @@ from escape import escape_html
 router = Router()
 
 active_work_games = {}
+active_crime_games = {}
 
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -297,7 +298,7 @@ async def cmd_work(message: types.Message):
 
     rand = secrets.SystemRandom()
     is_banker = data.get('is_banker', False)
-    base_earnings = rand.randint(50, 100) if is_banker else rand.randint(100, 300)
+    base_earnings = rand.randint(50, 350) if is_banker else rand.randint(100, 700)
     
     bank_profit_msg = ""
     if is_banker:
@@ -394,7 +395,7 @@ async def cmd_work(message: types.Message):
     builder = InlineKeyboardBuilder()
     game_id = str(uuid.uuid4())[:8]
     
-    bonus = rand.randint(400, 1000) if is_banker else rand.randint(800, 2000)
+    bonus = rand.randint(500, 1250) if is_banker else rand.randint(1000, 2500)
     
     if is_banker:
         a = rand.randint(100, 500)
@@ -514,7 +515,7 @@ async def cmd_crime(message: types.Message):
         pet_msg += "\n🦠 <b>Сифилис</b>: Шанс успеха порезан в 2 раза из-за ужасного самочувствия."
 
     if rand.random() < success_chance:
-        base_earnings = rand.randint(1000, 3000)
+        base_earnings = rand.randint(200, 500)
         final_earnings = base_earnings
 
         # --- ЛОГИКА КОЛЛЕКТОРОВ ---
@@ -522,7 +523,6 @@ async def cmd_crime(message: types.Message):
         debts = data.get('debts', {})
         balance = data.get('balance', 0)
 
-        # Дракон защищает от коллекторов!
         if pet_id != 'dragon' and (debts or balance < 0) and rand.randint(1, 100) <= 40:
             if debts:
                 lender_id_str = secrets.choice(list(debts.keys()))
@@ -549,27 +549,54 @@ async def cmd_crime(message: types.Message):
                         lender_name = bank_data.get('name', 'Неизвестный Банк') if bank_data else 'Банк'
                         if bank_data:
                             await create_or_update_bank(chat_id, banker_id, {'capital': bank_data.get('capital', 0) + pay_amount})
-                        collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Они выследили тебя и забрали <b>{pay_amount}</b> сыроежек в счет старого долга для <b>{escape_html(lender_name)}</b>."
+                        collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Забрали <b>{pay_amount}</b> сыр. в счет долга."
                     else:
                         lender_id = int(lender_id_str)
                         lender_data = await get_user_data(chat_id, lender_id)
-                        lender_name = lender_data.get('full_name', 'Неизвестный кредитор')
+                        lender_name = lender_data.get('full_name', 'Кредитор')
                         await update_user_balance(chat_id, lender_id, pay_amount, is_debt_repayment=True)
-                        collector_msg = f"\n\n🦹‍♂️ <b>ЧАСТНЫЕ КОЛЛЕКТОРЫ!</b> Они выследили тебя и забрали <b>{pay_amount}</b> сыроежек в счет старого долга для <b>{escape_html(lender_name)}</b>."
+                        collector_msg = f"\n\n🦹‍♂️ <b>ЧАСТНЫЕ КОЛЛЕКТОРЫ!</b> Забрали <b>{pay_amount}</b> сыр. в счет долга."
             else:
-                penalty = rand.randint(200, 500)
+                penalty = rand.randint(100, 300)
                 final_earnings = 0
                 await update_user_balance(chat_id, user_id, -penalty, is_debt_repayment=True)
-                collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Они забрали всю добычу и выбили еще <b>{penalty}</b> сыроежек в счет кредита."
+                collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ!</b> Выбили <b>{penalty}</b> сыр. штрафа."
         elif pet_id == 'dragon' and (debts or balance < 0):
             pet_msg += " И отпугнул коллекторов!"
 
         if final_earnings > 0:
             await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
         
-        crimes =["ограбил банк", "угнал спорткар", "взломал криптобиржу", "обчистил казино"]
-        crime = rand.choice(crimes)
-        await message.answer(f"🥷 Ты успешно <b>{crime}</b> и поднял <b>{base_earnings}</b> сыроежек!{pet_msg}{collector_msg}")
+        afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{base_earnings}</b> сыр. на столе.{pet_msg}{collector_msg}"
+        
+        from aiogram.utils.keyboard import InlineKeyboardBuilder
+        import uuid
+        builder = InlineKeyboardBuilder()
+        game_id = str(uuid.uuid4())[:8]
+        bonus = rand.randint(1500, 4000)
+        
+        tools = ["🔧", "🪛", "🔑", "🔨", "🪚", "🧲"]
+        target = rand.choice(["🔑", "🧲", "🪛"])
+        options = rand.sample(tools, 3)
+        if target not in options:
+            options[0] = target
+        rand.shuffle(options)
+        
+        game_text = f"\n\n🔒 <b>ВЗЛОМ СЕЙФА:</b> Ты нашел огромный сейф! Выбери правильный инструмент (<b>{target}</b>), чтобы вскрыть его!"
+        
+        for opt in options:
+            cb_data = f"crime_btn_{game_id}_1" if opt == target else f"crime_btn_{game_id}_0"
+            builder.button(text=opt, callback_data=cb_data)
+            
+        builder.adjust(3)
+        
+        active_crime_games[game_id] = {
+            'user_id': user_id,
+            'bonus': bonus,
+            'expires': time.time() + 60
+        }
+        
+        await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
     else:
         fine = rand.randint(500, 1500)
         await update_user_balance(chat_id, user_id, -fine, is_debt_repayment=True)
@@ -649,3 +676,39 @@ async def cmd_rob_bank(message: types.Message):
             mute_text = "\nСпецназ пытался вас арестовать, но вам удалось сбежать, потеряв деньги в спешке."
 
         await message.answer(f"🚔 <b>ОБЛАВА! СРАБОТАЛА СИГНАЛИЗАЦИЯ!</b>\n\nОграбление банка <b>{escape_html(bank_data.get('name'))}</b> провалилось. Вы потеряли <b>{penalty}</b> сыроежек при побеге.{mute_text}")
+
+@router.callback_query(F.data.startswith("crime_btn_"))
+async def process_crime_btn(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) < 4: return
+    game_id = parts[2]
+    is_correct = parts[3] == "1"
+    
+    game = active_crime_games.get(game_id)
+    if not game:
+        return await callback.answer("⏳ Слишком поздно! Сейф заблокировался.", show_alert=True)
+        
+    if game['user_id'] != callback.from_user.id:
+        return await callback.answer("Это не твой сейф!", show_alert=True)
+        
+    if time.time() > game['expires']:
+        del active_crime_games[game_id]
+        await callback.message.edit_reply_markup(reply_markup=None)
+        return await callback.answer("⏳ Время вышло, копы уже здесь!", show_alert=True)
+        
+    del active_crime_games[game_id]
+    
+    original_html = callback.message.html_text if hasattr(callback.message, 'html_text') else callback.message.text
+    if not original_html: original_html = ""
+        
+    chat_id = callback.message.chat.id
+    if is_correct:
+        await update_user_balance(chat_id, callback.from_user.id, game['bonus'])
+        new_text = original_html + f"\n\n💎 <b>ДЖЕКПОТ!</b> Дверца поддалась, и ты вытащил <b>{game['bonus']}</b> сыр.!"
+        await callback.message.edit_text(new_text, reply_markup=None)
+    else:
+        import secrets
+        penalty = secrets.SystemRandom().randint(500, 1500)
+        await update_user_balance(chat_id, callback.from_user.id, -penalty, is_debt_repayment=True)
+        new_text = original_html + f"\n\n🚨 <b>ПРОВАЛ!</b> Инструмент сломался, взвыла сирена! В панике убегая от копов, ты потерял <b>{penalty}</b> сыр."
+        await callback.message.edit_text(new_text, reply_markup=None)
