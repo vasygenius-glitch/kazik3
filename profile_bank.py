@@ -311,11 +311,7 @@ async def cmd_bank(message: types.Message):
                 if hasattr(db, 'transaction'):
                     transaction = db.transaction()
                     if hasattr(transaction, 'run'):
-                        res = transaction.run(process_deposit, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
-                        if hasattr(res, '__aiter__'):
-                            async for _ in res: pass
-                        else:
-                            await res
+                        await transaction.run(process_deposit, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
                     else:
                         await process_deposit(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
                 else:
@@ -371,11 +367,7 @@ async def cmd_bank(message: types.Message):
                 if hasattr(db, 'transaction'):
                     transaction = db.transaction()
                     if hasattr(transaction, 'run'):
-                        res = transaction.run(process_withdraw, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
-                        if hasattr(res, '__aiter__'):
-                            async for _ in res: pass
-                        else:
-                            await res
+                        await transaction.run(process_withdraw, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
                     else:
                         await process_withdraw(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
                 else:

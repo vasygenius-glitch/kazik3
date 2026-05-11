@@ -242,12 +242,9 @@ async def cmd_pay(message: types.Message):
         if hasattr(db, 'transaction'):
             transaction = db.transaction()
             if hasattr(transaction, 'run'):
-                # В некоторых версиях firestore_async .run() возвращает генератор для итерации попыток
-                res = transaction.run(process_transfer, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
-                if hasattr(res, '__aiter__'):
-                    async for _ in res: pass
-                else:
-                    await res
+                # AsyncTransaction.run - это корутина, которую нужно просто подождать.
+                # Она сама управляет циклом попыток и фиксацией (commit).
+                await transaction.run(process_transfer, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
             else:
                 await process_transfer(transaction, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
         else:

@@ -130,7 +130,7 @@ def init_db(key_path):
                     self.doc_node['_subcollections'] = {}
                 return MockCollection(self.doc_node['_subcollections'], name)
 
-            async def get(self):
+            async def get(self, **kwargs):
                 class MockDocRes:
                     def __init__(self, exists, data=None):
                         self.exists = exists
