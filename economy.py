@@ -224,29 +224,29 @@ async def cmd_pay(message: types.Message):
     # Предварительно убеждаемся, что получатель существует в базе
     await get_user_data(chat_id, target_user.id, target_name)
 
-    async def process_transfer(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
-        # Используем специальную транзакционную версию
-        await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
-        await update_user_balance_tr(transaction, chat_id, target_id, amount)
+@firestore_async.transactional
+async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
+    # Используем специальную транзакционную версию
+    await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
+    await update_user_balance_tr(transaction, chat_id, target_id, amount)
 
-        if human_admins and commission > 0:
-            commission_per_admin = commission // len(human_admins)
-            if commission_per_admin > 0:
-                for admin_id in human_admins:
-                    # Убеждаемся, что админ есть в базе (хотя бы в кэше)
-                    # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
-                    # Но так как это админы и комиссия, мы просто обновим их баланс
-                    await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
+    if human_admins and commission > 0:
+        commission_per_admin = commission // len(human_admins)
+        if commission_per_admin > 0:
+            for admin_id in human_admins:
+                # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
+                # Но мы можем просто обновить баланс
+                await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
 
     try:
         if hasattr(db, 'transaction'):
-            transaction = db.transaction()
-            if hasattr(transaction, 'run'):
-                # AsyncTransaction.run - это корутина, которую нужно просто подождать.
-                # Она сама управляет циклом попыток и фиксацией (commit).
-                await transaction.run(process_transfer, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+            # Мы используем @firestore_async.transactional для автоматического управления попытками и фиксацией.
+            # В некоторых версиях библиотек вызов декоратора возвращает асинхронный генератор.
+            res = process_transfer_tx(db.transaction(), chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+            if hasattr(res, '__aiter__'):
+                async for _ in res: pass
             else:
-                await process_transfer(transaction, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+                await res
         else:
             # Fallback для локального мока если db вообще не имеет transaction
             await update_user_balance(chat_id, sender_id, -total_cost)

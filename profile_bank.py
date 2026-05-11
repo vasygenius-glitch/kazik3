@@ -175,6 +175,60 @@ async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(banker_id))
     fire_and_forget(bank_ref.set(data, merge=True))
 
+@firestore_async.transactional
+async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data):
+    from user_manager import update_user_balance_tr, get_user_ref
+    # Списываем у игрока
+    await update_user_balance_tr(transaction, chat_id, user_id, -amount)
+    
+    # Обновляем поля игрока
+    user_ref = get_user_ref(chat_id, user_id)
+    updates = {
+        'bank_deposit': current_deposit + amount,
+        'bank_name': target_banker_id
+    }
+    if current_deposit == 0:
+        updates['deposit_start_time'] = int(time.time())
+    
+    if transaction:
+        transaction.update(user_ref, updates)
+    else:
+        await user_ref.update(updates)
+
+    # Обновляем капитал банка
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(target_banker_id))
+    if transaction:
+        transaction.update(bank_ref, {'capital': bank_data.get('capital', 0) + amount})
+    else:
+        await bank_ref.update({'capital': bank_data.get('capital', 0) + amount})
+
+@firestore_async.transactional
+async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data):
+    from user_manager import update_user_balance_tr, get_user_ref
+    # Добавляем игроку
+    await update_user_balance_tr(transaction, chat_id, user_id, amount)
+    
+    # Обновляем поля игрока
+    user_ref = get_user_ref(chat_id, user_id)
+    updates = {'bank_deposit': current_deposit - amount}
+    if current_deposit - amount == 0:
+        updates['bank_name'] = None
+        updates['deposit_start_time'] = 0
+    
+    if transaction:
+        transaction.update(user_ref, updates)
+    else:
+        await user_ref.update(updates)
+    
+    # Обновляем капитал банка
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(current_banker_id))
+    if transaction:
+        transaction.update(bank_ref, {'capital': bank_data.get('capital', 0) - amount})
+    else:
+        await bank_ref.update({'capital': bank_data.get('capital', 0) - amount})
+
 @router.message(Command("bank"))
 async def cmd_bank(message: types.Message):
     chat_id = message.chat.id
@@ -295,27 +349,15 @@ async def cmd_bank(message: types.Message):
                 return await message.answer("Недостаточно средств на балансе.")
 
             db = get_db()
-            async def process_deposit(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data):
-                # Списываем у игрока, добавляем в капитал банка
-                await update_user_balance(chat_id, user_id, -amount)
-                await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit + amount)
-                await update_user_field(chat_id, user_id, 'bank_name', target_banker_id)
-
-                # Запоминаем время вклада (если первый раз или обновляем)
-                if current_deposit == 0:
-                    await update_user_field(chat_id, user_id, 'deposit_start_time', int(time.time()))
-
-                await create_or_update_bank(chat_id, target_banker_id, {'capital': bank_data.get('capital', 0) + amount})
-
             try:
                 if hasattr(db, 'transaction'):
-                    transaction = db.transaction()
-                    if hasattr(transaction, 'run'):
-                        await transaction.run(process_deposit, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    res = process_deposit_tx(db.transaction(), chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    if hasattr(res, '__aiter__'):
+                        async for _ in res: pass
                     else:
-                        await process_deposit(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                        await res
                 else:
-                    await process_deposit(None, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    await process_deposit_tx(None, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
                 await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
             except Exception as e:
                 import traceback
@@ -353,25 +395,15 @@ async def cmd_bank(message: types.Message):
                 return await message.answer(" У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас! Банкир выдал слишком много кредитов.")
 
             db = get_db()
-            async def process_withdraw(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data):
-                # Снимаем со вклада, списываем из капитала банка
-                await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
-                await update_user_balance(chat_id, user_id, amount)
-                await create_or_update_bank(chat_id, current_banker_id, {'capital': bank_data.get('capital', 0) - amount})
-
-                if current_deposit - amount == 0:
-                    await update_user_field(chat_id, user_id, 'bank_name', None) # Отвязываем от банка
-                    await update_user_field(chat_id, user_id, 'deposit_start_time', 0) # Сбрасываем срок лояльности
-
             try:
                 if hasattr(db, 'transaction'):
-                    transaction = db.transaction()
-                    if hasattr(transaction, 'run'):
-                        await transaction.run(process_withdraw, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    res = process_withdraw_tx(db.transaction(), chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    if hasattr(res, '__aiter__'):
+                        async for _ in res: pass
                     else:
-                        await process_withdraw(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                        await res
                 else:
-                    await process_withdraw(None, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    await process_withdraw_tx(None, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
                 await message.answer(f"💸 Снято {amount} сыроежек со счета.")
             except Exception as e:
                 import traceback

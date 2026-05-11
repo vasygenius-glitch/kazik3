@@ -116,19 +116,51 @@ async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False)
         mark_dirty(chat_id, user_id)
         return new_balance
 
+async def safe_get_snapshot(transaction, ref):
+    """
+    Безопасно получает snapshot документа внутри транзакции.
+    Обрабатывает баги различных версий firestore_async (async_generator error).
+    """
+    if not transaction:
+        return await ref.get()
+    
+    try:
+        # Сначала пробуем через transaction.get()
+        res = transaction.get(ref)
+        if hasattr(res, '__aiter__'):
+            async for s in res: return s
+        return await res
+    except TypeError:
+        # Если упало при await, значит в этой версии библиотеки баг в transaction.get()
+        # Пробуем через ref.get()
+        try:
+            res = ref.get(transaction=transaction)
+            if hasattr(res, '__aiter__'):
+                async for s in res: return s
+            return await res
+        except TypeError:
+            # Если и это упало, значит баг фундаментальный. Вызываем API напрямую.
+            from google.cloud.firestore_v1.base_client import _parse_batch_get
+            request, kwargs = ref._prep_batch_get(None, transaction, None, None, None)
+            # batch_get_documents обычно возвращает асинхронный итератор
+            gen = ref._client._firestore_api.batch_get_documents(request=request, metadata=ref._client._rpc_metadata, **kwargs)
+            async for resp in gen:
+                return _parse_batch_get(resp, {ref._document_path: ref}, ref._client)
+    return None
+
 async def update_user_balance_tr(transaction, chat_id, user_id, amount):
     """Атомарное обновление баланса внутри транзакции Firestore."""
     ref = get_user_ref(chat_id, user_id)
-    
-    # Мы используем ref.get(transaction=transaction) вместо transaction.get(ref),
-    # так как в некоторых версиях google-cloud-firestore метод transaction.get()
-    # содержит баг (пытается сделать await на асинхронный генератор).
-    snapshot = await ref.get(transaction=transaction)
+    snapshot = await safe_get_snapshot(transaction, ref)
     
     if snapshot.exists:
         data = snapshot.to_dict()
         new_balance = data.get('balance', 0) + amount
-        transaction.update(ref, {'balance': new_balance})
+        
+        if transaction:
+            transaction.update(ref, {'balance': new_balance})
+        else:
+            await ref.update({'balance': new_balance})
         
         # Обновляем локальный кэш, чтобы он был актуален
         data['balance'] = new_balance
