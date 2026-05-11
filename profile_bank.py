@@ -1,4 +1,5 @@
 import time
+from firebase_admin import firestore_async
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
