@@ -220,6 +220,7 @@ async def cmd_pay(message: types.Message):
         human_admins =[]
 
     from db import get_db
+    db = get_db()
     # Предварительно убеждаемся, что получатель существует в базе
     await get_user_data(chat_id, target_user.id, target_name)
 
