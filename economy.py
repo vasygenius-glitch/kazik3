@@ -1,5 +1,6 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from firebase_admin import firestore_async
 import secrets
 import time
 from economy_utils import get_global_tax
@@ -224,26 +225,11 @@ async def cmd_pay(message: types.Message):
     # Предварительно убеждаемся, что получатель существует в базе
     await get_user_data(chat_id, target_user.id, target_name)
 
-@firestore_async.transactional
-async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
-    # Используем специальную транзакционную версию
-    await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
-    await update_user_balance_tr(transaction, chat_id, target_id, amount)
-
-    if human_admins and commission > 0:
-        commission_per_admin = commission // len(human_admins)
-        if commission_per_admin > 0:
-            for admin_id in human_admins:
-                # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
-                # Но мы можем просто обновить баланс
-                await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
-
     try:
-        if hasattr(db, 'transaction'):
+        if hasattr(db, "transaction"):
             # Мы используем @firestore_async.transactional для автоматического управления попытками и фиксацией.
-            # В некоторых версиях библиотек вызов декоратора возвращает асинхронный генератор.
             res = process_transfer_tx(db.transaction(), chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
-            if hasattr(res, '__aiter__'):
+            if hasattr(res, "__aiter__"):
                 async for _ in res: pass
             else:
                 await res
@@ -260,7 +246,7 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_
         await message.answer(f"❌ Ошибка перевода: {e}")
         return
 
-    phrases =[
+    phrases = [
         f"Налоговая откусила кусок в {commission} сыроежек.",
         f"Гоблины-сборщики забрали {commission} сыроежек в казну.",
         f"Крыша требует свою долю. Удержано {commission} сыроежек.",
@@ -275,6 +261,20 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_
         f"Отправлено: {amount} сыроежек пользователю {target_name}.\n"
         f"<i>{phrase}</i> (Налог {tax_percent}% ушел админам)."
     )
+
+@firestore_async.transactional
+async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
+    # Используем специальную транзакционную версию
+    await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
+    await update_user_balance_tr(transaction, chat_id, target_id, amount)
+
+    if human_admins and commission > 0:
+        commission_per_admin = commission // len(human_admins)
+        if commission_per_admin > 0:
+            for admin_id in human_admins:
+                # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
+                # Но мы можем просто обновить баланс
+                await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
 
 @router.message(Command("bonus"))
 async def cmd_bonus(message: types.Message):
