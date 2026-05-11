@@ -28,8 +28,15 @@ def get_from_cache(chat_id, user_id):
             return cache_entry["data"].copy()
     return None
 
+MAX_CACHE_SIZE = 1000
+
 def set_in_cache(chat_id, user_id, data):
     key = (chat_id, user_id)
+    if len(_user_cache) >= MAX_CACHE_SIZE and key not in _user_cache:
+        # Простая очистка старейшего элемента
+        oldest_key = next(iter(_user_cache))
+        _user_cache.pop(oldest_key)
+    
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
 
 def mark_dirty(chat_id, user_id):
@@ -109,6 +116,24 @@ async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False)
         mark_dirty(chat_id, user_id)
         return new_balance
 
+async def update_user_balance_tr(transaction, chat_id, user_id, amount):
+    """Атомарное обновление баланса внутри транзакции Firestore."""
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await transaction.get(ref)
+    
+    if snapshot.exists:
+        data = snapshot.to_dict()
+        new_balance = data.get('balance', 0) + amount
+        transaction.update(ref, {'balance': new_balance})
+        
+        # Обновляем локальный кэш, чтобы он был актуален
+        data['balance'] = new_balance
+        set_in_cache(chat_id, user_id, data)
+        # Убираем флаг грязного кэша, так как запись уже произведена транзакцией
+        _dirty_cache.discard((chat_id, user_id))
+        return new_balance
+    return None
+
 async def update_user_field(chat_id, user_id, field, value):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
@@ -121,101 +146,101 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id, full_name)
-    if data.get('is_banned', False):
+        if data.get('is_banned', False):
+            return False, {}
+
+        current_time = time.time()
+        
+        last_bonus = data.get('last_bonus_time', 0)
+
+        if current_time - last_bonus >= 3600:
+            bank_deposit = data.get('bank_deposit', 0)
+            bank_income = 0
+            is_daily = False
+
+            # ФИКСИРОВАННЫЙ БОНУС ДЛЯ ВСЕХ (без налогов на эту сумму)
+            base_bonus = 1000 
+
+            # Ежедневные проверки (проценты по старым системным вкладам, не привязанным к банкам)
+            if current_time - data.get('last_daily_time', 0) >= 79200:
+                is_daily = True
+                if bank_deposit > 0 and not data.get('bank_name'):
+                    if bank_deposit <= 100000000: bank_income = int(bank_deposit * 0.01)
+                    elif bank_deposit <= 1000000000: bank_income = int(bank_deposit * 0.005)
+                    else: bank_income = int(bank_deposit * 0.002)
+
+            from shop import ITEMS
+            from economy_utils import get_global_tax, calculate_progressive_tax
+
+            base_tax = await get_global_tax()
+            neg_lvl = data.get('skills', {}).get('negotiation', 0)
+            pet_data = data.get('pet', {})
+            pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+            tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl, pet_id)
+
+            from diseases import get_active_diseases
+            active_diseases = await get_active_diseases(chat_id, user_id)
+
+            biz_income = 0
+            car_income = 0
+            inventory = data.get('inventory', {})
+            biz_levels = data.get('biz_levels', {})
+
+            for item_id, count in inventory.items():
+                item = ITEMS.get(item_id)
+                if not item: continue
+                if item.get('action') == 'business':
+                    level = biz_levels.get(item_id, 1)
+                    level_multiplier = 1.0 + 0.5 * (level - 1)
+                    inc = int(item.get('income', 0) * level_multiplier) * min(count, 10)
+                    if data.get('is_banker', False):
+                        inc = int(inc * 0.20)
+                    biz_income += inc
+                elif item.get('action') == 'car':
+                    car_income += item.get('income', 0) * count
+
+            if data.get('is_banker', False):
+                # Доходы банкиров от бизнесов и машин урезаны до 10%
+                biz_income = int(biz_income * 0.1)
+                car_income = int(car_income * 0.1)
+
+            if 'candidiasis' in active_diseases:
+                base_bonus = base_bonus // 2
+
+            pet = data.get('pet')
+            if 'hpv' in active_diseases:
+                pet = None
+
+            # Собака теперь дает бонус только к налогам, убираем множитель к базе
+            # if pet and pet.get('id') == 'dog':
+            #     base_bonus = int(base_bonus * 1.5)
+
+            extra_income = biz_income + car_income + bank_income
+            tax_amt = int(extra_income * (tax_percent / 100.0))
+            total_to_hand = base_bonus + extra_income - tax_amt
+
+            if total_to_hand <= 0: return False, {}
+
+            ref = get_user_ref(chat_id, user_id)
+            upd = {
+                'balance': data.get('balance', 0) + total_to_hand,
+                'last_bonus_time': current_time
+            }
+            if is_daily:
+                upd['last_daily_time'] = current_time
+                if bank_deposit > 0 and not data.get('bank_name'):
+                    upd['bank_deposit'] = bank_deposit + bank_income
+
+            data.update(upd)
+            set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+
+            return True, {
+                'base': base_bonus, 'business': biz_income, 'car': car_income,
+                'tax_percent': tax_percent, 'tax_amount': tax_amt, 'total': total_to_hand,
+                'is_banker_bonus': False
+            }
         return False, {}
-
-    current_time = time.time()
-    
-    last_bonus = data.get('last_bonus_time', 0)
-
-    if current_time - last_bonus >= 3600:
-        bank_deposit = data.get('bank_deposit', 0)
-        bank_income = 0
-        is_daily = False
-
-        # ФИКСИРОВАННЫЙ БОНУС ДЛЯ ВСЕХ (без налогов на эту сумму)
-        base_bonus = 1000 
-
-        # Ежедневные проверки (проценты по старым системным вкладам, не привязанным к банкам)
-        if current_time - data.get('last_daily_time', 0) >= 79200:
-            is_daily = True
-            if bank_deposit > 0 and not data.get('bank_name'):
-                if bank_deposit <= 100000000: bank_income = int(bank_deposit * 0.01)
-                elif bank_deposit <= 1000000000: bank_income = int(bank_deposit * 0.005)
-                else: bank_income = int(bank_deposit * 0.002)
-
-        from shop import ITEMS
-        from economy_utils import get_global_tax, calculate_progressive_tax
-
-        base_tax = await get_global_tax()
-        neg_lvl = data.get('skills', {}).get('negotiation', 0)
-        pet_data = data.get('pet', {})
-        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-        tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl, pet_id)
-
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(chat_id, user_id)
-
-        biz_income = 0
-        car_income = 0
-        inventory = data.get('inventory', {})
-        biz_levels = data.get('biz_levels', {})
-
-        for item_id, count in inventory.items():
-            item = ITEMS.get(item_id)
-            if not item: continue
-            if item.get('action') == 'business':
-                level = biz_levels.get(item_id, 1)
-                level_multiplier = 1.0 + 0.5 * (level - 1)
-                inc = int(item.get('income', 0) * level_multiplier) * min(count, 10)
-                if data.get('is_banker', False):
-                    inc = int(inc * 0.20)
-                biz_income += inc
-            elif item.get('action') == 'car':
-                car_income += item.get('income', 0) * count
-
-        if data.get('is_banker', False):
-            # Доходы банкиров от бизнесов и машин урезаны до 10%
-            biz_income = int(biz_income * 0.1)
-            car_income = int(car_income * 0.1)
-
-        if 'candidiasis' in active_diseases:
-            base_bonus = base_bonus // 2
-
-        pet = data.get('pet')
-        if 'hpv' in active_diseases:
-            pet = None
-
-        # Собака теперь дает бонус только к налогам, убираем множитель к базе
-        # if pet and pet.get('id') == 'dog':
-        #     base_bonus = int(base_bonus * 1.5)
-
-        extra_income = biz_income + car_income + bank_income
-        tax_amt = int(extra_income * (tax_percent / 100.0))
-        total_to_hand = base_bonus + extra_income - tax_amt
-
-        if total_to_hand <= 0: return False, {}
-
-        ref = get_user_ref(chat_id, user_id)
-        upd = {
-            'balance': data.get('balance', 0) + total_to_hand,
-            'last_bonus_time': current_time
-        }
-        if is_daily:
-            upd['last_daily_time'] = current_time
-            if bank_deposit > 0 and not data.get('bank_name'):
-                upd['bank_deposit'] = bank_deposit + bank_income
-
-        data.update(upd)
-        set_in_cache(chat_id, user_id, data)
-        mark_dirty(chat_id, user_id)
-
-        return True, {
-            'base': base_bonus, 'business': biz_income, 'car': car_income,
-            'tax_percent': tax_percent, 'tax_amount': tax_amt, 'total': total_to_hand,
-            'is_banker_bonus': False
-        }
-    return False, {}
 
 async def add_item_to_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)

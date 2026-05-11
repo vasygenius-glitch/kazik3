@@ -114,7 +114,7 @@ async def cmd_slots(message: types.Message):
         status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр."
 
     if profit > 0:
-        if data.get('is_banker'): profit = int(profit * 1.5)
+        if data.get('is_banker'): profit = int(profit * 0.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(chat_id, user_id, bet + profit)
 

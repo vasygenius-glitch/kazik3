@@ -67,7 +67,7 @@ async def cmd_bj(message: types.Message, state: FSMContext):
 
     game_id = f"{chat_id}_{user_id}_{message.message_id}"
     player_cards = [get_random_card(), get_random_card()]
-    dealer_cards = [get_random_card()]
+    dealer_cards = [get_random_card(), get_random_card()]
     
     if CREATOR_ID and int(user_id) == int(CREATOR_ID):
         player_cards = [{'rank': 'A', 'suit': '♠'}, {'rank': 'K', 'suit': '♠'}]

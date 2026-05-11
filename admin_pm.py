@@ -6,11 +6,17 @@ from user_manager import update_user_field, get_user_data, update_user_balance
 from escape import escape_html
 from db import get_db
 from whitelist import get_whitelist
+from utils import fire_and_forget
 
 router = Router()
 
 # Фильтр: только ЛС и только владелец (Creator)
-router.message.filter(F.chat.type == "private", F.from_user.id == CREATOR_ID)
+# Проверяем что CREATOR_ID задан (не 0), иначе фильтр пропустит всех
+if CREATOR_ID and CREATOR_ID != 0:
+    router.message.filter(F.chat.type == "private", F.from_user.id == CREATOR_ID)
+else:
+    # Если CREATOR_ID не задан, блокируем весь роутер невозможным условием
+    router.message.filter(F.chat.type == "private", F.from_user.id == -1)
 
 @router.message(F.text.lower().in_(["creator help", "creator помощь"]))
 async def creator_help(message: types.Message):
@@ -74,7 +80,6 @@ async def creator_user_info(message: types.Message):
 
 @router.message(F.text.lower().startswith("creator broadcast"))
 async def creator_broadcast(message: types.Message):
-    # Убираем первые два слова "creator broadcast"
     parts = message.text.split(maxsplit=2)
     if len(parts) < 3:
         return await message.answer("❌ Введите текст для рассылки.")
@@ -82,18 +87,21 @@ async def creator_broadcast(message: types.Message):
     announcement = parts[2]
     whitelist = await get_whitelist()
     
-    msg = await message.answer(f"📡 <b>Начинаю рассылку в {len(whitelist)} чатов...</b>")
+    await message.answer(f"📡 <b>Рассылка запущена в фоновом режиме!</b>\nОжидаемое количество чатов: {len(whitelist)}\n\n<i>Я уведомлю вас о завершении.</i>")
     
-    success, fail = 0, 0
-    for chat_id in whitelist:
-        try:
-            await message.bot.send_message(chat_id, announcement)
-            success += 1
-            await asyncio.sleep(0.05)
-        except Exception:
-            fail += 1
-    
-    await msg.edit_text(f"✅ <b>Рассылка завершена!</b>\n\nУспешно: {success}\nОшибок: {fail}")
+    async def run_broadcast():
+        success, fail = 0, 0
+        for chat_id in whitelist:
+            try:
+                await message.bot.send_message(chat_id, announcement)
+                success += 1
+                await asyncio.sleep(0.1) # Чуть больше задержка для безопасности
+            except Exception:
+                fail += 1
+        
+        await message.bot.send_message(CREATOR_ID, f"✅ <b>Фоновая рассылка завершена!</b>\n\nУспешно: {success}\nОшибок: {fail}")
+
+    fire_and_forget(run_broadcast())
 
 @router.message(F.text.lower().startswith("creator maintenance"))
 async def creator_maintenance(message: types.Message):

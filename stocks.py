@@ -231,7 +231,6 @@ async def cb_stk_main(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("stk_view_"))
 async def cb_stk_view(callback: types.CallbackQuery):
     cid = callback.data.replace("stk_view_", "")
-    if cid not in COMPANIES: return
     
     data, ALL_COMPANIES = await get_stocks_db()
     if cid not in ALL_COMPANIES: return

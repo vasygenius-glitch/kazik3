@@ -161,9 +161,9 @@ async def inv_upgrade(callback: types.CallbackQuery):
         callback.data = f"inv_item_{item_id}"
         await inv_item_info(callback)
 
-@router.callback_query(F.data.startswith("inv_sell_confirm_"))
+@router.callback_query(F.data.startswith("inv_sellcf_"))
 async def confirm_inv_sell(callback: types.CallbackQuery):
-    item_id = callback.data.replace("inv_sell_confirm_", "")
+    item_id = callback.data.replace("inv_sellcf_", "")
     info = ITEMS.get(item_id)
     if not info: return
 
@@ -204,7 +204,7 @@ async def ask_inv_sell(callback: types.CallbackQuery):
     if not info: return
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Подтвердить продажу", callback_data=f"inv_sell_confirm_{item_id}")
+    builder.button(text="✅ Подтвердить продажу", callback_data=f"inv_sellcf_{item_id}")
     builder.button(text="❌ Отмена", callback_data=f"inv_item_{item_id}")
     builder.adjust(1)
     

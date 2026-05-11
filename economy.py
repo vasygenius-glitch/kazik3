@@ -3,7 +3,7 @@ from aiogram.filters import Command
 import secrets
 import time
 from economy_utils import get_global_tax
-from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users
+from user_manager import get_user_data, update_user_balance, update_user_balance_tr, check_and_give_bonus, update_user_field, get_top_users
 from seasons import apply_season_logic
 from escape import escape_html
 
@@ -230,35 +230,34 @@ async def cmd_pay(message: types.Message):
 
     db = get_db()
 
+    # Предварительно убеждаемся, что получатель существует в базе
+    await get_user_data(chat_id, target_user.id, target_name)
+
     @transactional
     async def process_transfer(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
-        # We still use update_user_balance which utilizes fire_and_forget and cache
-        # For full safety it should use the transaction, but updating cache is important
-        # Since Firebase transactions require reading inside the transaction to avoid race conditions:
-        await update_user_balance(chat_id, sender_id, -total_cost)
-        await get_user_data(chat_id, target_user.id, target_name)
-        await update_user_balance(chat_id, target_user.id, amount)
+        # Используем специальную транзакционную версию
+        await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
+        await update_user_balance_tr(transaction, chat_id, target_id, amount)
 
         if human_admins and commission > 0:
             commission_per_admin = commission // len(human_admins)
             if commission_per_admin > 0:
                 for admin_id in human_admins:
+                    # Убеждаемся, что админ есть в базе (хотя бы в кэше)
                     await get_user_data(chat_id, admin_id)
-                    await update_user_balance(chat_id, admin_id, commission_per_admin)
+                    await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
 
     try:
         if hasattr(db, 'transaction'):
             await process_transfer(db.transaction(), chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
         else:
-            # Fallback
+            # Fallback для локального мока
             await update_user_balance(chat_id, sender_id, -total_cost)
-            await get_user_data(chat_id, target_user.id, target_name)
             await update_user_balance(chat_id, target_user.id, amount)
             if human_admins and commission > 0:
                 commission_per_admin = commission // len(human_admins)
                 if commission_per_admin > 0:
                     for admin_id in human_admins:
-                        await get_user_data(chat_id, admin_id)
                         await update_user_balance(chat_id, admin_id, commission_per_admin)
     except Exception as e:
         await message.answer(f"❌ Ошибка перевода: {e}")
@@ -343,7 +342,7 @@ async def cmd_work(message: types.Message):
 
     # --- БОНУС ПИТОМЦА ---
     pet = data.get('pet')
-    pet_id = pet.get('id') if pet else None
+    pet_id = pet.get('id') if isinstance(pet, dict) else None
     pet_msg = ""
     
     if 'hpv' in active_diseases:
@@ -426,7 +425,6 @@ async def cmd_work(message: types.Message):
             jobs = ["поработал с документами", "провел встречу с инвесторами", "свел дебет с кредитом", "продал акции банка"]
         job = rand.choice(jobs)
 
-    season_msg = await get_glitch_text(season_msg)
     afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{final_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}{season_msg}"
     afk_text = await get_glitch_text(afk_text)
     
@@ -539,7 +537,7 @@ async def cmd_crime(message: types.Message):
     
     # --- БОНУС ПИТОМЦА ---
     pet = data.get('pet')
-    pet_id = pet.get('id') if pet else None
+    pet_id = pet.get('id') if isinstance(pet, dict) else None
 
     if 'hpv' in active_diseases:
         pet_id = None
