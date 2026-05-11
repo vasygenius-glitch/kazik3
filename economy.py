@@ -240,11 +240,14 @@ async def cmd_pay(message: types.Message):
 
     try:
         if hasattr(db, 'transaction'):
-            # В реальном firestore_async мы должны использовать .run() для корректной работы транзакции
-            # Но наш MockDB не имеет .run(). Поэтому делаем универсальный вызов.
             transaction = db.transaction()
             if hasattr(transaction, 'run'):
-                await transaction.run(process_transfer, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+                # В некоторых версиях firestore_async .run() возвращает генератор для итерации попыток
+                res = transaction.run(process_transfer, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+                if hasattr(res, '__aiter__'):
+                    async for _ in res: pass
+                else:
+                    await res
             else:
                 await process_transfer(transaction, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
         else:

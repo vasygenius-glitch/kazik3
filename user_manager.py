@@ -119,7 +119,16 @@ async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False)
 async def update_user_balance_tr(transaction, chat_id, user_id, amount):
     """Атомарное обновление баланса внутри транзакции Firestore."""
     ref = get_user_ref(chat_id, user_id)
-    snapshot = await transaction.get(ref)
+    
+    # В некоторых версиях firestore_async transaction.get() может возвращать генератор
+    res = transaction.get(ref)
+    if hasattr(res, '__aiter__'):
+        snapshot = None
+        async for s in res:
+            snapshot = s
+            break
+    else:
+        snapshot = await res
     
     if snapshot.exists:
         data = snapshot.to_dict()
