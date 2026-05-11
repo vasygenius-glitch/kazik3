@@ -7,7 +7,7 @@ router = Router()
 
 SKILLS = {
     "luck": {"name": "🍀 Удача", "desc": "Увеличивает шансы в казино", "base_price": 50000},
-    "stealth": {"name": "🥷 Скрытность", "desc": "Меньше шанс нарваться на полицию в /crime", "base_price": 100000},
+    "stealth": {"name": "🥷 Скрытность", "desc": "Увеличивает шанс успеха в /crime и команде украсть", "base_price": 100000},
     "negotiation": {"name": "💼 Бизнесмен", "desc": "Снижает налоги при сборе бонуса", "base_price": 200000}
 }
 
