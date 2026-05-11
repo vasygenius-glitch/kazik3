@@ -143,14 +143,22 @@ async def cmd_set_season(message: types.Message):
     
     from whitelist import get_whitelist
     whitelist = await get_whitelist()
-    count = 0
-    for chat_id in whitelist:
-        try:
-            await message.bot.send_message(chat_id=chat_id, text=announce_text)
-            count += 1
-            await asyncio.sleep(0.05)
-        except Exception: continue
-    await message.answer(f"✅ <b>Сезон '{season_id}' активирован!</b>")
+    async def announce_season():
+        count = 0
+        for chat_id in whitelist:
+            try:
+                await message.bot.send_message(chat_id=chat_id, text=announce_text)
+                count += 1
+                await asyncio.sleep(0.1)
+            except Exception: continue
+        
+        from config import CREATOR_ID
+        await message.bot.send_message(CREATOR_ID, f"📢 <b>Рассылка сезона завершена!</b>\nОповещено чатов: {count}")
+
+    from utils import fire_and_forget
+    fire_and_forget(announce_season())
+    
+    await message.answer(f"✅ <b>Сезон '{season_id}' активирован!</b> Рассылка запущена в фоновом режиме.")
 
 # --- СИСТЕМНАЯ АДАПТАЦИЯ ---
 async def get_season_string(key: str, default: str) -> str:

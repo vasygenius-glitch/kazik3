@@ -863,34 +863,39 @@ async def cmd_cr_delcoin(message: types.Message):
 
         last_price = coins[ticker]["prices"][-1]
 
-        # 1. Возвращаем деньги пользователям
+        # 1. Возвращаем деньги пользователям ВО ВСЕХ ЧАТАХ
         try:
-            users_ref = db.collection('chats').document(str(message.chat.id)).collection('users')
-            users_docs = await users_ref.get()
-
+            chats_ref = db.collection('chats')
+            chats_docs = await chats_ref.get()
+            
             refunded_count = 0
             total_refund = 0
 
-            for user_doc in users_docs:
-                u_data = user_doc.to_dict()
-                port = u_data.get('crypto_portfolio', {})
+            for chat_doc in chats_docs:
+                chat_id = chat_doc.id
+                users_ref = chats_ref.document(chat_id).collection('users')
+                users_docs = await users_ref.get()
 
-                if ticker in port:
-                    qty = port[ticker]
-                    if qty > 0:
-                        refund_amount = qty * last_price
-                        # Возвращаем баланс и удаляем монету из портфеля
-                        del port[ticker]
+                for user_doc in users_docs:
+                    u_data = user_doc.to_dict()
+                    port = u_data.get('crypto_portfolio', {})
 
-                        await users_ref.document(user_doc.id).update({
-                            'balance': firestore_async.Increment(refund_amount),
-                            'crypto_portfolio': port
-                        })
+                    if ticker in port:
+                        qty = port[ticker]
+                        if qty > 0:
+                            refund_amount = qty * last_price
+                            # Возвращаем баланс и удаляем монету из портфеля
+                            del port[ticker]
 
-                        refunded_count += 1
-                        total_refund += refund_amount
+                            await users_ref.document(user_doc.id).update({
+                                'balance': firestore_async.Increment(refund_amount),
+                                'crypto_portfolio': port
+                            })
+
+                            refunded_count += 1
+                            total_refund += refund_amount
         except Exception as e:
-            logging.error(f"Ошибка при возврате средств за монету: {e}")
+            logging.error(f"Ошибка при глобальном возврате средств за монету: {e}")
 
         # 2. Удаляем саму монету с биржи
         try:

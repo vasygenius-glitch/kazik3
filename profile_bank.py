@@ -294,15 +294,7 @@ async def cmd_bank(message: types.Message):
             if data.get('balance', 0) < amount:
                 return await message.answer("Недостаточно средств на балансе.")
 
-            from db import get_db
-            try:
-                from firebase_admin import firestore_async
-                transactional = firestore_async.transactional
-            except ImportError:
-                def transactional(func): return func
-
             db = get_db()
-            @transactional
             async def process_deposit(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data):
                 # Списываем у игрока, добавляем в капитал банка
                 await update_user_balance(chat_id, user_id, -amount)
@@ -317,7 +309,11 @@ async def cmd_bank(message: types.Message):
 
             try:
                 if hasattr(db, 'transaction'):
-                    await process_deposit(db.transaction(), chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    transaction = db.transaction()
+                    if hasattr(transaction, 'run'):
+                        await transaction.run(process_deposit, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    else:
+                        await process_deposit(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
                 else:
                     await process_deposit(None, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
                 await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
@@ -356,15 +352,7 @@ async def cmd_bank(message: types.Message):
             if bank_data.get('capital', 0) < amount:
                 return await message.answer(" У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас! Банкир выдал слишком много кредитов.")
 
-            from db import get_db
-            try:
-                from firebase_admin import firestore_async
-                transactional = firestore_async.transactional
-            except ImportError:
-                def transactional(func): return func
-
             db = get_db()
-            @transactional
             async def process_withdraw(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data):
                 # Снимаем со вклада, списываем из капитала банка
                 await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
@@ -377,7 +365,11 @@ async def cmd_bank(message: types.Message):
 
             try:
                 if hasattr(db, 'transaction'):
-                    await process_withdraw(db.transaction(), chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    transaction = db.transaction()
+                    if hasattr(transaction, 'run'):
+                        await transaction.run(process_withdraw, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    else:
+                        await process_withdraw(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
                 else:
                     await process_withdraw(None, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
                 await message.answer(f"💸 Снято {amount} сыроежек со счета.")

@@ -220,20 +220,9 @@ async def cmd_pay(message: types.Message):
         human_admins =[]
 
     from db import get_db
-    try:
-        from firebase_admin import firestore_async
-        transactional = firestore_async.transactional
-    except ImportError:
-        # Mock for local testing without firebase
-        def transactional(func):
-            return func
-
-    db = get_db()
-
     # Предварительно убеждаемся, что получатель существует в базе
     await get_user_data(chat_id, target_user.id, target_name)
 
-    @transactional
     async def process_transfer(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
         # Используем специальную транзакционную версию
         await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
@@ -244,14 +233,21 @@ async def cmd_pay(message: types.Message):
             if commission_per_admin > 0:
                 for admin_id in human_admins:
                     # Убеждаемся, что админ есть в базе (хотя бы в кэше)
-                    await get_user_data(chat_id, admin_id)
+                    # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
+                    # Но так как это админы и комиссия, мы просто обновим их баланс
                     await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
 
     try:
         if hasattr(db, 'transaction'):
-            await process_transfer(db.transaction(), chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+            # В реальном firestore_async мы должны использовать .run() для корректной работы транзакции
+            # Но наш MockDB не имеет .run(). Поэтому делаем универсальный вызов.
+            transaction = db.transaction()
+            if hasattr(transaction, 'run'):
+                await transaction.run(process_transfer, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
+            else:
+                await process_transfer(transaction, chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
         else:
-            # Fallback для локального мока
+            # Fallback для локального мока если db вообще не имеет transaction
             await update_user_balance(chat_id, sender_id, -total_cost)
             await update_user_balance(chat_id, target_user.id, amount)
             if human_admins and commission > 0:
