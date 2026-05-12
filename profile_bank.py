@@ -528,6 +528,38 @@ async def cmd_bank_rate(message: types.Message):
     await message.answer(f"📈 Процент по вкладам в вашем банке установлен на <b>{rate}%</b> в день.")
 
 
+@firestore_async.transactional
+async def process_offshore_tx(transaction, chat_id, user_id, price):
+    from user_manager import get_user_ref, safe_get_snapshot, set_in_cache, mark_dirty
+    user_ref = get_user_ref(chat_id, user_id)
+
+    if transaction:
+        user_snapshot = await safe_get_snapshot(transaction, user_ref)
+        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+    else:
+        user_snapshot = await safe_get_snapshot(None, user_ref)
+        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+
+    balance = user_data.get('balance', 0)
+    if balance < price:
+        raise ValueError("Недостаточно средств")
+
+    new_balance = balance - price
+    updates = {
+        'balance': new_balance,
+        'is_offshore': True
+    }
+
+    if transaction:
+        transaction.update(user_ref, updates)
+    else:
+        await user_ref.update(updates)
+
+    user_data.update(updates)
+    await set_in_cache(chat_id, user_id, user_data)
+    mark_dirty(chat_id, user_id)
+
+
 @router.message(Command("bank_offshore"))
 async def cmd_bank_offshore(message: types.Message):
     chat_id = message.chat.id
@@ -541,12 +573,22 @@ async def cmd_bank_offshore(message: types.Message):
         await message.answer("🏝 Вы отключили оффшорный статус. Ваш банковский счет снова виден всем.")
     else:
         price = 500000
-        if data.get('balance', 0) < price:
-            return await message.answer(f"❌ Оформление оффшорного счета стоит {price} сыроежек. У вас недостаточно средств.")
+        db = get_db()
+        try:
+            if hasattr(db, 'transaction'):
+                res = process_offshore_tx(db.transaction(), chat_id, user_id, price)
+                if hasattr(res, "__aiter__"):
+                    async for _ in res: pass
+                else:
+                    await res
+            else:
+                await process_offshore_tx(None, chat_id, user_id, price)
 
-        await update_user_balance(chat_id, user_id, -price)
-        await update_user_field(chat_id, user_id, 'is_offshore', True)
-        await message.answer(f"🏝 <b>Оффшорный счет активирован!</b>\nСписано {price} сыр. Теперь ваш вклад скрыт от других игроков в `/profile`.\n<i>(Банк будет снимать 0.5% от вашего депозита при начислении процентов за обслуживание)</i>")
+            await message.answer(f"🏝 <b>Оффшорный счет активирован!</b>\nСписано {price} сыр. Теперь ваш вклад скрыт от других игроков в `/profile`.\n<i>(Банк будет снимать 0.5% от вашего депозита при начислении процентов за обслуживание)</i>")
+        except ValueError:
+            await message.answer(f"❌ Оформление оффшорного счета стоит {price} сыроежек. У вас недостаточно средств.")
+        except Exception as e:
+            await message.answer("❌ Произошла ошибка при покупке оффшорного счета. Попробуйте позже.")
 
 def get_bank_stats_kb(banker_id: int):
     builder = InlineKeyboardBuilder()
