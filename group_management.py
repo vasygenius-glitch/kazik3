@@ -17,7 +17,6 @@ _group_settings_cache_time = {}
 GROUP_SETTINGS_CACHE_TTL = 60.0
 
 async def get_group_settings(chat_id: int):
-    global _group_settings_cache, _group_settings_cache_time
     chat_key = str(chat_id)
     if chat_key in _group_settings_cache and time.time() - _group_settings_cache_time.get(chat_key, 0) < GROUP_SETTINGS_CACHE_TTL:
         return _group_settings_cache[chat_key]
@@ -35,7 +34,6 @@ async def get_group_settings(chat_id: int):
     return data
 
 async def update_group_settings(chat_id: int, field: str, value):
-    global _group_settings_cache, _group_settings_cache_time
     chat_key = str(chat_id)
 
     if chat_key not in _group_settings_cache:

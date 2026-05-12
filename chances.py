@@ -23,7 +23,6 @@ async def get_game_chance(game_name: str) -> int:
     return _chances_cache.get(game_name, -1) # -1 означает честный рандом
 
 async def set_game_chance(game_name: str, percentage: int):
-    global _chances_cache
     _chances_cache[game_name] = percentage
 
     db = get_db()

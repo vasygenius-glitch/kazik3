@@ -45,7 +45,6 @@ ITEMS = {
 _shop_kb_cache = {"biz": "🏢 Бизнесы", "cars": "🚗 Машины", "ts": 0}
 
 async def get_main_shop_kb():
-    global _shop_kb_cache
     if time.time() - _shop_kb_cache["ts"] > 60:
         _shop_kb_cache["biz"] = await get_season_string("shop_biz", "🏢 Бизнесы")
         _shop_kb_cache["cars"] = await get_season_string("shop_cars", "🚗 Машины")

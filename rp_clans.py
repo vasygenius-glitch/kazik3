@@ -168,6 +168,8 @@ karma_triggers_global = ['+', 'спасибо', 'спс', 'rep', 'реп', 'ув
 @router.message(F.reply_to_message & F.text & (F.text.lower().in_(RP_COMMANDS.keys()) | F.text.lower().in_(karma_triggers_global)))
 async def rp_and_karma(message: types.Message):
     target_name = escape_html(message.reply_to_message.from_user.full_name)
+    user_name = escape_html(message.from_user.full_name)
+    text = message.text.lower()
 
     # Объединяем базовые и сезонные РП команды
     seasonal_rp = await get_seasonal_rp_commands()
