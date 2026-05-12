@@ -247,6 +247,9 @@ async def cmd_duel(message: types.Message):
     if user_data.get('balance', 0) < bet:
         return await message.answer("В ваших карманах пусто для такой ставки.")
 
+    # Списываем ставку у инициатора заранее, чтобы избежать TOCTOU
+    await update_user_balance(chat_id, user_id, -bet)
+
     import uuid
     duel_id = uuid.uuid4().hex[:10]
 
@@ -256,6 +259,7 @@ async def cmd_duel(message: types.Message):
     active_duels[duel_id] = {
         'state': 'pending',
         'bet': bet,
+        'chat_id': chat_id,
         'proposer_id': user_id,
         'target_id': target_id,
         'proposer_name': proposer_name,
@@ -266,6 +270,9 @@ async def cmd_duel(message: types.Message):
     async def expire_duel(d_id):
         await asyncio.sleep(300)
         if d_id in active_duels and active_duels[d_id]['state'] == 'pending':
+            duel_info = active_duels[d_id]
+            # Возвращаем ставку инициатору
+            await update_user_balance(duel_info['chat_id'], duel_info['proposer_id'], duel_info['bet'])
             del active_duels[d_id]
 
     asyncio.create_task(expire_duel(duel_id))
@@ -303,20 +310,24 @@ async def callback_duel_invitation(callback: types.CallbackQuery):
         return await callback.answer("Этот вызов брошен не вам, постойте в сторонке.", show_alert=True)
 
     if action == "no":
+        # Возвращаем ставку инициатору при отказе противника
+        await update_user_balance(duel_info['chat_id'], duel_info['proposer_id'], duel_info['bet'])
         del active_duels[duel_id]
         return await callback.message.edit_text(f"🏃 <b>{duel_info['target_name']}</b> бросил шляпу в пыль и сбежал от дуэли под свист толпы.")
 
     bet = duel_info['bet']
     proposer_id = duel_info['proposer_id']
 
-    user_data = await get_user_data(chat_id, proposer_id)
+    # Проверяем только баланс противника (Инициатор уже оплатил ставку)
     target_data = await get_user_data(chat_id, target_id)
 
-    if user_data.get('balance', 0) < bet or target_data.get('balance', 0) < bet:
+    if target_data.get('balance', 0) < bet:
+        # У противника нет денег - возвращаем ставку инициатору и отменяем
+        await update_user_balance(chat_id, proposer_id, bet)
         del active_duels[duel_id]
-        return await callback.message.edit_text("❌ Один из стрелков оказался на мели. Дуэль отменяется.")
+        return await callback.message.edit_text("❌ У вызванного стрелка оказалось пусто в карманах. Дуэль отменяется.")
 
-    await update_user_balance(chat_id, proposer_id, -bet)
+    # Списываем ставку только с противника (инициатор уже оплатил)
     await update_user_balance(chat_id, target_id, -bet)
 
     duel_info['state'] = 'active'
