@@ -38,7 +38,7 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     - Wealth surcharge: +5% for every 1,000,000 in balance (more aggressive)
     - Pet bonus: Dog reduces tax by 5% (fixed reduction)
     - Negotiation skill: Reduces rate by skill_lvl, but cannot reduce more than 50% of the calculated tax.
-    - Total tax is capped at 95% and increased by seasonal multiplier.
+    - Total tax is capped at 20% and increased by seasonal multiplier.
     """
     # Сезонный множитель налога (используем только кэш, т.к. функция sync)
     from utils_pkg.cache_manager import global_cache
@@ -48,7 +48,7 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     if cfg and isinstance(cfg, dict) and cfg.get("active") and cfg.get("id") == "backrooms":
         tax_multiplier = 1.5
     
-    # Налог на богатство: +5% за каждый миллион (было 2%)
+    # Налог на богатство: +5% за каждый миллион
     wealth_surcharge = (balance // 1000000) * 5
     
     calculated_tax = base_tax + wealth_surcharge
@@ -65,4 +65,5 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     
     total_tax = int(total_tax * tax_multiplier)
     
-    return max(1, min(95, total_tax))
+    # Налог ограничен 20%
+    return max(1, min(20, total_tax))

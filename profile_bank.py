@@ -177,13 +177,30 @@ async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
     fire_and_forget(bank_ref.set(data, merge=True))
 
 @firestore_async.transactional
-async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data):
-    from user_manager import update_user_balance_tr, get_user_ref
+async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, amount):
+    from user_manager import update_user_balance_tr, get_user_ref, safe_get_snapshot
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(target_banker_id))
+    user_ref = get_user_ref(chat_id, user_id)
+
+    if transaction:
+        # Read the latest bank capital from the database
+        doc_snapshot = await bank_ref.get(transaction=transaction)
+        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+        user_snapshot = await safe_get_snapshot(transaction, user_ref)
+        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+    else:
+        doc_snapshot = await bank_ref.get()
+        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+        user_snapshot = await safe_get_snapshot(None, user_ref)
+        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+
+    current_deposit = user_data.get('bank_deposit', 0)
+
     # Списываем у игрока
     await update_user_balance_tr(transaction, chat_id, user_id, -amount)
     
     # Обновляем поля игрока
-    user_ref = get_user_ref(chat_id, user_id)
     updates = {
         'bank_deposit': current_deposit + amount,
         'bank_name': target_banker_id
@@ -197,16 +214,47 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
         await user_ref.update(updates)
 
     # Обновляем капитал банка
-    db = get_db()
-    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(target_banker_id))
-    if transaction:
-        transaction.update(bank_ref, {'capital': bank_data.get('capital', 0) + amount})
-    else:
-        await bank_ref.update({'capital': bank_data.get('capital', 0) + amount})
+    from firebase_admin import firestore_async
+    try:
+        if transaction:
+            transaction.update(bank_ref, {'capital': firestore_async.Increment(amount)})
+        else:
+            await bank_ref.update({'capital': firestore_async.Increment(amount)})
+    except Exception:
+        # Fallback if Increment fails
+        new_capital = bank_data.get('capital', 0) + amount
+        if transaction:
+            transaction.update(bank_ref, {'capital': new_capital})
+        else:
+            await bank_ref.update({'capital': new_capital})
 
 @firestore_async.transactional
-async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data):
-    from user_manager import update_user_balance_tr, get_user_ref
+async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount):
+    from user_manager import update_user_balance_tr, get_user_ref, safe_get_snapshot
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(current_banker_id))
+    user_ref = get_user_ref(chat_id, user_id)
+
+    if transaction:
+        # Read the latest bank capital from the database
+        doc_snapshot = await bank_ref.get(transaction=transaction)
+        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+        user_snapshot = await safe_get_snapshot(transaction, user_ref)
+        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+    else:
+        doc_snapshot = await bank_ref.get()
+        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+        user_snapshot = await safe_get_snapshot(None, user_ref)
+        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+
+    current_deposit = user_data.get('bank_deposit', 0)
+    if current_deposit < amount:
+        raise ValueError("Недостаточно средств на вкладе.")
+
+    # Verify if bank has enough capital
+    if bank_data.get('capital', 0) < amount:
+        raise ValueError("Недостаточно капитала в банке.")
+
     # Добавляем игроку
     await update_user_balance_tr(transaction, chat_id, user_id, amount)
     
@@ -223,12 +271,19 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
         await user_ref.update(updates)
     
     # Обновляем капитал банка
-    db = get_db()
-    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(current_banker_id))
-    if transaction:
-        transaction.update(bank_ref, {'capital': bank_data.get('capital', 0) - amount})
-    else:
-        await bank_ref.update({'capital': bank_data.get('capital', 0) - amount})
+    from firebase_admin import firestore_async
+    try:
+        if transaction:
+            transaction.update(bank_ref, {'capital': firestore_async.Increment(-amount)})
+        else:
+            await bank_ref.update({'capital': firestore_async.Increment(-amount)})
+    except Exception:
+        # Fallback if Increment fails
+        new_capital = bank_data.get('capital', 0) - amount
+        if transaction:
+            transaction.update(bank_ref, {'capital': new_capital})
+        else:
+            await bank_ref.update({'capital': new_capital})
 
 @router.message(Command("bank"))
 async def cmd_bank(message: types.Message):
@@ -352,13 +407,13 @@ async def cmd_bank(message: types.Message):
             db = get_db()
             try:
                 if hasattr(db, 'transaction'):
-                    res = process_deposit_tx(db.transaction(), chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    res = process_deposit_tx(db.transaction(), chat_id, user_id, target_banker_id, amount)
                     if hasattr(res, '__aiter__'):
                         async for _ in res: pass
                     else:
                         await res
                 else:
-                    await process_deposit_tx(None, chat_id, user_id, target_banker_id, amount, current_deposit, bank_data)
+                    await process_deposit_tx(None, chat_id, user_id, target_banker_id, amount)
                 await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
             except Exception as e:
                 import traceback
@@ -398,14 +453,16 @@ async def cmd_bank(message: types.Message):
             db = get_db()
             try:
                 if hasattr(db, 'transaction'):
-                    res = process_withdraw_tx(db.transaction(), chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    res = process_withdraw_tx(db.transaction(), chat_id, user_id, current_banker_id, amount)
                     if hasattr(res, '__aiter__'):
                         async for _ in res: pass
                     else:
                         await res
                 else:
-                    await process_withdraw_tx(None, chat_id, user_id, current_banker_id, amount, current_deposit, bank_data)
+                    await process_withdraw_tx(None, chat_id, user_id, current_banker_id, amount)
                 await message.answer(f"💸 Снято {amount} сыроежек со счета.")
+            except ValueError as ve:
+                await message.answer(f"❌ {ve}")
             except Exception as e:
                 import traceback
                 print(f"Error in /bank withdraw: {e}")

@@ -279,7 +279,6 @@ async def process_sell_confirm(callback: types.CallbackQuery):
         success = await remove_item_from_inventory(chat_id, user_id, item_id)
         if not success:
             return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
-
     sell_price = int(item['price'] * 0.75)
     await update_user_balance(chat_id, user_id, sell_price)
 
