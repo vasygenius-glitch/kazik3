@@ -67,3 +67,18 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     
     # Налог ограничен 20%
     return max(1, min(20, total_tax))
+
+def calculate_transfer_tax(balance: int, base_tax: int, negotiation_skill: int = 0, pet_id: str = None, active_diseases: list = None) -> int:
+    """
+    Calculates the final transfer tax for /pay command.
+    Applies progressive tax first, then applies 'herpes' STD penalty if present.
+    """
+    if active_diseases is None:
+        active_diseases = []
+
+    tax_percent = calculate_progressive_tax(balance, base_tax, negotiation_skill, pet_id)
+
+    if 'herpes' in active_diseases:
+        tax_percent = max(tax_percent, 30)
+
+    return tax_percent
