@@ -86,7 +86,7 @@ async def main():
         await bot.delete_webhook(drop_pending_updates=True)
         print("✅ Начинаю слушать сообщения (polling)...")
         from log_system import flush_logs
-        from chat_stats import weekly_reset_task, flush_stats_task
+        from chat_stats import weekly_reset_task, flush_stats_task, cleanup_expired_games_task
         from user_manager import flush_user_data_task
         from stocks import update_stocks_task
         asyncio.create_task(flush_logs(bot))
@@ -94,6 +94,7 @@ async def main():
         asyncio.create_task(flush_stats_task())
         asyncio.create_task(flush_user_data_task())
         asyncio.create_task(update_stocks_task())
+        asyncio.create_task(cleanup_expired_games_task())
     except Exception as e:
         print(f"❌ Ошибка проверки токена: {e}")
 

@@ -27,6 +27,16 @@ async def increment_message_count(chat_id: int, user_id: int, full_name: str):
         _stats_batch[chat_id][user_id]["count"] += 1
         _stats_batch[chat_id][user_id]["full_name"] = full_name
 
+async def cleanup_expired_games_task():
+    """Фоновая задача, которая очищает просроченные мини-игры каждые 60 секунд."""
+    from economy import _cleanup_expired_games
+    while True:
+        try:
+            _cleanup_expired_games()
+        except Exception as e:
+            print(f"Error in cleanup_expired_games_task: {e}")
+        await asyncio.sleep(60)
+
 async def flush_stats_task():
     """Background task to periodically flush message stats to the DB."""
     while True:
