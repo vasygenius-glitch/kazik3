@@ -1,5 +1,5 @@
 import asyncio
-import random
+import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -13,6 +13,7 @@ from config import CREATOR_ID
 from utils import schedule_delete
 
 router = Router()
+secure_random = secrets.SystemRandom()
 
 class BlackjackState(StatesGroup):
     playing = State()
@@ -106,7 +107,7 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     
     if p_score > 21:
         is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-        if is_creator or random.randint(1, 100) <= 5:
+        if is_creator or secure_random.randint(1, 100) <= 5:
              game['player_cards'].pop()
              game['player_cards'].append({'rank': '2', 'suit': '♣'})
              p_score = calculate_score(game['player_cards'])

@@ -1,5 +1,4 @@
 import asyncio
-import random
 import secrets
 from aiogram import Router, types
 from aiogram.filters import Command
@@ -62,9 +61,9 @@ async def cmd_slots(message: types.Message):
     for status in frames:
         await asyncio.sleep(0.5)
         temp_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        if random.random() < 0.15:
+        if secure_random.random() < 0.15:
             glitches = ["ζ", "⧫", "☠", "⌬", "╳"]
-            temp_slots[random.randint(0,2)] = secure_random.choice(glitches)
+            temp_slots[secure_random.randint(0,2)] = secure_random.choice(glitches)
             
         try:
             await msg.edit_text(get_slots_frame(temp_slots, f"Вращение: {status}", bet, casino_title))

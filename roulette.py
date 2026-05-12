@@ -1,5 +1,4 @@
 import asyncio
-import random
 import secrets
 from aiogram import Router, types
 from aiogram.filters import Command
@@ -59,7 +58,7 @@ async def cmd_roulette(message: types.Message):
     for i in range(4):
         await asyncio.sleep(0.5)
         try:
-            await msg.edit_text(get_roulette_frame(i * 2, random.randint(1,36), bet, title, guess))
+            await msg.edit_text(get_roulette_frame(i * 2, secure_random.randint(1,36), bet, title, guess))
         except Exception: break
 
     chance = await get_game_chance('roulette')
