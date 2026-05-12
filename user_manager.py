@@ -178,6 +178,29 @@ async def update_user_field(chat_id, user_id, field, value):
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
+def update_user_field_batch(batch, chat_id, user_id, field, value):
+    """
+    Добавляет операцию обновления поля пользователя в переданный WriteBatch.
+    Обратите внимание, что эта функция НЕ обновляет локальный кэш пользователя.
+    Использовать только для массовых обновлений в фоновых задачах.
+    """
+    ref = get_user_ref(chat_id, user_id)
+    batch.update(ref, {field: value})
+    # Помечаем кэш как невалидный, чтобы при следующем запросе данные подтянулись из БД
+    _dirty_cache.add((chat_id, user_id))
+
+def update_user_balance_batch(batch, chat_id, user_id, delta):
+    """
+    Добавляет операцию инкремента баланса пользователя в переданный WriteBatch.
+    Обратите внимание, что эта функция НЕ обновляет локальный кэш пользователя.
+    Использовать только для массовых обновлений в фоновых задачах.
+    """
+    from firestore_async import Increment
+    ref = get_user_ref(chat_id, user_id)
+    batch.update(ref, {'balance': Increment(delta)})
+    # Помечаем кэш как невалидный
+    _dirty_cache.add((chat_id, user_id))
+
 async def check_and_give_bonus(chat_id, user_id, full_name=None):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
