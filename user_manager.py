@@ -1,18 +1,35 @@
 import time
 import asyncio
+import os
+import json
+
 import secrets
+import logging
 from db import get_db
 from utils import fire_and_forget
+
+logger = logging.getLogger(__name__)
 
 def get_user_ref(chat_id, user_id):
     db = get_db()
     return db.collection('chats').document(str(chat_id)).collection('users').document(str(user_id))
 
-# Кэш пользователей
+# Redis setup
+redis_client = None
+REDIS_URL = os.environ.get("REDIS_URL")
+if REDIS_URL:
+    try:
+        import redis.asyncio as aioredis
+        redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+    except Exception as e:
+        logger.error(f"⚠️ Ошибка подключения к Redis: {e}")
+
+# Гибридный кэш
 _user_cache = {}
 _dirty_cache = set()
 _user_locks = {} # Хранилище локов для предотвращения race condition
-CACHE_TTL = 60.0 
+CACHE_TTL = 3600 # Увеличим TTL до 1 часа при гибридном хранении
+MAX_CACHE_SIZE = 2000
 
 def get_user_lock(chat_id, user_id):
     key = (chat_id, user_id)
@@ -20,55 +37,96 @@ def get_user_lock(chat_id, user_id):
         _user_locks[key] = asyncio.Lock()
     return _user_locks[key]
 
-def get_from_cache(chat_id, user_id):
+async def get_from_cache(chat_id, user_id):
     key = (chat_id, user_id)
+    # 1. Primary: Локальный кэш
     if key in _user_cache:
         cache_entry = _user_cache[key]
         if time.time() - cache_entry["timestamp"] < CACHE_TTL:
             return cache_entry["data"].copy()
+
+    # 2. Secondary: Redis кэш
+    if redis_client:
+        try:
+            redis_key = f"user:{chat_id}:{user_id}"
+            val = await redis_client.get(redis_key)
+            if val:
+                data = json.loads(val)
+                # Восстанавливаем в локальный кэш
+                await set_in_cache(chat_id, user_id, data, write_to_redis=False)
+                mark_dirty(chat_id, user_id)
+                return data.copy()
+        except Exception as e:
+            logger.error(f"⚠️ Ошибка чтения из Redis: {e}")
+
     return None
 
-MAX_CACHE_SIZE = 1000
-
-def set_in_cache(chat_id, user_id, data):
+async def set_in_cache(chat_id, user_id, data, write_to_redis=True):
     key = (chat_id, user_id)
+
+    # Локальное сохранение (Primary)
     if len(_user_cache) >= MAX_CACHE_SIZE and key not in _user_cache:
-        # Простая очистка старейшего элемента
         oldest_key = next(iter(_user_cache))
-        _user_cache.pop(oldest_key)
+        if oldest_key in _dirty_cache:
+            fire_and_forget(get_user_ref(oldest_key[0], oldest_key[1]).set(_user_cache[oldest_key]['data'], merge=True))
+            _dirty_cache.discard(oldest_key)
+        _user_cache.pop(oldest_key, None)
     
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
+
+    # Опциональное сохранение в Redis
+    if write_to_redis and redis_client:
+        try:
+            redis_key = f"user:{chat_id}:{user_id}"
+            await redis_client.setex(redis_key, CACHE_TTL, json.dumps(data))
+        except Exception as e:
+            logger.error(f"⚠️ Ошибка записи в Redis: {e}")
 
 def mark_dirty(chat_id, user_id):
     _dirty_cache.add((chat_id, user_id))
 
 async def flush_user_data_task():
-    """Фоновая задача для синхронизации кэша с БД раз в 15 секунд."""
+    """Фоновая задача для синхронизации локального кэша с БД раз в 60 секунд."""
     while True:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(60)
             if not _dirty_cache:
                 continue
             
+            # Собираем пачку
             to_flush = list(_dirty_cache)
+            batch = get_db().batch()
+            batch_count = 0
+            batch_keys = []
             for key in to_flush:
-                _dirty_cache.discard(key) # Удаляем только то, что собираемся записать
-                cached_entry = _user_cache.get(key)
-                if cached_entry:
-                    ref = get_user_ref(key[0], key[1])
-                    # Синхронизируем всё состояние пользователя
-                    fire_and_forget(ref.set(cached_entry["data"], merge=True))
+                if key in _user_cache:
+                    batch_keys.append(key)
+                    cached_data = _user_cache[key]["data"]
+                    chat_id, user_id = key
+                    ref = get_user_ref(chat_id, user_id)
+                    batch.set(ref, cached_data, merge=True)
+                    batch_count += 1
+                    if batch_count >= 450:
+                        await batch.commit()
+                        for k in batch_keys: _dirty_cache.discard(k)
+                        batch_keys = []
+                        batch = get_db().batch()
+                        batch_count = 0
+                        await asyncio.sleep(0.5)
+
+            if batch_count > 0:
+                await batch.commit()
+                for k in batch_keys: _dirty_cache.discard(k)
         except Exception as e:
-            print(f"⚠️ Ошибка при синхронизации кэша: {e}")
+            logger.error(f"⚠️ Ошибка при пакетной синхронизации кэша: {e}")
 
 async def get_user_data(chat_id, user_id, full_name=None):
-    cached_data = get_from_cache(chat_id, user_id)
+    cached_data = await get_from_cache(chat_id, user_id)
     if cached_data:
         if full_name and cached_data.get('full_name') != full_name:
             cached_data['full_name'] = full_name
-            set_in_cache(chat_id, user_id, cached_data)
-            ref = get_user_ref(chat_id, user_id)
-            fire_and_forget(ref.update({'full_name': full_name}))
+            await set_in_cache(chat_id, user_id, cached_data)
+            mark_dirty(chat_id, user_id)
         return cached_data
 
     ref = get_user_ref(chat_id, user_id)
@@ -78,8 +136,8 @@ async def get_user_data(chat_id, user_id, full_name=None):
         data = doc.to_dict()
         if full_name and data.get('full_name') != full_name:
             data['full_name'] = full_name
-            fire_and_forget(ref.update({'full_name': full_name}))
-        set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+        await set_in_cache(chat_id, user_id, data)
         return data
     else:
         default_name = full_name if full_name else "Игрок"
@@ -102,7 +160,7 @@ async def get_user_data(chat_id, user_id, full_name=None):
             'debts': {},
             'escort_count': 0
         }
-        set_in_cache(chat_id, user_id, default_data)
+        await set_in_cache(chat_id, user_id, default_data)
         mark_dirty(chat_id, user_id)
         return default_data
 
@@ -112,7 +170,7 @@ async def update_user_balance(chat_id, user_id, amount, is_debt_repayment=False)
         data = await get_user_data(chat_id, user_id)
         new_balance = data.get('balance', 0) + amount
         data['balance'] = new_balance
-        set_in_cache(chat_id, user_id, data)
+        await set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
         return new_balance
 
@@ -164,7 +222,7 @@ async def update_user_balance_tr(transaction, chat_id, user_id, amount):
         
         # Обновляем локальный кэш, чтобы он был актуален
         data['balance'] = new_balance
-        set_in_cache(chat_id, user_id, data)
+        await set_in_cache(chat_id, user_id, data)
         # Убираем флаг грязного кэша, так как запись уже произведена транзакцией
         _dirty_cache.discard((chat_id, user_id))
         return new_balance
@@ -175,8 +233,31 @@ async def update_user_field(chat_id, user_id, field, value):
     async with lock:
         data = await get_user_data(chat_id, user_id)
         data[field] = value
-        set_in_cache(chat_id, user_id, data)
+        await set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
+
+async def update_user_field_batch(batch, chat_id, user_id, field, value):
+    ref = get_user_ref(chat_id, user_id)
+    batch.update(ref, {field: value})
+    if (chat_id, user_id) in _user_cache:
+        _user_cache[(chat_id, user_id)]["data"][field] = value
+        _dirty_cache.add((chat_id, user_id))
+    else:
+        # Not in local cache, let batch handle DB. Invalidate redis to prevent stale reads.
+        if redis_client:
+            try: await redis_client.delete(f"user:{chat_id}:{user_id}")
+            except Exception: pass
+
+async def update_user_balance_batch(batch, chat_id, user_id, delta):
+    from firestore_async import Increment
+    ref = get_user_ref(chat_id, user_id)
+    batch.update(ref, {"balance": Increment(delta)})
+    if (chat_id, user_id) in _user_cache:
+        _user_cache[(chat_id, user_id)]["data"]["balance"] = _user_cache[(chat_id, user_id)]["data"].get("balance", 0) + delta
+        _dirty_cache.add((chat_id, user_id))
+    if redis_client:
+        try: await redis_client.delete(f"user:{chat_id}:{user_id}")
+        except Exception: pass
 
 async def check_and_give_bonus(chat_id, user_id, full_name=None):
     lock = get_user_lock(chat_id, user_id)
@@ -268,7 +349,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
                     upd['bank_deposit'] = bank_deposit + bank_income
 
             data.update(upd)
-            set_in_cache(chat_id, user_id, data)
+            await set_in_cache(chat_id, user_id, data)
             mark_dirty(chat_id, user_id)
 
             return True, {
@@ -286,7 +367,7 @@ async def add_item_to_inventory(chat_id, user_id, item_name):
         inv[item_name] = inv.get(item_name, 0) + 1
 
         data['inventory'] = inv
-        set_in_cache(chat_id, user_id, data)
+        await set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
 async def remove_item_from_inventory(chat_id, user_id, item_name):
@@ -305,7 +386,7 @@ async def remove_item_from_inventory(chat_id, user_id, item_name):
 
             data['inventory'] = inv
             data['biz_levels'] = biz_levels
-            set_in_cache(chat_id, user_id, data)
+            await set_in_cache(chat_id, user_id, data)
             mark_dirty(chat_id, user_id)
             return True
         return False

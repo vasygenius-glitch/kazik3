@@ -1,6 +1,6 @@
 import io
 import asyncio
-import random
+import secrets
 import time
 import logging
 import hashlib
@@ -21,6 +21,7 @@ from utils_pkg.cache_manager import global_cache
 from utils import fire_and_forget
 
 router = Router()
+secure_random = secrets.SystemRandom()
 
 # Список компаний
 COMPANIES = {
@@ -115,23 +116,23 @@ async def get_stocks_db():
         # Добавляем новые компании в цены если их там нет
         for cid in ALL_COMPANIES:
             if cid not in data['prices']:
-                data['prices'][cid] = [random.randint(1000, 5000)]
+                data['prices'][cid] = [secure_random.randint(1000, 5000)]
         return data, ALL_COMPANIES
     
     # Инициализация
     data = {
         'last_update': int(time.time()),
-        'prices': {cid: [random.randint(1000, 5000)] for cid in ALL_COMPANIES},
+        'prices': {cid: [secure_random.randint(1000, 5000)] for cid in ALL_COMPANIES},
         'news': "Рынок стабилен."
     }
     await db.collection('bot_settings').document('stocks').set(data)
     return data, ALL_COMPANIES
 
 async def update_stocks_task():
-    """Фоновая задача обновления рынка акций раз в 10 минут."""
+    """Фоновая задача обновления рынка акций раз в 30 минут."""
     while True:
         try:
-            await asyncio.sleep(600)
+            await asyncio.sleep(1800)
             db = get_db()
             doc = await db.collection('bot_settings').document('stocks').get()
             
@@ -142,18 +143,18 @@ async def update_stocks_task():
 
             data = doc.to_dict() if doc.exists else {}
             
-            prices = data.get('prices', {cid: [random.randint(1000, 5000)] for cid in ALL_COMPANIES})
+            prices = data.get('prices', {cid: [secure_random.randint(1000, 5000)] for cid in ALL_COMPANIES})
             
             new_news = "На рынке без существенных изменений."
             # Шанс новости 20%
-            if random.random() < 0.2:
-                cid = random.choice(list(ALL_COMPANIES.keys()))
-                event = random.choice(["jump", "drop"])
+            if secure_random.random() < 0.2:
+                cid = secure_random.choice(list(ALL_COMPANIES.keys()))
+                event = secure_random.choice(["jump", "drop"])
                 if event == "jump":
-                    impact = random.uniform(1.1, 1.25)
+                    impact = secure_random.uniform(1.15, 1.30)
                     new_news = f"🚀 ПОЗИТИВ: Акции {ALL_COMPANIES[cid]['ticker']} взлетели на фоне отличного отчета!"
                 else:
-                    impact = random.uniform(0.75, 0.9)
+                    impact = secure_random.uniform(0.70, 0.85)
                     new_news = f"📉 НЕГАТИВ: Инвесторы избавляются от {ALL_COMPANIES[cid]['ticker']} после скандала!"
             else:
                 impact = 1.0
@@ -163,7 +164,7 @@ async def update_stocks_task():
                 last = history[-1]
                 
                 # Базовый шум +/- 3%
-                change = random.uniform(0.97, 1.03)
+                change = secure_random.uniform(0.97, 1.03)
                 # Применяем влияние новости если это та компания
                 if impact != 1.0 and ALL_COMPANIES[cid]['ticker'] in new_news:
                     change *= impact

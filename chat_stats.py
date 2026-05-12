@@ -159,7 +159,7 @@ async def weekly_reset_task(bot: Bot):
         if current_time.tm_hour == 0 and current_time.tm_min == 0:
             db = get_db()
             from whitelist import get_whitelist
-            from user_manager import update_user_field
+            from user_manager import update_user_field_batch, update_user_balance_batch
             whitelist = await get_whitelist()
             for chat_id in whitelist.keys():
                 try:
@@ -172,6 +172,9 @@ async def weekly_reset_task(bot: Bot):
                     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
                     users_with_deposits = await users_ref.where('bank_deposit', '>', 0).get()
                     
+                    batch = db.batch()
+                    op_count = 0
+
                     for user_doc in users_with_deposits:
                         u_data = user_doc.to_dict()
                         deposit = u_data.get('bank_deposit', 0)
@@ -197,7 +200,12 @@ async def weekly_reset_task(bot: Bot):
                                         fee = int(new_dep * 0.005)
                                         new_dep -= fee
                                     
-                                    await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
+                                    await update_user_field_batch(batch, chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
+                                    op_count += 1
+                                    if op_count >= 450:
+                                        await batch.commit()
+                                        batch = db.batch()
+                                        op_count = 0
 
                     # 3. Обновляем капитал банков и проверяем банкротство
                     for b_id, b_data in banks_data.items():
@@ -211,13 +219,24 @@ async def weekly_reset_task(bot: Bot):
                             for v_doc in bankrupt_vips:
                                 dep = v_doc.to_dict().get('bank_deposit', 0)
                                 refund = int(dep * 0.5)
-                                await update_user_field(chat_id, int(v_doc.id), 'bank_deposit', 0)
-                                await update_user_balance(chat_id, int(v_doc.id), refund)
-                                await update_user_field(chat_id, int(v_doc.id), 'bank_name', None)
+                                await update_user_field_batch(batch, chat_id, int(v_doc.id), 'bank_deposit', 0)
+                                await update_user_balance_batch(batch, chat_id, int(v_doc.id), refund)
+                                await update_user_field_batch(batch, chat_id, int(v_doc.id), 'bank_name', None)
+                                op_count += 3
+                                if op_count >= 450:
+                                    await batch.commit()
+                                    batch = db.batch()
+                                    op_count = 0
                                 count_refunded += 1
 
-                            await banks_ref.document(b_id).delete()
-                            await update_user_field(chat_id, int(b_id), 'is_banker', False)
+                            batch.delete(banks_ref.document(b_id))
+                            await update_user_field_batch(batch, chat_id, int(b_id), 'is_banker', False)
+                            op_count += 2
+                            if op_count >= 450:
+                                await batch.commit()
+                                batch = db.batch()
+                                op_count = 0
+
                             try:
                                 await bot.send_message(chat_id, f"💥 <b>ДЕФОЛТ!</b> Банк <b>{b_data.get('name')}</b> признан банкротом и закрыт. ЦБ компенсировал 50% вкладов для {count_refunded} чел.")
                             except Exception: pass
@@ -266,11 +285,19 @@ async def weekly_reset_task(bot: Bot):
                             new_capital -= luxury_tax
                             msg_text += f"\n💸 <b>Налог на излишки:</b> списано <b>{luxury_tax}</b> сыр. (20% от суммы свыше 500м)."
 
-                        await banks_ref.document(b_id).update({'capital': new_capital})
+                        batch.update(banks_ref.document(b_id), {'capital': new_capital})
+                        op_count += 1
+                        if op_count >= 450:
+                            await batch.commit()
+                            batch = db.batch()
+                            op_count = 0
 
                         try:
                             await bot.send_message(chat_id, msg_text)
                         except Exception: pass
+
+                    if op_count > 0:
+                        await batch.commit()
 
                 except Exception as e:
                     print(f"Ошибка ежедневных банковских операций в чате {chat_id}: {e}")
@@ -315,9 +342,19 @@ async def weekly_reset_task(bot: Bot):
                                 pass
 
                     # Обнуляем счетчики недели для всех
+                    batch = db.batch()
+                    op_count = 0
                     all_docs = await stats_ref.get()
                     for d in all_docs:
-                        await stats_ref.document(d.id).update({'week': 0})
+                        batch.update(stats_ref.document(d.id), {'week': 0})
+                        op_count += 1
+                        if op_count >= 450:
+                            await batch.commit()
+                            batch = db.batch()
+                            op_count = 0
+
+                    if op_count > 0:
+                        await batch.commit()
                 except Exception as e:
                     print(f"Weekly reset error for chat {chat_id}: {e}")
 
