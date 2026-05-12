@@ -202,6 +202,9 @@ async def process_buy(callback: types.CallbackQuery):
     if has_overdue_debt:
         return await callback.answer("❌ У вас просроченный долг! Покупки запрещены.", show_alert=True)
 
+    if item_id == "вип" and data.get('is_vip'):
+        return await callback.answer("У вас уже есть VIP", show_alert=True)
+
     base_tax = await get_global_tax()
     pet_data = data.get('pet', {})
     pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
