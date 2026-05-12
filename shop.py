@@ -45,7 +45,6 @@ ITEMS = {
 _shop_kb_cache = {"biz": "🏢 Бизнесы", "cars": "🚗 Машины", "ts": 0}
 
 async def get_main_shop_kb():
-    global _shop_kb_cache
     if time.time() - _shop_kb_cache["ts"] > 60:
         _shop_kb_cache["biz"] = await get_season_string("shop_biz", "🏢 Бизнесы")
         _shop_kb_cache["cars"] = await get_season_string("shop_cars", "🚗 Машины")
@@ -279,6 +278,15 @@ async def process_sell_confirm(callback: types.CallbackQuery):
         success = await remove_item_from_inventory(chat_id, user_id, item_id)
         if not success:
             return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
+
+        # Удаляем уровень бизнеса из biz_levels, если это бизнес
+        if item.get('cat') == 'biz':
+            biz_levels = data.get('biz_levels', {})
+            if item_id in biz_levels:
+                del biz_levels[item_id]
+                from user_manager import update_user_field
+                await update_user_field(chat_id, user_id, 'biz_levels', biz_levels)
+
     sell_price = int(item['price'] * 0.75)
     await update_user_balance(chat_id, user_id, sell_price)
 

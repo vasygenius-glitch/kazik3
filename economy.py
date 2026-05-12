@@ -151,22 +151,20 @@ async def cmd_pay(message: types.Message):
         return
 
     amount_str = args[1].lower()
+
+    from economy_utils import get_global_tax, calculate_transfer_tax
+    from diseases import get_active_diseases
+
+    base_tax = await get_global_tax()
+    active_diseases = await get_active_diseases(chat_id, sender_id)
+    neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
+    pet_data = sender_data.get('pet', {})
+    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+
+    balance = sender_data.get('balance', 0)
+    tax_percent = calculate_transfer_tax(balance, base_tax, neg_lvl, pet_id, active_diseases)
+
     if amount_str in ["all", "всё", "все"]:
-        # If user wants to pay all, we need to calculate how much they can send after tax
-        from economy_utils import get_global_tax, calculate_progressive_tax
-        base_tax = await get_global_tax()
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(chat_id, sender_id)
-
-        neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
-        pet_data = sender_data.get('pet', {})
-        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl, pet_id)
-
-        if 'herpes' in active_diseases:
-            tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
-        
-        balance = sender_data.get('balance', 0)
         if balance <= 0:
             return await message.answer("У вас нет денег.")
 
@@ -189,18 +187,6 @@ async def cmd_pay(message: types.Message):
         except ValueError:
             await message.answer("Сумма должна быть числом или 'all'.")
             return
-
-        from economy_utils import get_global_tax, calculate_progressive_tax
-        base_tax = await get_global_tax()
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(chat_id, sender_id)
-        neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
-        pet_data = sender_data.get('pet', {})
-        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl, pet_id)
-
-        if 'herpes' in active_diseases:
-            tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
 
     if tax_percent > 0:
         commission = int(amount * (tax_percent / 100.0))
