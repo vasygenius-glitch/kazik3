@@ -294,11 +294,17 @@ async def remove_item_from_inventory(chat_id, user_id, item_name):
     async with lock:
         data = await get_user_data(chat_id, user_id)
         inv = data.get('inventory', {})
+        biz_levels = data.get('biz_levels', {})
+
         if inv.get(item_name, 0) > 0:
             inv[item_name] -= 1
-            if inv[item_name] <= 0: del inv[item_name]
+            if inv[item_name] <= 0:
+                del inv[item_name]
+                if item_name in biz_levels:
+                    del biz_levels[item_name]
 
             data['inventory'] = inv
+            data['biz_levels'] = biz_levels
             set_in_cache(chat_id, user_id, data)
             mark_dirty(chat_id, user_id)
             return True
