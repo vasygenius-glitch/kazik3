@@ -3,7 +3,7 @@ from aiogram.filters import Command
 import time
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import get_user_data, update_user_balance, add_item_to_inventory, update_user_field
-from economy_utils import calculate_progressive_tax, get_global_tax
+from economy_utils import calculate_progressive_tax, get_global_tax, calculate_biz_markup
 from escape import escape_html
 from seasons import get_season_string
 
@@ -90,10 +90,14 @@ def get_sell_confirm_kb(item_id):
 def get_category_kb(category, balance, base_tax, negotiation_skill=0):
     builder = InlineKeyboardBuilder()
     tax_rate = calculate_progressive_tax(balance, base_tax, negotiation_skill)
+    biz_markup = calculate_biz_markup(balance)
     
     for item_id, info in ITEMS.items():
         if info.get('cat') == category:
-            markup = int(info['price'] * (tax_rate / 100.0))
+            current_tax_rate = tax_rate
+            if category == 'biz':
+                current_tax_rate += biz_markup
+            markup = int(info['price'] * (current_tax_rate / 100.0))
             final_price = info['price'] + markup
             builder.button(text=f"{info['name']} - {final_price} сыр.", callback_data=f"buy_{item_id}")
     builder.button(text="⬅️ Назад", callback_data="shop_main")
@@ -131,7 +135,10 @@ async def cmd_shop(message: types.Message):
     base_tax = await get_global_tax()
     pet_data = data.get('pet', {})
     pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+    user_balance = data.get('balance', 0)
+    tax_rate = calculate_progressive_tax(user_balance, base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+    biz_markup = calculate_biz_markup(user_balance)
+    biz_markup_text = f"\n🏢 Доп. наценка на бизнесы: <b>{biz_markup}%</b>" if biz_markup > 0 else ""
 
     shop_title = await get_season_string("shop", "🛒 Магазин Сыроежек")
     from seasons import get_glitch_text
@@ -139,8 +146,8 @@ async def cmd_shop(message: types.Message):
     
     await message.answer(
         f"<b>{shop_title}</b>\n\n"
-        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
-        f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{warning_text}\n"
+        f"Твой баланс: <b>{user_balance}</b> сыр.\n"
+        f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{biz_markup_text}{warning_text}\n"
         "Выберите категорию товаров:",
         reply_markup=await get_main_shop_kb()
     )
@@ -152,11 +159,14 @@ async def shop_back(callback: types.CallbackQuery):
     base_tax = await get_global_tax()
     pet_data = data.get('pet', {})
     pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+    user_balance = data.get('balance', 0)
+    tax_rate = calculate_progressive_tax(user_balance, base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+    biz_markup = calculate_biz_markup(user_balance)
+    biz_markup_text = f"\n🏢 Доп. наценка на бизнесы: <b>{biz_markup}%</b>" if biz_markup > 0 else ""
     
     text = (f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
-            f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
-            f"📈 Твоя наценка: <b>{tax_rate}%</b>\n"
+            f"Твой баланс: <b>{user_balance}</b> сыр.\n"
+            f"📈 Твоя наценка: <b>{tax_rate}%</b>{biz_markup_text}\n"
             f"Выбери категорию:")
     await callback.message.edit_text(text, reply_markup=await get_main_shop_kb())
 
@@ -205,10 +215,14 @@ async def process_buy(callback: types.CallbackQuery):
     base_tax = await get_global_tax()
     pet_data = data.get('pet', {})
     pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+    user_balance = data.get('balance', 0)
+    tax_rate = calculate_progressive_tax(user_balance, base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+    if item.get('cat') == 'biz':
+        tax_rate += calculate_biz_markup(user_balance)
+
     final_price = item['price'] + int(item['price'] * (tax_rate / 100.0))
 
-    if data.get('balance', 0) < final_price:
+    if user_balance < final_price:
         return await callback.answer(f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True)
 
     if item.get('cat') == "biz":

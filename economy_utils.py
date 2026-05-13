@@ -67,3 +67,15 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     
     # Налог ограничен 20%
     return max(1, min(20, total_tax))
+
+def calculate_biz_markup(balance: int) -> int:
+    """
+    Calculates additional markup for businesses based on the user's balance.
+    > 500m = 50%
+    > 100m = 20%
+    """
+    if balance > 500_000_000:
+        return 50
+    elif balance > 100_000_000:
+        return 20
+    return 0
