@@ -284,6 +284,10 @@ async def cmd_bonus(message: types.Message):
 
     success, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
     if success:
+        from antibot import check_antibot, send_captcha
+        if check_antibot(chat_id, user_id):
+            return await send_captcha(message)
+
         text = f"🧾 <b>Квитанция о доходах</b>\n\n"
         if receipt.get('base', 0) > 0:
             text += f"🎁 Ежедневный бонус: <b>{receipt['base']}</b>\n"
@@ -319,6 +323,10 @@ async def cmd_work(message: types.Message):
         remain = int(1800 - (current_time - last_work))
         mins, secs = divmod(remain, 60)
         return await message.answer(f"⏳ Ты устал. Отдохни еще {mins} минут и {secs} секунд.")
+
+    from antibot import check_antibot, send_captcha
+    if check_antibot(chat_id, user_id):
+        return await send_captcha(message)
 
     await update_user_field(chat_id, user_id, 'last_work_time', current_time)
 
@@ -526,6 +534,10 @@ async def cmd_crime(message: types.Message):
         remain = int(3600 - (current_time - last_crime))
         mins, secs = divmod(remain, 60)
         return await message.answer(f"⏳ Копы ищут тебя. Заляг на дно еще на {mins} мин. {secs} сек.")
+
+    from antibot import check_antibot, send_captcha
+    if check_antibot(chat_id, user_id):
+        return await send_captcha(message)
 
     await update_user_field(chat_id, user_id, 'last_crime_time', current_time)
 

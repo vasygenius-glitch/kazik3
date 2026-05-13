@@ -23,6 +23,7 @@ from profile_bank import router as profile_bank_router
 from group_management import router as group_management_router
 from pets import router as pets_router
 from economy_features import router as economy_features_router
+from antibot import router as antibot_router
 from loans import router as loans_router
 from escort import router as escort_router
 from contracts import router as contracts_router
@@ -104,6 +105,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(seasons_router)
     
     # Остальные модули
+    dp.include_router(antibot_router)
     dp.include_router(economy_router)
     dp.include_router(blackjack_router)
     dp.include_router(roulette_router)
