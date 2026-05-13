@@ -225,7 +225,8 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
                 if not item: continue
                 if item.get('action') == 'business':
                     level = biz_levels.get(item_id, 1)
-                    level_multiplier = 1.0 + 0.5 * (level - 1)
+                    # Новое скалирование дохода: более плавное, но ощутимое (напр. +20% за каждый уровень)
+                    level_multiplier = 1.0 + 0.2 * (level - 1)
                     inc = int(item.get('income', 0) * level_multiplier) * min(count, 10)
                     if data.get('is_banker', False):
                         inc = int(inc * 0.20)

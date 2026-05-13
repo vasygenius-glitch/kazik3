@@ -15,7 +15,7 @@ def get_inv_lock(chat_id, user_id):
 
 router = Router()
 
-MAX_BIZ_LEVEL = 5
+MAX_BIZ_LEVEL = 20
 
 def get_inventory_main_kb(inventory, biz_levels):
     builder = InlineKeyboardBuilder()
@@ -39,7 +39,7 @@ def get_item_kb(item_id, biz_level):
     info = ITEMS.get(item_id)
     if info.get('action') == 'business':
         if biz_level < MAX_BIZ_LEVEL:
-            upgrade_cost = int(info['price'] * 0.5 * biz_level)
+            upgrade_cost = int(info['price'] * (1.5 ** (biz_level - 1)))
             builder.button(text=f"⬆️ Улучшить ({upgrade_cost} сыр.)", callback_data=f"inv_upg_{item_id}")
         else:
             builder.button(text="🌟 Макс. уровень", callback_data="none")
@@ -145,7 +145,7 @@ async def inv_upgrade(callback: types.CallbackQuery):
         if current_level >= MAX_BIZ_LEVEL:
             return await callback.answer("Достигнут максимальный уровень!", show_alert=True)
 
-        upgrade_cost = int(info['price'] * 0.5 * current_level)
+        upgrade_cost = int(info['price'] * (1.5 ** (current_level - 1)))
         
         if data.get('balance', 0) < upgrade_cost:
             return await callback.answer("Недостаточно сыроежек для улучшения!", show_alert=True)
@@ -183,7 +183,7 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
         level = biz_levels.get(item_id, 1)
         total_invested = info['price']
         for l in range(1, level):
-            total_invested += int(info['price'] * 0.5 * l)
+            total_invested += int(info['price'] * (1.5 ** (l - 1)))
         sell_price = int(total_invested * 0.75)
         
         if item_id in biz_levels:
