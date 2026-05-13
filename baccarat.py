@@ -39,27 +39,37 @@ async def cmd_baccarat(message: types.Message):
 
     rand = secrets.SystemRandom()
 
-    # Draw cards (1-13 where 11, 12, 13 are face cards with 0 value)
-    p_cards = [rand.randint(1, 13), rand.randint(1, 13)]
-    b_cards = [rand.randint(1, 13), rand.randint(1, 13)]
-
-    p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
-    b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
-
-    # Draw third card logic simplified
-    if p_score < 6:
-        p_cards.append(rand.randint(1, 13))
-        p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
-
-    if b_score < 6:
-        b_cards.append(rand.randint(1, 13))
-        b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
-
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
-    if is_creator:
-        p_score = 9
-        b_score = 1
+
+    is_win = rand.randint(1, 100) <= 35
+
+    while True:
+        # Draw cards (1-13 where 11, 12, 13 are face cards with 0 value)
+        p_cards = [rand.randint(1, 13), rand.randint(1, 13)]
+        b_cards = [rand.randint(1, 13), rand.randint(1, 13)]
+
+        p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
+        b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+
+        # Draw third card logic simplified
+        if p_score < 6:
+            p_cards.append(rand.randint(1, 13))
+            p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
+
+        if b_score < 6:
+            b_cards.append(rand.randint(1, 13))
+            b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+
+        if is_creator:
+            p_score = 9
+            b_score = 1
+            break
+
+        if is_win and p_score > b_score:
+            break
+        elif not is_win and b_score > p_score:
+            break
 
     text = f"🃏 <b>Баккара</b>\n\nОчки Игрока: <b>{p_score}</b>\nОчки Банкира: <b>{b_score}</b>\n\n"
 
