@@ -62,22 +62,20 @@ async def cmd_roulette(message: types.Message):
             await msg.edit_text(get_roulette_frame(i * 2, random.randint(1,36), bet, title, guess))
         except Exception: break
 
-    chance = await get_game_chance('roulette')
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-    if is_creator: result_number = guess
-    elif chance != -1:
-        if secure_random.randint(1, 100) <= chance:
-            result_number = guess + secure_random.choice([-1, 0, 1])
-            result_number = max(1, min(36, result_number))
-        else:
+    if is_creator:
+        result_number = guess
+    else:
+        # Enforce 35% win rate, 65% loss rate (win is within distance 4)
+        is_win = secure_random.randint(1, 100) <= 35
+        while True:
             result_number = secure_random.randint(1, 36)
-            # Избегаем бесконечного цикла: максимум 50 попыток
-            attempts = 0
-            while abs(result_number - guess) <= 4 and attempts < 50:
-                result_number = secure_random.randint(1, 36)
-                attempts += 1
-    else: result_number = secure_random.randint(1, 36)
+            diff = abs(result_number - guess)
+            if is_win and diff <= 4:
+                break
+            elif not is_win and diff > 4:
+                break
 
     diff = abs(result_number - guess)
     total_win, mult_text = 0, ""

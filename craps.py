@@ -33,28 +33,55 @@ async def cmd_craps(message: types.Message):
         return await message.answer("Ваш кредитный лимит (-5000) исчерпан. Пополните баланс.")
 
     rand = secrets.SystemRandom()
-    die1 = rand.randint(1, 6)
-    die2 = rand.randint(1, 6)
-    total = die1 + die2
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
+    if is_creator:
+        is_forced_win = True
+    else:
+        is_forced_win = (rand.randint(1, 100) <= 35)
+
+    while True:
+        die1 = rand.randint(1, 6)
+        die2 = rand.randint(1, 6)
+        total = die1 + die2
+
+        if total in [7, 11]:
+            is_win = True
+            is_natural = True
+            is_craps = False
+        elif total in [2, 3, 12]:
+            is_win = False
+            is_natural = False
+            is_craps = True
+        else:
+            # Simplified craps
+            is_win = rand.choice([True, False])
+            is_natural = False
+            is_craps = False
+
+        if is_win == is_forced_win:
+            break
+
     if is_creator:
         die1 = 3
         die2 = 4
         total = 7
+        is_natural = True
+        is_craps = False
+        is_win = True
 
     text = f"🎲 <b>Крэпс</b>\n\nБросок: <b>{die1} + {die2} = {total}</b>\n\n"
 
-    if total in [7, 11]:
+    if is_natural:
         await update_user_balance(chat_id, user_id, bet)
         text += f"🎉 Натуральная победа (Pass Line)! Вы выиграли <b>{bet}</b> сыроежек."
-    elif total in [2, 3, 12]:
+    elif is_craps:
         await update_user_balance(chat_id, user_id, -bet)
         text += f"❌ Крэпс! Вы проиграли <b>{bet}</b> сыроежек."
     else:
-        # Simplified craps (no point phase for chat bot simplicity, just a flat roll)
-        if rand.choice([True, False]):
+        if is_win:
             await update_user_balance(chat_id, user_id, bet)
             text += f"🎯 Вы выиграли поинт! Выиграно <b>{bet}</b> сыроежек."
         else:
