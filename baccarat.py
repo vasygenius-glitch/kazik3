@@ -39,21 +39,33 @@ async def cmd_baccarat(message: types.Message):
 
     rand = secrets.SystemRandom()
 
-    # Draw cards (1-13 where 11, 12, 13 are face cards with 0 value)
-    p_cards = [rand.randint(1, 13), rand.randint(1, 13)]
-    b_cards = [rand.randint(1, 13), rand.randint(1, 13)]
+    is_casino_win = rand.random() < 0.60 # 60% шанс победы казино (Банкира)
 
-    p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
-    b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+    while True:
+        # Draw cards (1-13 where 11, 12, 13 are face cards with 0 value)
+        p_cards = [rand.randint(1, 13), rand.randint(1, 13)]
+        b_cards = [rand.randint(1, 13), rand.randint(1, 13)]
 
-    # Draw third card logic simplified
-    if p_score < 6:
-        p_cards.append(rand.randint(1, 13))
         p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
-
-    if b_score < 6:
-        b_cards.append(rand.randint(1, 13))
         b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+
+        # Draw third card logic simplified
+        if p_score < 6:
+            p_cards.append(rand.randint(1, 13))
+            p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
+
+        if b_score < 6:
+            b_cards.append(rand.randint(1, 13))
+            b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+
+        if is_casino_win:
+            # Казино (Банкир) должно победить
+            if b_score > p_score:
+                break
+        else:
+            # Игрок побеждает или ничья
+            if p_score >= b_score:
+                break
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)

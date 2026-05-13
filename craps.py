@@ -33,9 +33,40 @@ async def cmd_craps(message: types.Message):
         return await message.answer("Ваш кредитный лимит (-5000) исчерпан. Пополните баланс.")
 
     rand = secrets.SystemRandom()
-    die1 = rand.randint(1, 6)
-    die2 = rand.randint(1, 6)
-    total = die1 + die2
+
+    # Подкрутка 40/60
+    is_win = rand.random() < 0.40 # 40% на победу, 60% на проигрыш
+
+    if is_win:
+        # Игрок выигрывает: либо 7, 11 (pass line win), либо поинт win
+        if rand.choice([True, False]):
+            # Выигрыш по Pass Line (7, 11)
+            total = rand.choice([7, 11])
+            die1 = rand.randint(max(1, total - 6), min(total - 1, 6))
+            die2 = total - die1
+        else:
+            # Выигрышный поинт (все кроме 2, 3, 12, 7, 11)
+            while True:
+                die1 = rand.randint(1, 6)
+                die2 = rand.randint(1, 6)
+                total = die1 + die2
+                if total not in [2, 3, 12, 7, 11]:
+                    break
+    else:
+        # Игрок проигрывает: либо 2, 3, 12 (craps), либо поинт loss
+        if rand.choice([True, False]):
+            # Проигрыш Craps (2, 3, 12)
+            total = rand.choice([2, 3, 12])
+            die1 = rand.randint(max(1, total - 6), min(total - 1, 6))
+            die2 = total - die1
+        else:
+            # Проигрышный поинт (все кроме 2, 3, 12, 7, 11)
+            while True:
+                die1 = rand.randint(1, 6)
+                die2 = rand.randint(1, 6)
+                total = die1 + die2
+                if total not in [2, 3, 12, 7, 11]:
+                    break
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
@@ -54,7 +85,11 @@ async def cmd_craps(message: types.Message):
         text += f"❌ Крэпс! Вы проиграли <b>{bet}</b> сыроежек."
     else:
         # Simplified craps (no point phase for chat bot simplicity, just a flat roll)
-        if rand.choice([True, False]):
+        # Если god mode (total 7 перехвачен выше) или подкрутка сработала
+        # Поскольку god mode дает 7, он сюда не попадет. Попадают только поинты.
+        # Если is_win True - побеждаем, если False - проигрываем
+        # Если был god mode, но мы сгенерировали поинт, то god mode переопределил total на 7 и is_win будет проигнорирован (т.к total 7)
+        if is_win:
             await update_user_balance(chat_id, user_id, bet)
             text += f"🎯 Вы выиграли поинт! Выиграно <b>{bet}</b> сыроежек."
         else:
