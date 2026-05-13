@@ -5,7 +5,7 @@ from aiogram import Router, types
 from aiogram.filters import Command
 
 from user_manager import get_user_data, update_user_balance
-from chances import get_game_chance
+
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
@@ -70,12 +70,13 @@ async def cmd_slots(message: types.Message):
             await msg.edit_text(get_slots_frame(temp_slots, f"Вращение: {status}", bet, casino_title))
         except Exception: break
 
-    chance = await get_game_chance('slots')
     is_forced_win = False
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-    if is_creator: is_forced_win = True
-    elif chance != -1 and secure_random.randint(1, 100) <= chance: is_forced_win = True
+    if is_creator:
+        is_forced_win = True
+    elif secure_random.randint(1, 100) <= 35:
+        is_forced_win = True
 
     if is_forced_win:
         if is_creator: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
@@ -91,9 +92,8 @@ async def cmd_slots(message: types.Message):
                 final_slots = [sym, sym, sym]
     else:
         final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        if chance != -1:
-            while final_slots[0] == final_slots[1] == final_slots[2]:
-                final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
+        while final_slots[0] == final_slots[1] == final_slots[2]:
+            final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
 
     profit = 0
     if final_slots[0] == final_slots[1] == final_slots[2]:

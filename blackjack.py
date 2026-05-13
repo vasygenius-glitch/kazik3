@@ -135,17 +135,55 @@ async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 async def finish_dealer_turn(callback: types.CallbackQuery, game: dict):
+    import secrets
     from seasons import get_glitch_text
     p_score = calculate_score(game['player_cards'])
     dealer_cards = game['dealer_cards']
     
-    while calculate_score(dealer_cards) <= 16:
-        dealer_cards.append(get_random_card())
-        d_score = calculate_score(dealer_cards)
-        text = get_bj_frame(game['player_cards'], dealer_cards, p_score, d_score, "Дилер берет карту...", game['full_name'], game['bet'], game['title'], False)
+    is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
+    secure_random = secrets.SystemRandom()
+
+    if is_creator:
+        target_win = True
+    else:
+        target_win = secure_random.randint(1, 100) <= 35
+
+    # Pre-calculate the outcome using a while loop to match the target_win condition
+    # Keep only the first (face-up) card and reroll the rest
+    max_retries = 100
+    retries = 0
+    while True:
+        temp_dealer_cards = [dealer_cards[0], get_random_card()]
+        while calculate_score(temp_dealer_cards) <= 16:
+            temp_dealer_cards.append(get_random_card())
+
+        d_score = calculate_score(temp_dealer_cards)
+        player_wins = d_score > 21 or p_score > d_score
+
+        # In a tie, we'll keep rerolling since we want a strict win/loss, or accept it if target_win is False
+        if target_win and player_wins:
+            dealer_cards = temp_dealer_cards
+            break
+        elif not target_win and not player_wins:
+            dealer_cards = temp_dealer_cards
+            break
+
+        retries += 1
+        if retries > max_retries:
+             # Fallback just to avoid freezing the event loop if odds are very weird
+             dealer_cards = temp_dealer_cards
+             break
+
+    # Animate the pre-calculated sequence
+    drawn_cards_count = len(game['dealer_cards'])
+    for i in range(drawn_cards_count, len(dealer_cards) + 1):
+        current_dealer_cards = dealer_cards[:i]
+        d_score = calculate_score(current_dealer_cards)
+        text = get_bj_frame(game['player_cards'], current_dealer_cards, p_score, d_score, "Дилер берет карту...", game['full_name'], game['bet'], game['title'], False)
         try:
             await callback.message.edit_text(text)
-            await asyncio.sleep(0.7) # Снизил до 0.7 для скорости
+            if i < len(dealer_cards):
+                await asyncio.sleep(0.7) # Снизил до 0.7 для скорости
         except Exception: break
 
     d_score = calculate_score(dealer_cards)
