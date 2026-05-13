@@ -269,18 +269,41 @@ async def process_sell_confirm(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     data = await get_user_data(chat_id, user_id)
 
+    sell_price = int(item['price'] * 0.75)
+
     # Verify user still has the item
     if item_id == "вип":
         if not data.get('is_vip'):
             return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
         await update_user_field(chat_id, user_id, 'is_vip', False)
+        await update_user_balance(chat_id, user_id, sell_price)
     else:
-        from user_manager import remove_item_from_inventory
-        success = await remove_item_from_inventory(chat_id, user_id, item_id)
+        from db import get_db
+        from user_manager import sell_item_tr
+        from firebase_admin import firestore_async
+
+        db = get_db()
+
+        @firestore_async.transactional
+        async def run_sell_transaction(transaction, chat_id, user_id, item_id, item_cat, sell_price):
+            return await sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price)
+
+        try:
+            # We use @firestore_async.transactional to automatically handle retries
+            res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, item.get('cat', ''), sell_price)
+            if hasattr(res, "__aiter__"):
+                # Handle possible async generator bug in firestore_async
+                async for r in res:
+                    success = r
+            else:
+                success = await res
+        except Exception:
+            # Fallback for mock db or errors
+            success = await sell_item_tr(None, chat_id, user_id, item_id, item.get('cat', ''), sell_price)
+
         if not success:
             return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
-    sell_price = int(item['price'] * 0.75)
-    await update_user_balance(chat_id, user_id, sell_price)
+
 
     await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
     await show_sell_menu(callback)

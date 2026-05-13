@@ -158,6 +158,14 @@ async def process_all_deals(callback: types.CallbackQuery):
         from user_manager import remove_item_from_inventory, add_item_to_inventory
         if await remove_item_from_inventory(chat_id, seller_id, item):
             await add_item_to_inventory(chat_id, buyer_id, item)
+
+            # Удаляем/очищаем связанную запись уровня бизнеса
+            seller_updated_data = await get_user_data(chat_id, seller_id)
+            biz_levels = seller_updated_data.get('biz_levels', {})
+            if item in biz_levels:
+                del biz_levels[item]
+                await update_user_field(chat_id, seller_id, 'biz_levels', biz_levels)
+
             await callback.message.edit_text(f"✅ <b>Сделка завершена!</b>\nПредмет <b>{item}</b> перешел к новому владельцу за <b>{price}</b> сыр.")
         else:
             await callback.message.edit_text("❌ Произошла ошибка: предмет исчез у продавца.")
@@ -189,5 +197,6 @@ async def process_all_deals(callback: types.CallbackQuery):
         await update_user_field(chat_id, sender_id, 'balance', 0)
         await update_user_field(chat_id, sender_id, 'bank_deposit', 0)
         await update_user_field(chat_id, sender_id, 'inventory', {})
+        await update_user_field(chat_id, sender_id, 'biz_levels', {})
 
         await callback.message.edit_text(f"🏰 <b>Наследство принято!</b>\nВсе активы перешли к новому владельцу. Бывший владелец теперь нищий.")
