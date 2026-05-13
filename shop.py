@@ -211,15 +211,20 @@ async def process_buy(callback: types.CallbackQuery):
     if data.get('balance', 0) < final_price:
         return await callback.answer(f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True)
 
+    inv = data.get('inventory', {})
+
     if item.get('cat') == "biz":
         limit = 4 if data.get('is_vip') else 2
-        inv = data.get('inventory', {})
-        biz_count = sum(1 for k in inv if ITEMS.get(k, {}).get('cat') == 'biz')
+        biz_count = sum(inv.get(k, 1) for k in inv if ITEMS.get(k, {}).get('cat') == 'biz')
         
-        if item_id in inv:
-            return await callback.answer("У тебя уже есть этот бизнес!", show_alert=True)
+        if inv.get(item_id, 0) >= 5:
+            return await callback.answer("Лимит одинаковых бизнесов (5) достигнут!", show_alert=True)
         if biz_count >= limit:
             return await callback.answer(f"Лимит бизнесов ({limit}) достигнут!", show_alert=True)
+
+    elif item.get('cat') == "cars":
+        if inv.get(item_id, 0) >= 2:
+            return await callback.answer("Лимит одинаковых машин (2) достигнут!", show_alert=True)
 
     await update_user_balance(chat_id, user_id, -final_price)
     
