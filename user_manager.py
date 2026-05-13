@@ -311,7 +311,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
                 if not item: continue
                 if item.get('action') == 'business':
                     level = biz_levels.get(item_id, 1)
-                    level_multiplier = 1.0 + 0.5 * (level - 1)
+                    level_multiplier = 1.0 + 0.1 * (level - 1)
                     inc = int(item.get('income', 0) * level_multiplier) * min(count, 10)
                     if data.get('is_banker', False):
                         inc = int(inc * 0.20)
@@ -338,6 +338,10 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             extra_income = biz_income + car_income + bank_income
             tax_amt = int(extra_income * (tax_percent / 100.0))
             total_to_hand = base_bonus + extra_income - tax_amt
+
+            if total_to_hand > 1000000:
+                from antibot import force_captcha
+                force_captcha(chat_id, user_id)
 
             if total_to_hand <= 0: return False, {}, "К сожалению, налоги съели весь ваш бонус."
 

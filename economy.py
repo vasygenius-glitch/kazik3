@@ -268,11 +268,12 @@ async def cmd_bonus(message: types.Message):
     user_id = message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
+    from antibot import check_antibot, send_captcha
+    if check_antibot(chat_id, user_id):
+        return await send_captcha(message)
+
     success, receipt, error_msg = await check_and_give_bonus(chat_id, user_id, full_name)
     if success:
-        from antibot import check_antibot, send_captcha
-        if check_antibot(chat_id, user_id):
-            return await send_captcha(message)
 
         text = f"🧾 <b>Квитанция о доходах</b>\n\n"
         if receipt.get('base', 0) > 0:

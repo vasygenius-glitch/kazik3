@@ -33,6 +33,15 @@ def check_antibot(chat_id: int, user_id: int) -> bool:
 
     return False
 
+def force_captcha(chat_id: int, user_id: int):
+    """
+    Принудительно активирует капчу для пользователя (например, при аномально высоких доходах).
+    """
+    key = (chat_id, user_id)
+    if key not in _antibot_cache:
+        _antibot_cache[key] = {'count': 0, 'captcha_active': False, 'expected_game_id': None, 'last_update': time.time()}
+    _antibot_cache[key]['captcha_active'] = True
+
 def generate_captcha(chat_id: int, user_id: int):
     """
     Генерирует математическую капчу.
