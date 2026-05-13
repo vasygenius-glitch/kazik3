@@ -308,6 +308,49 @@ async def remove_item_from_inventory(chat_id, user_id, item_name):
             return True
         return False
 
+async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price):
+    """Атомарная продажа предмета внутри транзакции."""
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await safe_get_snapshot(transaction, ref)
+
+    if snapshot.exists:
+        data = snapshot.to_dict()
+        inv = data.get('inventory', {})
+        biz_levels = data.get('biz_levels', {})
+
+        # Verify item exists in inventory
+        if inv.get(item_id, 0) > 0:
+            inv[item_id] -= 1
+            if inv[item_id] <= 0:
+                del inv[item_id]
+                # If it's a business, we must delete the level too
+                if item_cat == 'biz' and item_id in biz_levels:
+                    del biz_levels[item_id]
+
+            new_balance = data.get('balance', 0) + sell_price
+
+            updates = {
+                'inventory': inv,
+                'biz_levels': biz_levels,
+                'balance': new_balance
+            }
+
+            if transaction:
+                transaction.update(ref, updates)
+            else:
+                await ref.update(updates)
+
+            # Update cache locally
+            cached_data = _user_cache.get((chat_id, user_id))
+            if cached_data:
+                cached_data['inventory'] = inv
+                cached_data['biz_levels'] = biz_levels
+                cached_data['balance'] = new_balance
+                mark_dirty(chat_id, user_id)
+
+            return True
+    return False
+
 async def get_top_users(chat_id, limit=10):
     db = get_db()
     ref = db.collection('chats').document(str(chat_id)).collection('users')
