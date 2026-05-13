@@ -45,7 +45,9 @@ def get_bj_frame(player_cards, dealer_cards, p_score, d_score, status, user_name
 @router.message(Command("bj"))
 async def cmd_bj(message: types.Message, state: FSMContext):
     if await state.get_state() == BlackjackState.playing.state:
-        return await message.answer("Завершите прошлую игру!")
+        # Автоматический сброс залипшей игры
+        await state.clear()
+        # return await message.answer("Завершите прошлую игру!")
 
     chat_id, user_id = message.chat.id, message.from_user.id
     full_name = escape_html(message.from_user.full_name)

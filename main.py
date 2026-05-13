@@ -28,6 +28,7 @@ async def main():
         logger.info("⚠️ REDIS_URL не найден, используется MemoryStorage.")
 
     dp = Dispatcher(storage=storage)
+bot.dispatcher = dp
 
     try:
         init_db(FIREBASE_KEY_PATH)

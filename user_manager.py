@@ -162,14 +162,12 @@ async def update_user_balance_tr(transaction, chat_id, user_id, amount):
         else:
             await ref.update({'balance': new_balance})
         
-        # Обновляем локальный кэш, чтобы он был актуален
-        data['balance'] = new_balance
-        set_in_cache(chat_id, user_id, data)
-        # Убираем флаг грязного кэша, так как запись уже произведена транзакцией
-        _dirty_cache.discard((chat_id, user_id))
+        cached_data = _user_cache.get((chat_id, user_id))
+        if cached_data:
+            cached_data['balance'] = new_balance
+
         return new_balance
     return None
-
 async def update_user_field(chat_id, user_id, field, value):
     lock = get_user_lock(chat_id, user_id)
     async with lock:

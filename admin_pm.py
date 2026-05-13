@@ -1,3 +1,5 @@
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
 import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -157,3 +159,30 @@ async def creator_vip(message: types.Message):
         await update_user_field(cid, uid, "is_vip", is_vip)
         await message.answer(f"✅ VIP для <code>{uid}</code> в <code>{cid}</code> -> <b>{is_vip}</b>.")
     except Exception as e: await message.answer(f"❌ Ошибка: {e}")
+
+@router.message(Command("reset_game"))
+async def cmd_reset_game(message: types.Message):
+    if not CREATOR_ID or message.from_user.id != int(CREATOR_ID):
+        return await message.answer("Эта команда доступна только Создателю.")
+
+    target_id = None
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+    else:
+        args = message.text.split()
+        if len(args) > 1:
+            try:
+                target_id = int(args[1])
+            except ValueError:
+                return await message.answer("Неверный ID.")
+        else:
+            return await message.answer("Сделайте реплай или укажите ID: /reset_game [ID]")
+
+    try:
+         # Нужен доступ к диспетчеру для FSM
+        state = FSMContext(storage=message.bot.dispatcher.storage, key=StorageKey(bot_id=message.bot.id, chat_id=message.chat.id, user_id=target_id))
+        await state.clear()
+
+        await message.answer(f"✅ FSM стейт (включая зависший блэкджек) для пользователя <code>{target_id}</code> успешно сброшен.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка сброса стейта: {e}")
