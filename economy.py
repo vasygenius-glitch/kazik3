@@ -282,7 +282,46 @@ async def cmd_bonus(message: types.Message):
     user_id = message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
+    data = await get_user_data(chat_id, user_id, full_name)
+    if data.get('is_banned', False): return
+
+    from diseases import get_active_diseases
+    if 'gonorrhea' in await get_active_diseases(chat_id, user_id):
+        return await message.answer("🦠 Из-за болезни тебе отказано в бонусе.")
+
+    last_bonus = data.get('last_bonus_time', 0)
+    current_time = time.time()
+
+    if current_time - last_bonus < 14400:
+        from economy_utils import format_time_left
+        time_left = format_time_left(14400 - (current_time - last_bonus))
+        return await message.answer(f"⏳ Бонус пока недоступен.\nОсталось {time_left}")
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+
+    # Generate random string to prevent replay attacks and ensure only this message is valid
+    secret = secrets.token_hex(8)
+    builder.button(text="🎁 Забрать бонус", callback_data=f"claim_bonus_{user_id}_{secret}")
+
+    await message.answer("Нажмите кнопку ниже, чтобы забрать свой доход и бонус:", reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("claim_bonus_"))
+async def process_claim_bonus(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) < 4: return await callback.answer()
+
+    target_user_id = int(parts[2])
+    if callback.from_user.id != target_user_id:
+        return await callback.answer("Это не ваш бонус!", show_alert=True)
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    full_name = escape_html(callback.from_user.full_name)
+
+    # Use existing atomic logic
     success, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
+
     if success:
         text = f"🧾 <b>Квитанция о доходах</b>\n\n"
         if receipt.get('base', 0) > 0:
@@ -293,9 +332,9 @@ async def cmd_bonus(message: types.Message):
         text += f"-----------------------\n"
         text += f"💰 Итого на руки: <b>{receipt['total']}</b> сыроежек"
 
-        await message.answer(text)
+        await callback.message.edit_text(text)
     else:
-        await message.answer("❌ Ты уже собирал доход недавно. Попробуй позже!")
+        await callback.message.edit_text("❌ Ты уже собирал доход недавно. Попробуй позже!")
 
 @router.message(Command("work"))
 async def cmd_work(message: types.Message):

@@ -187,7 +187,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         
         last_bonus = data.get('last_bonus_time', 0)
 
-        if current_time - last_bonus >= 3600:
+        if current_time - last_bonus >= 14400:
             bank_deposit = data.get('bank_deposit', 0)
             bank_income = 0
             is_daily = False
