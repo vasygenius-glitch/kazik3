@@ -81,12 +81,18 @@ async def catch_all(message: Message):
         if full_text.strip():
             log_message(message.chat.id, message.chat.title or "Unknown", message.from_user.id, message.from_user.full_name, full_text)
             import asyncio
+            import time
             asyncio.create_task(increment_message_count(message.chat.id, message.from_user.id, message.from_user.full_name))
 
             # --- Логика болезни "Лобковые вши" ---
             # Избегаем тяжелых запросов в catch_all: запрашиваем профиль 1 раз. Если вшей нет, get_active_diseases не вызывается.
-            from user_manager import get_user_data, update_user_balance
+            from user_manager import get_user_data, update_user_balance, update_user_field
             u_data = await get_user_data(message.chat.id, message.from_user.id)
+
+            if u_data:
+                if time.time() - u_data.get('last_msg_time', 0) > 3600:
+                    await update_user_field(message.chat.id, message.from_user.id, 'last_msg_time', time.time())
+
             if u_data and 'lice' in u_data.get('diseases', {}):
                 from diseases import get_active_diseases
                 active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)

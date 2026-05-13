@@ -52,7 +52,7 @@ async def cmd_cups(message: types.Message):
         await message.answer("Ставка должна быть числом.")
         return
 
-    bonus_given, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
+    bonus_given, receipt, error_msg = await check_and_give_bonus(chat_id, user_id, full_name)
     bonus_text = f"🎁 Вы получили ежедневный бонус: {receipt.get('total', 0)} сыроежек!\n" if bonus_given else ""
 
     # Re-fetch data after bonus check

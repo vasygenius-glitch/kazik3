@@ -183,10 +183,13 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
     async with lock:
         data = await get_user_data(chat_id, user_id, full_name)
         if data.get('is_banned', False):
-            return False, {}
+            return False, {}, "Ты в бане и не можешь получать бонус."
 
         current_time = time.time()
         
+        if current_time - data.get('last_msg_time', 0) > 86400:
+            return False, {}, "❌ Вы должны быть активны в чате (написать хотя бы 1 сообщение за последние 24 часа), чтобы получать бонус."
+
         last_bonus = data.get('last_bonus_time', 0)
 
         if current_time - last_bonus >= 3600:
@@ -255,7 +258,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             tax_amt = int(extra_income * (tax_percent / 100.0))
             total_to_hand = base_bonus + extra_income - tax_amt
 
-            if total_to_hand <= 0: return False, {}
+            if total_to_hand <= 0: return False, {}, "К сожалению, налоги съели весь ваш бонус."
 
             ref = get_user_ref(chat_id, user_id)
             upd = {
@@ -275,8 +278,8 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
                 'base': base_bonus, 'business': biz_income, 'car': car_income,
                 'tax_percent': tax_percent, 'tax_amount': tax_amt, 'total': total_to_hand,
                 'is_banker_bonus': False
-            }
-        return False, {}
+            }, ""
+        return False, {}, "❌ Ты уже собирал доход недавно. Попробуй позже!"
 
 async def add_item_to_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)

@@ -282,7 +282,7 @@ async def cmd_bonus(message: types.Message):
     user_id = message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
-    success, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
+    success, receipt, error_msg = await check_and_give_bonus(chat_id, user_id, full_name)
     if success:
         text = f"🧾 <b>Квитанция о доходах</b>\n\n"
         if receipt.get('base', 0) > 0:
@@ -295,7 +295,7 @@ async def cmd_bonus(message: types.Message):
 
         await message.answer(text)
     else:
-        await message.answer("❌ Ты уже собирал доход недавно. Попробуй позже!")
+        await message.answer(error_msg)
 
 @router.message(Command("work"))
 async def cmd_work(message: types.Message):
