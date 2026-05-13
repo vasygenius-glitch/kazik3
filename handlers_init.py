@@ -23,6 +23,7 @@ from profile_bank import router as profile_bank_router
 from group_management import router as group_management_router
 from pets import router as pets_router
 from economy_features import router as economy_features_router
+from antibot import router as antibot_router
 from loans import router as loans_router
 from escort import router as escort_router
 from contracts import router as contracts_router
@@ -81,12 +82,18 @@ async def catch_all(message: Message):
         if full_text.strip():
             log_message(message.chat.id, message.chat.title or "Unknown", message.from_user.id, message.from_user.full_name, full_text)
             import asyncio
+            import time
             asyncio.create_task(increment_message_count(message.chat.id, message.from_user.id, message.from_user.full_name))
 
             # --- Логика болезни "Лобковые вши" ---
             # Избегаем тяжелых запросов в catch_all: запрашиваем профиль 1 раз. Если вшей нет, get_active_diseases не вызывается.
-            from user_manager import get_user_data, update_user_balance
+            from user_manager import get_user_data, update_user_balance, update_user_field
             u_data = await get_user_data(message.chat.id, message.from_user.id)
+
+            if u_data:
+                if time.time() - u_data.get('last_msg_time', 0) > 3600:
+                    await update_user_field(message.chat.id, message.from_user.id, 'last_msg_time', time.time())
+
             if u_data and 'lice' in u_data.get('diseases', {}):
                 from diseases import get_active_diseases
                 active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
@@ -104,6 +111,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(seasons_router)
     
     # Остальные модули
+    dp.include_router(antibot_router)
     dp.include_router(economy_router)
     dp.include_router(blackjack_router)
     dp.include_router(roulette_router)
