@@ -150,21 +150,6 @@ async def process_all_deals(callback: types.CallbackQuery):
         if buyer_data.get('balance', 0) < price:
             return await callback.message.edit_text("❌ У покупателя не хватило денег!")
 
-        from shop import ITEMS
-        item_info = ITEMS.get(item)
-        if item_info:
-            inv = buyer_data.get('inventory', {})
-            if item_info.get('cat') == 'biz':
-                limit = 4 if buyer_data.get('is_vip') else 2
-                biz_count = sum(inv.get(k, 1) for k in inv if ITEMS.get(k, {}).get('cat') == 'biz')
-                if inv.get(item, 0) >= 5:
-                    return await callback.answer("Сделка отменена: у покупателя лимит одинаковых бизнесов (5)!", show_alert=True)
-                if biz_count >= limit:
-                    return await callback.answer(f"Сделка отменена: у покупателя лимит бизнесов ({limit})!", show_alert=True)
-            elif item_info.get('cat') == 'cars':
-                if inv.get(item, 0) >= 2:
-                    return await callback.answer("Сделка отменена: у покупателя лимит одинаковых машин (2)!", show_alert=True)
-
         # Передача денег
         await update_user_balance(chat_id, buyer_id, -price)
         await update_user_balance(chat_id, seller_id, price)

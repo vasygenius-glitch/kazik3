@@ -33,14 +33,24 @@ async def cmd_dice(message: types.Message):
         return await message.answer("Ваш кредитный лимит (-5000) исчерпан. Пополните баланс.")
 
     rand = secrets.SystemRandom()
-    player_roll = rand.randint(1, 6)
-    bot_roll = rand.randint(1, 6)
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
     if is_creator:
         player_roll = 6
         bot_roll = 1
+    else:
+        # 40% win, 60% loss
+        is_win = rand.randint(1, 100) <= 40
+        if is_win:
+            # Generate winning rolls (player > bot)
+            player_roll = rand.randint(2, 6)
+            bot_roll = rand.randint(1, player_roll - 1)
+        else:
+            # Generate losing rolls (player < bot)
+            bot_roll = rand.randint(2, 6)
+            player_roll = rand.randint(1, bot_roll - 1)
 
     text = f"🎲 <b>Игра в кости</b>\n\nВы бросили: <b>{player_roll}</b>\nБот бросил: <b>{bot_roll}</b>\n\n"
 
