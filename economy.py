@@ -286,6 +286,16 @@ async def cmd_bonus(message: types.Message):
     if success:
         from antibot import check_antibot, send_captcha
         if check_antibot(chat_id, user_id):
+            # Если словили автокликера, выводим квитанцию и затем капчу
+            text = f"🧾 <b>Квитанция о доходах</b>\n\n"
+            if receipt.get('base', 0) > 0:
+                text += f"🎁 Ежедневный бонус: <b>{receipt['base']}</b>\n"
+            text += f"🏢 Доход с бизнесов: <b>{receipt['business']}</b>\n"
+            text += f"🚗 Доход с машин: <b>{receipt['car']}</b>\n"
+            text += f"➖ Налог ({receipt['tax_percent']}%): <b>-{receipt['tax_amount']}</b>\n"
+            text += f"-----------------------\n"
+            text += f"💰 Итого на руки: <b>{receipt['total']}</b> сыроежек"
+            await message.answer(text)
             return await send_captcha(message)
 
         text = f"🧾 <b>Квитанция о доходах</b>\n\n"

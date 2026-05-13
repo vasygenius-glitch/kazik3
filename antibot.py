@@ -4,12 +4,22 @@ from aiogram import Router, F, types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import update_user_balance, update_user_field
 import uuid
+import asyncio
 
 router = Router()
 
 # Кэш для отслеживания количества вызовов команд и активных капч
-# Формат: {(chat_id, user_id): {'count': 0, 'captcha_active': False, 'expected_game_id': None, 'last_update': 0}}
+# Формат: {(chat_id, user_id): {'count': 0, 'captcha_active': False, 'expected_game_id': None, 'correct_answer': None, 'last_update': 0}}
 _antibot_cache = {}
+
+def cleanup_antibot_cache():
+    current_time = time.time()
+    expired_keys = []
+    for key, data in _antibot_cache.items():
+        if current_time - data['last_update'] > 3600 * 24: # Очищаем через сутки неактивности
+            expired_keys.append(key)
+    for key in expired_keys:
+        del _antibot_cache[key]
 
 def check_antibot(chat_id: int, user_id: int) -> bool:
     """
@@ -18,7 +28,7 @@ def check_antibot(chat_id: int, user_id: int) -> bool:
     """
     key = (chat_id, user_id)
     if key not in _antibot_cache:
-        _antibot_cache[key] = {'count': 0, 'captcha_active': False, 'expected_game_id': None, 'last_update': time.time()}
+        _antibot_cache[key] = {'count': 0, 'captcha_active': False, 'expected_game_id': None, 'correct_answer': None, 'last_update': time.time()}
 
     _antibot_cache[key]['last_update'] = time.time()
 
@@ -31,12 +41,15 @@ def check_antibot(chat_id: int, user_id: int) -> bool:
         _antibot_cache[key]['captcha_active'] = True
         return True
 
+    # Периодическая очистка (в ленивом режиме)
+    if secrets.SystemRandom().random() < 0.01:
+        cleanup_antibot_cache()
+
     return False
 
 def generate_captcha(chat_id: int, user_id: int):
     """
     Генерирует математическую капчу.
-    Возвращает кортеж (текст_вопроса, список_кортежей(текст_кнопки, callback_data))
     """
     rand = secrets.SystemRandom()
     a = rand.randint(1, 20)
@@ -51,7 +64,6 @@ def generate_captcha(chat_id: int, user_id: int):
     question = f"Сколько будет {a} {operator} {b}?"
 
     options = [correct_ans, correct_ans + rand.randint(1, 5), correct_ans - rand.randint(1, 5)]
-    # Чтобы не было дублей, если рандом выдаст 0
     options = list(set(options))
     while len(options) < 3:
         new_opt = correct_ans + rand.randint(6, 15)
@@ -62,15 +74,16 @@ def generate_captcha(chat_id: int, user_id: int):
 
     game_id = str(uuid.uuid4())[:8]
 
-    # Сохраняем game_id для предотвращения подделки
+    # Сохраняем game_id и правильный ответ на сервере
     key = (chat_id, user_id)
     if key in _antibot_cache:
         _antibot_cache[key]['expected_game_id'] = game_id
+        _antibot_cache[key]['correct_answer'] = str(correct_ans)
 
     keyboard_options = []
     for opt in options:
-        is_correct = "1" if opt == correct_ans else "0"
-        cb_data = f"captcha_{game_id}_{is_correct}"
+        # Передаем только id игры и сам выбранный вариант ответа
+        cb_data = f"captcha_{game_id}_{opt}"
         keyboard_options.append((str(opt), cb_data))
 
     return question, keyboard_options
@@ -101,7 +114,7 @@ async def process_captcha(callback: types.CallbackQuery):
         return
 
     game_id = parts[1]
-    is_correct = parts[2] == "1"
+    selected_answer = parts[2]
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
@@ -115,11 +128,15 @@ async def process_captcha(callback: types.CallbackQuery):
     if expected_game_id != game_id:
         return await callback.answer("Эта капча устарела или недействительна.", show_alert=True)
 
+    correct_answer = _antibot_cache[key].get('correct_answer')
+    is_correct = (selected_answer == correct_answer)
+
     if is_correct:
         # Правильный ответ
         _antibot_cache[key]['count'] = 0
         _antibot_cache[key]['captcha_active'] = False
         _antibot_cache[key]['expected_game_id'] = None
+        _antibot_cache[key]['correct_answer'] = None
 
         # Обнуляем таймеры заработка (бонус от Босса)
         await update_user_field(chat_id, user_id, 'last_work_time', 0)

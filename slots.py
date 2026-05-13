@@ -70,30 +70,61 @@ async def cmd_slots(message: types.Message):
             await msg.edit_text(get_slots_frame(temp_slots, f"Вращение: {status}", bet, casino_title))
         except Exception: break
 
-    chance = await get_game_chance('slots')
-    is_forced_win = False
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-    if is_creator: is_forced_win = True
-    elif chance != -1 and secure_random.randint(1, 100) <= chance: is_forced_win = True
+    # Жесткий шанс 40% на победу, 60% на проигрыш
+    is_win = True if is_creator else (secure_random.random() < 0.40)
 
-    if is_forced_win:
-        if is_creator: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
+    if is_win:
+        if is_creator:
+            final_slots = ["7️⃣", "7️⃣", "7️⃣"]
         else:
-            win_types = ["jackpot", "mega", "three"]
-            chosen_win = secure_random.choice(win_types)
-            if chosen_win == "jackpot": final_slots = ["7️⃣", "7️⃣", "7️⃣"]
-            elif chosen_win == "mega":
+            # Распределение выигрышных комбинаций
+            # Можно сделать шанс выпадения джекпота маленьким, а простых комбинаций - большим
+            rand_val = secure_random.random()
+            if rand_val < 0.05: # 5% от выигрышных (т.е. 2% глобально)
+                final_slots = ["7️⃣", "7️⃣", "7️⃣"]
+            elif rand_val < 0.20: # 15% от выигрышных (MEGA)
                 sym = secure_random.choice(["💎", "🔔"])
                 final_slots = [sym, sym, sym]
-            else:
+            elif rand_val < 0.60: # 40% от выигрышных (Обычные три)
                 sym = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
                 final_slots = [sym, sym, sym]
+            else: # 40% от выигрышных - прибыльные пары (x2 или x1.5)
+                # Генерируем пару из 7, 💎 или 🔔
+                sym = secure_random.choice(["7️⃣", "💎", "🔔"])
+                other = secure_random.choice([e for e in EMOJIS if e != sym])
+                # Размещаем их случайно
+                pos = [sym, sym, other]
+                secure_random.shuffle(pos)
+                final_slots = pos
     else:
-        final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        if chance != -1:
-            while final_slots[0] == final_slots[1] == final_slots[2]:
-                final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
+        # 60% - гарантированный проигрыш
+        # Сгенерируем 3 символа, убедившись, что это НЕ три одинаковых и НЕ прибыльная пара
+        while True:
+            final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
+            # Проверка на три одинаковых
+            if final_slots[0] == final_slots[1] == final_slots[2]:
+                continue
+
+            # Проверка на пары
+            has_pair = False
+            pair_sym = None
+            if final_slots[0] == final_slots[1]:
+                has_pair = True; pair_sym = final_slots[0]
+            elif final_slots[1] == final_slots[2]:
+                has_pair = True; pair_sym = final_slots[1]
+            elif final_slots[0] == final_slots[2]:
+                has_pair = True; pair_sym = final_slots[0]
+
+            if has_pair:
+                # Если пара прибыльная (7, бриллиант, колокол), перегенерируем
+                if pair_sym in ["7️⃣", "💎", "🔔"]:
+                    continue
+
+            # Если дошли сюда, значит это либо все три разные, либо убыточная пара (фрукты, профит x0.5)
+            # Технически x0.5 это проигрыш, т.к. игрок теряет половину ставки. Оставляем.
+            break
 
     profit = 0
     if final_slots[0] == final_slots[1] == final_slots[2]:
