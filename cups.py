@@ -115,16 +115,14 @@ async def process_cups(callback: types.CallbackQuery):
     winning_cup = game['winning_cup']
     bet = game['bet']
 
-    # Проверка шансов (Подкрутка)
-    chance = await get_game_chance('cups')
-
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
 
     if is_creator:
         winning_cup = chosen_cup
-    elif chance != -1:
-        is_forced_win = (secure_random.randint(1, 100) <= chance)
+    else:
+        # Жестко закодированные шансы: 35% победа, 65% проигрыш
+        is_forced_win = (secure_random.randint(1, 100) <= 35)
         if is_forced_win:
             winning_cup = chosen_cup
         else:
