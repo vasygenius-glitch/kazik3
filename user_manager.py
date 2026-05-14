@@ -11,6 +11,7 @@ def get_user_ref(chat_id, user_id):
 
 # Кэш пользователей
 _user_cache = {}
+_username_to_id_cache = {} # Индекс: (chat_id, username_lower) -> user_id
 _dirty_cache = set()
 _user_locks = {} # Хранилище локов для предотвращения race condition
 CACHE_TTL = 60.0 
@@ -33,18 +34,41 @@ MAX_CACHE_SIZE = 1000
 
 def set_in_cache(chat_id, user_id, data):
     key = (chat_id, user_id)
+
+    # Если пользователь уже есть в кэше, удаляем его старый юзернейм из индекса
+    if key in _user_cache:
+        old_username = _user_cache[key]["data"].get("username")
+        if old_username:
+            _username_to_id_cache.pop((chat_id, old_username.lower()), None)
+
     if len(_user_cache) >= MAX_CACHE_SIZE and key not in _user_cache:
         # Простая очистка старейшего элемента
         oldest_key = next(iter(_user_cache))
-        _user_cache.pop(oldest_key)
+        oldest_entry = _user_cache.pop(oldest_key)
+
+        # Удаляем юзернейм вытесненного пользователя из индекса
+        evicted_username = oldest_entry["data"].get("username")
+        if evicted_username:
+            _username_to_id_cache.pop((oldest_key[0], evicted_username.lower()), None)
     
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
+
+    # Добавляем новый юзернейм в индекс
+    new_username = data.get("username")
+    if new_username:
+        _username_to_id_cache[(chat_id, new_username.lower())] = user_id
 
 def invalidate_user_cache(chat_id, user_id):
     """Принудительно удаляет профиль из кэша и из грязного списка.
     Используется при банах и вайпах."""
     key = (chat_id, user_id)
-    _user_cache.pop(key, None)
+
+    entry = _user_cache.pop(key, None)
+    if entry:
+        username = entry["data"].get("username")
+        if username:
+            _username_to_id_cache.pop((chat_id, username.lower()), None)
+
     _dirty_cache.discard(key)
 
     # Также очищаем FSM стейт из redis/memory если сможем
@@ -580,9 +604,6 @@ async def get_user_by_username_or_id(chat_id, identifier):
     Поиск пользователя в конкретном чате по ID или юзернейму.
     identifier может быть "12345" или "@username".
     """
-    db = get_db()
-    users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-
     # Пытаемся как ID
     target_id = None
     try:
@@ -591,6 +612,8 @@ async def get_user_by_username_or_id(chat_id, identifier):
         pass
 
     if target_id:
+        db = get_db()
+        users_ref = db.collection('chats').document(str(chat_id)).collection('users')
         doc = await users_ref.document(str(target_id)).get()
         if doc.exists:
             return target_id, doc.to_dict()
@@ -598,14 +621,16 @@ async def get_user_by_username_or_id(chat_id, identifier):
     # Если не ID или ID не найден, ищем по юзернейму
     username = identifier.replace("@", "").lower()
 
-    # Сначала ищем в кэше (быстрее)
-    for key, entry in _user_cache.items():
-        if key[0] == chat_id:
-            u_name = entry['data'].get('username', '').lower()
-            if u_name == username:
-                return key[1], entry['data']
+    # Сначала ищем в кэше (O(1) доступ через второй индекс)
+    cached_user_id = _username_to_id_cache.get((chat_id, username))
+    if cached_user_id:
+        entry = _user_cache.get((chat_id, cached_user_id))
+        if entry:
+            return cached_user_id, entry['data']
 
     # Если в кэше нет, ищем в БД (индексированный запрос)
+    db = get_db()
+    users_ref = db.collection('chats').document(str(chat_id)).collection('users')
     query = users_ref.where('username', '==', username).limit(1)
     docs = await query.get()
 
