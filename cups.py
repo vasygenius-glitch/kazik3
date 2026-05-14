@@ -9,6 +9,7 @@ from user_manager import get_user_data, update_user_balance, check_and_give_bonu
 from chances import get_game_chance
 from escape import escape_html
 from utils import schedule_delete
+from config import CREATOR_ID
 
 router = Router()
 
@@ -134,7 +135,6 @@ async def process_cups(callback: types.CallbackQuery):
     winning_cup = game['winning_cup']
     bet = game['bet']
 
-    from config import CREATOR_ID
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
 
     if is_creator:

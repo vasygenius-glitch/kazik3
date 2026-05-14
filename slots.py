@@ -96,21 +96,32 @@ async def process_slots_confirm(callback: types.CallbackQuery):
         is_forced_win = True
 
     if is_forced_win:
-        if is_creator: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
-        else:
-            win_types = ["jackpot", "mega", "three"]
-            chosen_win = secure_random.choice(win_types)
-            if chosen_win == "jackpot": final_slots = ["7️⃣", "7️⃣", "7️⃣"]
-            elif chosen_win == "mega":
-                sym = secure_random.choice(["💎", "🔔"])
-                final_slots = [sym, sym, sym]
+        if is_creator or secure_random.randint(1, 100) <= 15:
+            # 3-of-a-kind
+            if is_creator: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
             else:
-                sym = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
-                final_slots = [sym, sym, sym]
+                win_types = ["jackpot", "mega", "three"]
+                chosen_win = secure_random.choice(win_types)
+                if chosen_win == "jackpot": final_slots = ["7️⃣", "7️⃣", "7️⃣"]
+                elif chosen_win == "mega":
+                    sym = secure_random.choice(["💎", "🔔"])
+                    final_slots = [sym, sym, sym]
+                else:
+                    sym = secure_random.choice(["🍒", "🍋", "🍉", "🍇"])
+                    final_slots = [sym, sym, sym]
+        else:
+            # Pair
+            while True:
+                final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
+                # Check if it's a pair but NOT a 3-of-a-kind
+                if (final_slots[0] == final_slots[1] or final_slots[1] == final_slots[2] or final_slots[0] == final_slots[2]) and not (final_slots[0] == final_slots[1] == final_slots[2]):
+                    break
     else:
-        final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        while final_slots[0] == final_slots[1] == final_slots[2]:
+        # Complete loss
+        while True:
             final_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
+            if not (final_slots[0] == final_slots[1] or final_slots[1] == final_slots[2] or final_slots[0] == final_slots[2]):
+                break
 
     profit = 0
     if final_slots[0] == final_slots[1] == final_slots[2]:
@@ -136,6 +147,7 @@ async def process_slots_confirm(callback: types.CallbackQuery):
         await update_user_balance(chat_id, user_id, bet + profit)
 
     final_text = get_slots_frame(final_slots, status, bet, casino_title)
+    from seasons import get_glitch_text
     final_text = await get_glitch_text(final_text)
 
     try:

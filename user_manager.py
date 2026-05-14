@@ -618,18 +618,16 @@ async def get_user_by_username_or_id(chat_id, identifier):
             if u_name == username:
                 return key[1], entry['data']
 
-    # Если в кэше нет, ищем в БД
-    docs = await users_ref.get()
+    # Если в кэше нет, ищем в БД (индексированный запрос)
+    query = users_ref.where('username', '==', username).limit(1)
+    docs = await query.get()
+
     if hasattr(docs, '__aiter__'):
         async for doc in docs:
-            d = doc.to_dict()
-            if d.get('username', '').lower() == username:
-                return int(doc.id), d
+            return int(doc.id), doc.to_dict()
     else:
         for doc in docs:
-            d = doc.to_dict()
-            if d.get('username', '').lower() == username:
-                return int(doc.id), d
+            return int(doc.id), doc.to_dict()
 
     return None, None
 

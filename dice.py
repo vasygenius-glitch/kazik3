@@ -54,14 +54,24 @@ async def process_dice_confirm(callback: types.CallbackQuery):
     full_name = escape_html(callback.from_user.full_name)
     
     rand = secrets.SystemRandom()
-    player_roll = rand.randint(1, 6)
-    bot_roll = rand.randint(1, 6)
-
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+
     if is_creator:
-        player_roll = 6
-        bot_roll = 1
+        is_forced_win = True
+    else:
+        is_forced_win = (rand.randint(1, 100) <= 35)
+
+    while True:
+        player_roll = rand.randint(1, 6)
+        bot_roll = rand.randint(1, 6)
+
+        if is_forced_win:
+            if player_roll > bot_roll:
+                break
+        else:
+            if bot_roll > player_roll: # Forcing absolute loss (not even a tie) for forced_loss
+                break
     
     text = f"🎲 <b>Игра в кости</b>\n\nВы бросили: <b>{player_roll}</b>\nБот бросил: <b>{bot_roll}</b>\n\n"
 
