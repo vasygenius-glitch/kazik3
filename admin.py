@@ -38,6 +38,13 @@ async def cmd_ban_only_creator(message: types.Message, bot: Bot):
 
     try:
         await bot.ban_chat_member(chat_id=chat_id, user_id=target.id)
+
+        # Удаляем из кэша
+        from user_manager import _user_cache
+        cache_key = (chat_id, target.id)
+        if cache_key in _user_cache:
+            _user_cache.pop(cache_key)
+
         text = f"🔨 Пользователь <b>{escape_html(target.full_name)}</b> забанен навсегда.\n"
         if reason:
             text += f"Причина: <i>{escape_html(reason)}</i>"
