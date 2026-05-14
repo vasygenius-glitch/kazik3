@@ -30,6 +30,30 @@ async def schedule_delete(*messages, delay: int = 40):
             with suppress(Exception):
                 await msg.delete()
 
+# Список команд, на которые бот должен реагировать, чтобы не игнорировать их.
+ALLOWED_TEXT_COMMANDS = (
+    "кусь", "обнять", "поцеловать", "ударить", "диктор", "мут", "бан", "варн",
+    "снять варн", "снять", "повысить", "понизить", "админы", "кто админ", "создать банк",
+    "выплатить", "вернуть", "кредит", "приветствие", "заметка", "антилинк", "антивойс",
+    "био", "+правила", "правила", "+", "спасибо", "реп", "стата", "топ",
+    "казино", "блэкджек", "рулетка", "слоты", "кости", "крапс", "банка", "шлюха", "договор",
+    "профиль", "банк", "инвентарь", "inv", "inventory", "stocks", "season", "сезон"
+)
+
+def is_valid_command(text: str) -> bool:
+    if not text:
+        return False
+    text_lower = text.lower()
+
+    if text_lower.startswith(('/', '!', '?')):
+        return True
+
+    for cmd in ALLOWED_TEXT_COMMANDS:
+        if text_lower.startswith(cmd):
+            return True
+
+    return False
+
 async def check_maintenance():
     """Checks if maintenance mode is active in the database."""
     from db import get_db
