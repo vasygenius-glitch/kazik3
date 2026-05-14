@@ -1,5 +1,5 @@
 import asyncio
-import random
+import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -104,16 +104,16 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
         elif data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(chat_id, user_id, bet + profit)
         text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
-        msg = await message.answer(text)
-        asyncio.create_task(schedule_delete(msg, message))
+        msg = await callback.message.answer(text)
+        asyncio.create_task(schedule_delete(msg, callback.message))
         return
 
     await state.set_state(BlackjackState.playing)
-    await state.update_data(user_id=user_id, chat_id=chat_id, full_name=full_name, bet=bet, player_cards=player_cards, dealer_cards=dealer_cards, title=title)
+    await state.update_data(game_id=game_id, user_id=user_id, chat_id=chat_id, full_name=full_name, bet=bet, player_cards=player_cards, dealer_cards=dealer_cards, title=title)
 
     text = get_bj_frame(player_cards, dealer_cards, p_score, d_score, "Ваш ход...", full_name, bet, title)
-    await message.answer(text, reply_markup=get_bj_keyboard(game_id))
-    asyncio.create_task(schedule_delete(message))
+    await callback.message.answer(text, reply_markup=get_bj_keyboard(game_id))
+    asyncio.create_task(schedule_delete(callback.message))
 
 @router.callback_query(F.data.startswith("bj_hit_"))
 async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
@@ -126,8 +126,9 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     p_score = calculate_score(game['player_cards'])
     
     if p_score > 21:
+        secure_random = secrets.SystemRandom()
         is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-        if is_creator or random.randint(1, 100) <= 5:
+        if is_creator or secure_random.randint(1, 100) <= 5:
              game['player_cards'].pop()
              game['player_cards'].append({'rank': '2', 'suit': '♣'})
              p_score = calculate_score(game['player_cards'])
@@ -142,7 +143,7 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     else:
         await state.update_data(player_cards=game['player_cards'])
         text = get_bj_frame(game['player_cards'], game['dealer_cards'], p_score, 0, "Еще карту?", game['full_name'], game['bet'], game['title'])
-        await callback.message.edit_text(text, reply_markup=get_bj_keyboard(""))
+        await callback.message.edit_text(text, reply_markup=get_bj_keyboard(game['game_id']))
     await callback.answer()
 
 @router.callback_query(F.data.startswith("bj_stand_"))

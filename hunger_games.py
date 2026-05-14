@@ -1,4 +1,4 @@
-import random
+import secrets
 import asyncio
 import time
 from aiogram import Router, types, F, Bot
@@ -171,6 +171,7 @@ async def cmd_hg_cancel(message: types.Message):
     await message.answer("🚫 <b>Голодные Игры отменены Фронтменом.</b> Все взносы возвращены.")
 
 async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
+    secure_random = secrets.SystemRandom()
     game = active_hg[chat_id]
     # Используем копию списка участников для симуляции
     players = list(game['participants'])
@@ -199,18 +200,18 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
         await asyncio.sleep(4)
         
         # Выбираем случайное событие
-        if random.random() < 0.4 and len(players) >= 2: # Шанс смерти
-            p1_idx = random.randrange(len(players))
+        if secure_random.random() < 0.4 and len(players) >= 2: # Шанс смерти
+            p1_idx = secure_random.randrange(len(players))
             victim = players.pop(p1_idx)
-            killer = random.choice(players)
+            killer = secure_random.choice(players)
             
-            evt = random.choice(kill_events).format(p1=escape_html(victim['name']), p2=escape_html(killer['name']))
+            evt = secure_random.choice(kill_events).format(p1=escape_html(victim['name']), p2=escape_html(killer['name']))
             await message.answer(evt)
         else:
-            p1 = random.choice(players)
-            p2 = random.choice(players) if len(players) > 1 else p1
+            p1 = secure_random.choice(players)
+            p2 = secure_random.choice(players) if len(players) > 1 else p1
             
-            evt = random.choice(events).format(p1=escape_html(p1['name']), p2=escape_html(p2['name']))
+            evt = secure_random.choice(events).format(p1=escape_html(p1['name']), p2=escape_html(p2['name']))
             await message.answer(f"🏃 {evt}")
 
     # Победитель

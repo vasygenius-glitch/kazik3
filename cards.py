@@ -28,3 +28,16 @@ def calculate_score(cards):
 
 def format_cards(cards):
     return " ".join([f"{c['rank']}{c['suit']}" for c in cards])
+
+def get_baccarat_score(cards):
+    score = 0
+    for card in cards:
+        rank = card['rank']
+        if rank == 'A':
+            val = 1
+        elif rank in ['10', 'J', 'Q', 'K']:
+            val = 0
+        else:
+            val = int(rank)
+        score += val
+    return score % 10
