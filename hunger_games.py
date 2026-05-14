@@ -80,33 +80,42 @@ async def cmd_hg_create(message: types.Message):
 
 @firestore_async.transactional
 async def distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases):
-    # 1. Начисляем приз победителю
-    await update_user_balance_tr(transaction, chat_id, winner_id, prize)
-    # 2. Начисляем комиссию фронтмену
-    await update_user_balance_tr(transaction, chat_id, host_id, fee)
+    winner_ref = get_user_ref(chat_id, winner_id)
+    host_ref = get_user_ref(chat_id, host_id)
 
-    # 3. Синхронизируем болезни победителя (если он заразился ВИЧ в процессе)
-    if 'hiv' in winner_diseases:
-        ref = get_user_ref(chat_id, winner_id)
-        snapshot = await safe_get_snapshot(transaction, ref)
-        if snapshot.exists:
-            data = snapshot.to_dict()
-            d_dict = data.get('diseases', {}).copy()
+    # Пакетное чтение данных
+    winner_snap = await safe_get_snapshot(transaction, winner_ref)
+    host_snap = await safe_get_snapshot(transaction, host_ref)
+
+    winner_updates = {}
+    host_updates = {}
+
+    if winner_snap.exists:
+        winner_data = winner_snap.to_dict()
+        winner_updates['balance'] = winner_data.get('balance', 0) + prize
+
+        # Синхронизируем болезни победителя
+        if 'hiv' in winner_diseases:
+            d_dict = winner_data.get('diseases', {}).copy()
             if 'hiv' not in d_dict:
-                d_dict['hiv'] = time.time() + 3600 # На час
-                transaction.update(ref, {'diseases': d_dict})
+                d_dict['hiv'] = time.time() + 3600
+                winner_updates['diseases'] = d_dict
 
-                from user_manager import set_in_cache, mark_dirty
-                data['diseases'] = d_dict
-                set_in_cache(chat_id, winner_id, data)
-                mark_dirty(chat_id, winner_id)
+        transaction.update(winner_ref, winner_updates)
+
+    if host_snap.exists:
+        host_data = host_snap.to_dict()
+        host_updates['balance'] = host_data.get('balance', 0) + fee
+        transaction.update(host_ref, host_updates)
+
+    return winner_updates, host_updates
 
 @firestore_async.transactional
 async def join_hg_tr(transaction, chat_id, user_id, base_bet):
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
-        return None, "Пользователь не найден"
+        return None, "Пользователь не найден", None
 
     data = snapshot.to_dict()
     is_vip = data.get('is_vip', False)
@@ -114,7 +123,7 @@ async def join_hg_tr(transaction, chat_id, user_id, base_bet):
     bet = int(base_bet * 0.8) if is_vip else base_bet
 
     if data.get('balance', 0) < bet:
-        return None, "Недостаточно сыроежек для взноса!"
+        return None, "Недостаточно сыроежек для взноса!", None
 
     # Проверка на презерватив (дает защиту от болезней в игре)
     inventory = data.get('inventory', {}).copy()
@@ -125,26 +134,15 @@ async def join_hg_tr(transaction, chat_id, user_id, base_bet):
             del inventory['condom']
 
     new_balance = data.get('balance', 0) - bet
-
-    updates = {
-        'balance': new_balance,
-        'inventory': inventory
-    }
+    updates = {'balance': new_balance, 'inventory': inventory}
     transaction.update(ref, updates)
-
-    # Синхронизация кэша
-    from user_manager import set_in_cache, mark_dirty
-    data['balance'] = new_balance
-    data['inventory'] = inventory
-    set_in_cache(chat_id, user_id, data)
-    mark_dirty(chat_id, user_id)
 
     # Получаем активные болезни
     diseases_dict = data.get('diseases', {})
     current_time = time.time()
     active_diseases = [d for d, exp in diseases_dict.items() if current_time < exp]
 
-    return {
+    player_data = {
         'id': user_id,
         'name': data.get('full_name', 'Трибут'),
         'health': 100,
@@ -152,7 +150,8 @@ async def join_hg_tr(transaction, chat_id, user_id, base_bet):
         'has_condom': has_condom,
         'diseases': active_diseases,
         'bet_paid': bet
-    }, None
+    }
+    return player_data, None, updates
 
 @router.callback_query(F.data.startswith("hg_join_"))
 async def cb_hg_join(callback: types.CallbackQuery):
@@ -175,9 +174,16 @@ async def cb_hg_join(callback: types.CallbackQuery):
     # Списание ставки через транзакцию
     db = get_db()
     try:
-        player_data, error = await join_hg_tr(db.transaction(), chat_id, user_id, game['bet'])
+        player_data, error, updates = await join_hg_tr(db.transaction(), chat_id, user_id, game['bet'])
         if error:
             return await callback.answer(error, show_alert=True)
+
+        # Синхронизация кэша в вызывающем коде
+        from user_manager import _user_cache, mark_dirty
+        cached_entry = _user_cache.get((chat_id, user_id))
+        if cached_entry and "data" in cached_entry:
+            cached_entry["data"].update(updates)
+            mark_dirty(chat_id, user_id)
 
         game['players'].append(player_data)
         await callback.answer("Вы вступили в Голодные Игры! Да пребудет с вами удача.")
@@ -217,7 +223,7 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
         return await callback.answer("Нужно минимум 3 трибута для начала резни!", show_alert=True)
     
     game['state'] = 'running'
-    await callback.message.edit_text("🔔 <b>ГОНГ ПРОЗВУЧАЛ! ТРИБУТЫ БЕГУТ К РОГУ ИЗОБИЛИЯ!</b>")
+    await callback.message.edit_text("🔔 <b>ГОНГ ПРОЗВУЧАЛ! ТРИБУТЫ БЕГУТ к РОГУ ИЗОБИЛИЯ!</b>")
     
     # Запускаем симуляцию
     asyncio.create_task(run_hg_simulation(chat_id, callback.message, bot))
@@ -302,7 +308,21 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     # Транзакционное начисление
     db = get_db()
     try:
-        await distribute_prizes_tr(db.transaction(), chat_id, winner['id'], prize, game['host_id'], frontman_fee, winner['diseases'])
+        winner_upd, host_upd = await distribute_prizes_tr(db.transaction(), chat_id, winner['id'], prize, game['host_id'], frontman_fee, winner['diseases'])
+
+        # Синхронизация кэша в вызывающем коде
+        from user_manager import _user_cache, mark_dirty
+        if winner_upd:
+            w_entry = _user_cache.get((chat_id, winner['id']))
+            if w_entry and "data" in w_entry:
+                w_entry["data"].update(winner_upd)
+                mark_dirty(chat_id, winner['id'])
+        if host_upd:
+            h_entry = _user_cache.get((chat_id, game['host_id']))
+            if h_entry and "data" in h_entry:
+                h_entry["data"].update(host_upd)
+                mark_dirty(chat_id, game['host_id'])
+
     except Exception as e:
         print(f"HG Prize Distribution Error: {e}")
         # Если транзакция упала, попробуем обычный баланс (fallback)
@@ -312,7 +332,7 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     del active_hg[chat_id]
     
     await message.answer(
-        f"👑 <b>ПОБЕДИТЕЛЬ ГОЛОДНЫХ ИГР — {escape_html(winner['name'])}!</b>\n\n"
+        f"👑 <b>ПОБЕДИТЕЛЬ ГОЛОДНЫЕ ИГРЫ — {escape_html(winner['name'])}!</b>\n\n"
         f"💰 Выигрыш: <b>{prize}</b> сыр.\n"
         f"🎭 Фронтмен {escape_html(game['host_name'])} получил <b>{frontman_fee}</b> за зрелищность."
     )

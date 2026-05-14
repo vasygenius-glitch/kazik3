@@ -26,7 +26,7 @@ async def test_join_hg_tr_success():
 
         mock_snap.return_value = snapshot
 
-        player_data, error = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
 
         assert error is None
         assert player_data['id'] == user_id
@@ -34,7 +34,6 @@ async def test_join_hg_tr_success():
         assert player_data['has_condom'] is True
         transaction.update.assert_called_once()
         # Check that balance was deducted and condom removed
-        updates = transaction.update.call_args[0][1]
         assert updates['balance'] == 1000
         assert 'condom' not in updates['inventory']
 
@@ -60,11 +59,10 @@ async def test_join_hg_tr_vip_discount():
 
         mock_snap.return_value = snapshot
 
-        player_data, error = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
 
         assert error is None
         assert player_data['bet_paid'] == 800 # 20% discount
-        updates = transaction.update.call_args[0][1]
         assert updates['balance'] == 1200
 
 @pytest.mark.asyncio
@@ -77,20 +75,22 @@ async def test_distribute_prizes_tr():
     fee = 250
     winner_diseases = ['hiv']
 
-    snapshot = MagicMock()
-    snapshot.exists = True
-    snapshot.to_dict.return_value = {'diseases': {}}
+    winner_snap = MagicMock()
+    winner_snap.exists = True
+    winner_snap.to_dict.return_value = {'balance': 0, 'diseases': {}}
 
-    with patch('hunger_games.update_user_balance_tr', new_callable=AsyncMock) as mock_upd_bal, \
-         patch('hunger_games.get_user_ref'), \
+    host_snap = MagicMock()
+    host_snap.exists = True
+    host_snap.to_dict.return_value = {'balance': 0}
+
+    with patch('hunger_games.get_user_ref'), \
          patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
 
-        mock_snap.return_value = snapshot
+        mock_snap.side_effect = [winner_snap, host_snap]
 
-        await distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
+        winner_upd, host_upd = await distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
 
-        assert mock_upd_bal.call_count == 2
-        # Check that HIV was added to winner
-        transaction.update.assert_called_once()
-        updates = transaction.update.call_args[0][1]
-        assert 'hiv' in updates['diseases']
+        assert winner_upd['balance'] == 5000
+        assert 'hiv' in winner_upd['diseases']
+        assert host_upd['balance'] == 250
+        assert transaction.update.call_count == 2
