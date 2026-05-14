@@ -110,6 +110,13 @@ async def main():
                 print(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}")
                 await asyncio.sleep(5)
     finally:
+        print("🔄 Завершение работы: принудительная синхронизация данных...")
+        from user_manager import flush_user_data
+        try:
+            await asyncio.wait_for(flush_user_data(), timeout=10)
+            print("✅ Данные успешно синхронизированы.")
+        except Exception as e:
+            print(f"⚠️ Ошибка при финальной синхронизации: {e}")
         await bot.session.close()
 
 if __name__ == "__main__":

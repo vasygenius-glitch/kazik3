@@ -1,9 +1,12 @@
 import time
 import asyncio
 import secrets
+import logging
 from db import get_db
 from utils import fire_and_forget
 from admin_logs import log_transaction, check_balance_alert
+
+logger = logging.getLogger(__name__)
 
 def get_user_ref(chat_id, user_id):
     db = get_db()
@@ -64,24 +67,42 @@ def invalidate_user_cache(chat_id, user_id):
 def mark_dirty(chat_id, user_id):
     _dirty_cache.add((chat_id, user_id))
 
+async def flush_user_data():
+    """Синхронизирует грязный кэш с БД пачками по 500 записей."""
+    if not _dirty_cache:
+        return
+
+    to_flush = list(_dirty_cache)
+    # Разбиваем на пачки по 500 (лимит Firestore для batch, хотя мы используем gather,
+    # лимит соединений/памяти тоже стоит учитывать)
+    for i in range(0, len(to_flush), 500):
+        batch_keys = to_flush[i:i+500]
+        tasks = []
+        task_keys = []
+
+        for key in batch_keys:
+            _dirty_cache.discard(key)
+            cached_entry = _user_cache.get(key)
+            if cached_entry:
+                ref = get_user_ref(key[0], key[1])
+                tasks.append(ref.set(cached_entry["data"], merge=True))
+                task_keys.append(key)
+
+        if tasks:
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for key, result in zip(task_keys, results):
+                if isinstance(result, Exception):
+                    logger.error(f"⚠️ Ошибка записи пользователя {key}: {result}")
+                    _dirty_cache.add(key) # Возвращаем в грязный список для ретрая
+
 async def flush_user_data_task():
     """Фоновая задача для синхронизации кэша с БД раз в 15 секунд."""
     while True:
         try:
             await asyncio.sleep(15)
-            if not _dirty_cache:
-                continue
-            
-            to_flush = list(_dirty_cache)
-            for key in to_flush:
-                _dirty_cache.discard(key) # Удаляем только то, что собираемся записать
-                cached_entry = _user_cache.get(key)
-                if cached_entry:
-                    ref = get_user_ref(key[0], key[1])
-                    # Синхронизируем всё состояние пользователя
-                    fire_and_forget(ref.set(cached_entry["data"], merge=True))
+            await flush_user_data()
         except Exception as e:
-            print(f"⚠️ Ошибка при синхронизации кэша: {e}")
+            logger.error(f"⚠️ Ошибка при синхронизации кэша: {e}")
             
         # Очистка старых локов для предотвращения утечки памяти
         try:
