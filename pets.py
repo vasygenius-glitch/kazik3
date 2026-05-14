@@ -30,23 +30,52 @@ async def cmd_buypet(message: types.Message):
     pet_id = args[1].lower()
     if pet_id not in PETS_SHOP: return await message.answer("Такого питомца нет в магазине.")
 
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    data = await get_user_data(chat_id, user_id)
+    from db import get_db
+    from user_manager import get_user_ref, safe_get_snapshot, update_user_balance_tr, invalidate_user_cache
+    from firebase_admin import firestore_async
+    
+    db = get_db()
 
-    if data.get('pet'): return await message.answer("У вас уже есть питомец! Чтобы купить нового, старый должен сбежать.")
+    @firestore_async.transactional
+    async def run_pet_transaction(transaction, chat_id, user_id, pet_id, price):
+        ref = get_user_ref(chat_id, user_id)
+        snapshot = await safe_get_snapshot(transaction, ref)
+        if not snapshot.exists: return False, "Профиль не найден"
+        
+        data = snapshot.to_dict()
+        if data.get('pet'):
+            return False, "У вас уже есть питомец! Чтобы купить нового, старый должен сбежать."
+            
+        if data.get('balance', 0) < price:
+            return False, f"Недостаточно средств. Нужно {price} сыроежек."
 
-    price = PETS_SHOP[pet_id]['price']
-    if data.get('balance', 0) < price: return await message.answer(f"Недостаточно средств. Нужно {price} сыроежек.")
+        success, err = await update_user_balance_tr(transaction, chat_id, user_id, -price)
+        if not success: return False, err
+        
+        pet_data = {
+            'id': pet_id,
+            'last_fed': int(time.time())
+        }
+        transaction.update(ref, {'pet': pet_data})
+        return True, None
 
-    await update_user_balance(chat_id, user_id, -price)
+    try:
+        price = PETS_SHOP[pet_id]['price']
+        res = run_pet_transaction(db.transaction(), chat_id, user_id, pet_id, price)
+        if hasattr(res, "__aiter__"):
+            async for r in res: success, error_msg = r
+        else:
+            success, error_msg = await res
+            
+        if not success:
+            return await message.answer(error_msg)
+            
+        invalidate_user_cache(chat_id, user_id)
+        await message.answer(f"🎉 Вы успешно купили питомца: <b>{PETS_SHOP[pet_id]['name']}</b>!\nНе забывайте кормить его командой <code>/feed</code>!")
 
-    pet_data = {
-        'id': pet_id,
-        'last_fed': int(time.time())
-    }
-    await update_user_field(chat_id, user_id, 'pet', pet_data)
-    await message.answer(f"🎉 Вы успешно купили питомца: <b>{PETS_SHOP[pet_id]['name']}</b>!\nНе забывайте кормить его командой <code>/feed</code>!")
+    except Exception as e:
+        print(f"Pet buy error: {e}")
+        await message.answer("Ошибка при покупке питомца.")
 
 @router.message(Command("feed"))
 async def cmd_feed(message: types.Message):

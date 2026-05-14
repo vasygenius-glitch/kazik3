@@ -44,7 +44,8 @@ async def process_craps_confirm(callback: types.CallbackQuery):
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
     data = await get_user_data(chat_id, user_id)
     
-    if data.get('balance', 0) - bet < -5000:
+    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+    if new_balance is None:
         return await callback.answer("Недостаточно средств!", show_alert=True)
         
     await callback.message.delete()
@@ -88,8 +89,6 @@ async def process_craps_confirm(callback: types.CallbackQuery):
         is_natural = True
         is_craps = False
         is_win = True
-
-    await update_user_balance(chat_id, user_id, -bet)
     
     text = f"🎲 <b>Крэпс</b>\n\nБросок: <b>{die1} + {die2} = {total}</b>\n\n"
 

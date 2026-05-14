@@ -127,38 +127,35 @@ async def inv_upgrade(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
     
-    lock = get_inv_lock(chat_id, user_id)
-    if lock.locked():
-        return await callback.answer("⏳ Обработка...", show_alert=False)
-        
-    async with lock:
+    from db import get_db
+    from user_manager import upgrade_business_tr, get_user_data
+    from firebase_admin import firestore_async
+    
+    db = get_db()
+    
+    @firestore_async.transactional
+    async def run_upgrade_transaction(transaction, chat_id, user_id, item_id, cost, max_lvl):
+        return await upgrade_business_tr(transaction, chat_id, user_id, item_id, cost, max_lvl)
+
+    try:
         data = await get_user_data(chat_id, user_id)
-        
-        inventory = data.get('inventory', {})
-        if inventory.get(item_id, 0) <= 0:
-            return await callback.answer("У вас нет этого бизнеса!", show_alert=True)
-
-        biz_levels = data.get('biz_levels', {})
-        current_level = biz_levels.get(item_id, 1)
-        
-        if current_level >= MAX_BIZ_LEVEL:
-            return await callback.answer("Достигнут максимальный уровень!", show_alert=True)
-
+        current_level = data.get('biz_levels', {}).get(item_id, 1)
         upgrade_cost = int(info['price'] * 0.5 * current_level)
-        
-        if data.get('balance', 0) < upgrade_cost:
-            return await callback.answer("Недостаточно сыроежек для улучшения!", show_alert=True)
 
-        await update_user_balance(chat_id, user_id, -upgrade_cost)
+        success, error_msg = await run_upgrade_transaction(db.transaction(), chat_id, user_id, item_id, upgrade_cost, MAX_BIZ_LEVEL)
         
-        biz_levels[item_id] = current_level + 1
-        await update_user_field(chat_id, user_id, 'biz_levels', biz_levels)
+        if not success:
+            return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
+            
+        await callback.answer(f"🎉 Бизнес {info['name']} успешно улучшен!", show_alert=True)
         
-        await callback.answer(f"🎉 Бизнес {info['name']} улучшен до уровня {current_level + 1}!", show_alert=True)
-        
-        # We can fake the callback data to reload item info
+        # Reload UI
         callback.data = f"inv_item_{item_id}"
         await inv_item_info(callback)
+
+    except Exception as e:
+        print(f"Upgrade error: {e}")
+        return await callback.answer("Ошибка при улучшении.", show_alert=True)
 
 @router.callback_query(F.data.startswith("inv_sellcf_"))
 async def confirm_inv_sell(callback: types.CallbackQuery):

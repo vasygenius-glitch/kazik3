@@ -64,10 +64,10 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     full_name = escape_html(callback.from_user.full_name)
     data = await get_user_data(chat_id, user_id, full_name)
     
-    if data.get('balance', 0) - bet < -5000:
+    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+    if new_balance is None:
         return await callback.answer("Недостаточно средств!", show_alert=True)
         
-    await update_user_balance(chat_id, user_id, -bet)
     await callback.message.delete()
 
     from seasons import get_season_string, get_glitch_text

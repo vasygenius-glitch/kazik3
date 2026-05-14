@@ -57,6 +57,8 @@ async def cmd_deal(message: types.Message):
 
     try:
         price = int(args[1])
+        if price <= 0:
+            return await message.answer("Цена должна быть больше нуля.")
         item_name = args[2].lower()
         condition = " ".join(args[3:]) if len(args) > 3 else "Нет"
     except Exception: return
@@ -102,9 +104,16 @@ async def cmd_will(message: types.Message):
         return await message.answer("Сделай реплай на того, кому передаешь всё имущество.")
 
     deal_id = f"will_{int(time.time() * 1000)}"[-10:]
+    chat_id = message.chat.id
+    sender_id = message.from_user.id
+    sender_data = await get_user_data(chat_id, sender_id)
+    
+    if sender_data.get('balance', 0) < 0 or sender_data.get('bank_deposit', 0) < 0:
+        return await message.answer("❌ Нельзя передать наследство с долгами! Сначала закройте свои кредиты.")
+
     active_deals[deal_id] = {
         'type': 'inheritance',
-        'from_id': message.from_user.id,
+        'from_id': sender_id,
         'to_id': message.reply_to_message.from_user.id
     }
 
@@ -150,17 +159,16 @@ async def process_all_deals(callback: types.CallbackQuery):
         if buyer_data.get('balance', 0) < price:
             return await callback.message.edit_text("❌ У покупателя не хватило денег!")
 
-        # Передача денег
-        await update_user_balance(chat_id, buyer_id, -price)
-        await update_user_balance(chat_id, seller_id, price)
-
         # Передача предмета
         from user_manager import remove_item_from_inventory, add_item_to_inventory
         if await remove_item_from_inventory(chat_id, seller_id, item):
+            # Передача денег только ПОСЛЕ успешного изъятия предмета
+            await update_user_balance(chat_id, buyer_id, -price)
+            await update_user_balance(chat_id, seller_id, price)
             await add_item_to_inventory(chat_id, buyer_id, item)
             await callback.message.edit_text(f"✅ <b>Сделка завершена!</b>\nПредмет <b>{item}</b> перешел к новому владельцу за <b>{price}</b> сыр.")
         else:
-            await callback.message.edit_text("❌ Произошла ошибка: предмет исчез у продавца.")
+            await callback.message.edit_text("❌ Произошла ошибка: предмета больше нет у продавца.")
 
     elif info['type'] == 'inheritance':
         sender_id = info['from_id']

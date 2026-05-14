@@ -325,10 +325,21 @@ async def process_sell_confirm(callback: types.CallbackQuery):
 
     # Verify user still has the item
     if item_id == "вип":
-        if not data.get('is_vip'):
-            return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
-        await update_user_field(chat_id, user_id, 'is_vip', False)
-        await update_user_balance(chat_id, user_id, sell_price)
+        from db import get_db
+        from user_manager import sell_vip_tr
+        from firebase_admin import firestore_async
+        db = get_db()
+
+        @firestore_async.transactional
+        async def run_sell_vip_transaction(transaction, chat_id, user_id, price):
+            return await sell_vip_tr(transaction, chat_id, user_id, price)
+
+        try:
+            success = await run_sell_vip_transaction(db.transaction(), chat_id, user_id, sell_price)
+            if not success:
+                return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
+        except Exception:
+            return await callback.answer('Произошла ошибка при продаже VIP. Попробуйте еще раз.', show_alert=True)
     else:
         from db import get_db
         from user_manager import sell_item_tr

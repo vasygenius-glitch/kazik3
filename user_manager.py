@@ -82,6 +82,18 @@ async def flush_user_data_task():
                     fire_and_forget(ref.set(cached_entry["data"], merge=True))
         except Exception as e:
             print(f"⚠️ Ошибка при синхронизации кэша: {e}")
+            
+        # Очистка старых локов для предотвращения утечки памяти
+        try:
+            current_keys = set(_user_cache.keys())
+            lock_keys = list(_user_locks.keys())
+            for key in lock_keys:
+                if key not in current_keys:
+                    lock = _user_locks.get(key)
+                    if lock and not lock.locked():
+                        _user_locks.pop(key, None)
+        except Exception:
+            pass
 
 async def get_user_data(chat_id, user_id, full_name=None):
     cached_data = get_from_cache(chat_id, user_id)
@@ -212,6 +224,15 @@ async def update_user_field(chat_id, user_id, field, value):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
+        
+        # Logging for balance changes in update_user_field (e.g. from admin setbal)
+        if field == 'balance':
+            old_balance = data.get('balance', 0)
+            amount_changed = value - old_balance
+            if abs(amount_changed) >= 500000:
+                fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, "Balance Set", "Set", amount_changed))
+            fire_and_forget(check_balance_alert(chat_id, user_id, data.get('full_name', 'Player'), value))
+
         data[field] = value
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
@@ -472,8 +493,52 @@ async def sell_vip_tr(transaction, chat_id, user_id, sell_price):
             cached_data["data"]['is_vip'] = False
             cached_data["data"]['balance'] = new_balance
             mark_dirty(chat_id, user_id)
+        
         return True
     return False
+
+async def upgrade_business_tr(transaction, chat_id, user_id, item_id, upgrade_cost, max_level):
+    """Атомарное улучшение бизнеса внутри транзакции."""
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await safe_get_snapshot(transaction, ref)
+    
+    if snapshot.exists:
+        data = snapshot.to_dict()
+        balance = data.get('balance', 0)
+        biz_levels = data.get('biz_levels', {}).copy()
+        inventory = data.get('inventory', {})
+        
+        if inventory.get(item_id, 0) <= 0:
+            return False, "У вас нет этого бизнеса"
+            
+        current_level = biz_levels.get(item_id, 1)
+        if current_level >= max_level:
+            return False, "Максимальный уровень уже достигнут"
+            
+        if balance < upgrade_cost:
+            return False, "Недостаточно сыроежек"
+            
+        new_balance = balance - upgrade_cost
+        biz_levels[item_id] = current_level + 1
+        
+        updates = {
+            'balance': new_balance,
+            'biz_levels': biz_levels
+        }
+        
+        if transaction:
+            transaction.update(ref, updates)
+        else:
+            await ref.update(updates)
+            
+        # Синхронизация кэша
+        cached_data = _user_cache.get((chat_id, user_id))
+        if cached_data and "data" in cached_data:
+            cached_data["data"]['balance'] = new_balance
+            cached_data["data"]['biz_levels'] = biz_levels
+            mark_dirty(chat_id, user_id)
+        return True, None
+    return False, "Пользователь не найден"
 
 
 async def get_top_users(chat_id, limit=10):
@@ -516,6 +581,11 @@ async def wipe_user_data(chat_id, user_id):
             'last_crime_time': 0,
             'inventory': {},
             'biz_levels': {},
+            'crypto_portfolio': {},
+            'stocks_portfolio': {},
+            'pet': {},
+            'skills': {},
+            'diseases': [],
             'warns': [],
             'is_banned': data.get('is_banned', False),
             'hide_in_top': False,
@@ -523,7 +593,8 @@ async def wipe_user_data(chat_id, user_id):
             'is_vip': False,
             'is_banker': False,
             'debts': {},
-            'escort_count': 0
+            'escort_count': 0,
+            'crypto_banned': False
         }
         await ref.set(default_data)
         invalidate_user_cache(chat_id, user_id)

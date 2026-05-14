@@ -44,7 +44,8 @@ async def process_dice_confirm(callback: types.CallbackQuery):
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
     data = await get_user_data(chat_id, user_id)
     
-    if data.get('balance', 0) - bet < -5000:
+    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+    if new_balance is None:
         return await callback.answer("Недостаточно средств!", show_alert=True)
         
     await callback.message.delete()
@@ -61,8 +62,6 @@ async def process_dice_confirm(callback: types.CallbackQuery):
     if is_creator:
         player_roll = 6
         bot_roll = 1
-
-    await update_user_balance(chat_id, user_id, -bet)
     
     text = f"🎲 <b>Игра в кости</b>\n\nВы бросили: <b>{player_roll}</b>\nБот бросил: <b>{bot_roll}</b>\n\n"
 
