@@ -5,8 +5,13 @@ from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from escape import escape_html
-from user_manager import get_user_data, update_user_balance, update_user_field
+from user_manager import (
+    get_user_data, update_user_balance, update_user_field,
+    update_user_balance_tr, get_user_ref, safe_get_snapshot
+)
 from config import CREATOR_ID
+from db import get_db
+from firebase_admin import firestore_async
 
 router = Router()
 
@@ -73,6 +78,82 @@ async def cmd_hg_create(message: types.Message):
         reply_markup=builder.as_markup()
     )
 
+@firestore_async.transactional
+async def distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases):
+    # 1. Начисляем приз победителю
+    await update_user_balance_tr(transaction, chat_id, winner_id, prize)
+    # 2. Начисляем комиссию фронтмену
+    await update_user_balance_tr(transaction, chat_id, host_id, fee)
+
+    # 3. Синхронизируем болезни победителя (если он заразился ВИЧ в процессе)
+    if 'hiv' in winner_diseases:
+        ref = get_user_ref(chat_id, winner_id)
+        snapshot = await safe_get_snapshot(transaction, ref)
+        if snapshot.exists:
+            data = snapshot.to_dict()
+            d_dict = data.get('diseases', {}).copy()
+            if 'hiv' not in d_dict:
+                d_dict['hiv'] = time.time() + 3600 # На час
+                transaction.update(ref, {'diseases': d_dict})
+
+                from user_manager import set_in_cache, mark_dirty
+                data['diseases'] = d_dict
+                set_in_cache(chat_id, winner_id, data)
+                mark_dirty(chat_id, winner_id)
+
+@firestore_async.transactional
+async def join_hg_tr(transaction, chat_id, user_id, base_bet):
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await safe_get_snapshot(transaction, ref)
+    if not snapshot.exists:
+        return None, "Пользователь не найден"
+
+    data = snapshot.to_dict()
+    is_vip = data.get('is_vip', False)
+    # VIP скидка 20%
+    bet = int(base_bet * 0.8) if is_vip else base_bet
+
+    if data.get('balance', 0) < bet:
+        return None, "Недостаточно сыроежек для взноса!"
+
+    # Проверка на презерватив (дает защиту от болезней в игре)
+    inventory = data.get('inventory', {}).copy()
+    has_condom = inventory.get('condom', 0) > 0
+    if has_condom:
+        inventory['condom'] -= 1
+        if inventory['condom'] <= 0:
+            del inventory['condom']
+
+    new_balance = data.get('balance', 0) - bet
+
+    updates = {
+        'balance': new_balance,
+        'inventory': inventory
+    }
+    transaction.update(ref, updates)
+
+    # Синхронизация кэша
+    from user_manager import set_in_cache, mark_dirty
+    data['balance'] = new_balance
+    data['inventory'] = inventory
+    set_in_cache(chat_id, user_id, data)
+    mark_dirty(chat_id, user_id)
+
+    # Получаем активные болезни
+    diseases_dict = data.get('diseases', {})
+    current_time = time.time()
+    active_diseases = [d for d, exp in diseases_dict.items() if current_time < exp]
+
+    return {
+        'id': user_id,
+        'name': data.get('full_name', 'Трибут'),
+        'health': 100,
+        'is_vip': is_vip,
+        'has_condom': has_condom,
+        'diseases': active_diseases,
+        'bet_paid': bet
+    }, None
+
 @router.callback_query(F.data.startswith("hg_join_"))
 async def cb_hg_join(callback: types.CallbackQuery):
     chat_id = int(callback.data.split("_")[2])
@@ -91,21 +172,18 @@ async def cb_hg_join(callback: types.CallbackQuery):
     if len(game['players']) >= 10:
         return await callback.answer("Арена переполнена! Максимум 10 человек.", show_alert=True)
     
-    # Списание ставки
-    data = await get_user_data(chat_id, user_id)
-    if data.get('balance', 0) < game['bet']:
-        return await callback.answer("У вас недостаточно сыроежек для взноса!", show_alert=True)
-    
-    await update_user_balance(chat_id, user_id, -game['bet'])
-    
-    game['players'].append({
-        'id': user_id,
-        'name': callback.from_user.full_name,
-        'health': 100,
-        'items': []
-    })
-    
-    await callback.answer("Вы вступили в Голодные Игры! Да пребудет с вами удача.")
+    # Списание ставки через транзакцию
+    db = get_db()
+    try:
+        player_data, error = await join_hg_tr(db.transaction(), chat_id, user_id, game['bet'])
+        if error:
+            return await callback.answer(error, show_alert=True)
+
+        game['players'].append(player_data)
+        await callback.answer("Вы вступили в Голодные Игры! Да пребудет с вами удача.")
+    except Exception as e:
+        print(f"HG Join Error: {e}")
+        return await callback.answer("Произошла ошибка при вступлении.", show_alert=True)
     
     # Обновляем сообщение
     builder = InlineKeyboardBuilder()
@@ -147,7 +225,9 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
 async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     game = active_hg[chat_id]
     players = game['players']
-    bet = game['bet']
+
+    # Считаем общий пул на основе фактически списанных ставок (у VIP меньше взнос, но пул честный)
+    total_pool = sum(p['bet_paid'] for p in game['players'])
     
     events = [
         "{p1} нашел заржавевший меч и чувствует себя увереннее.",
@@ -171,10 +251,36 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     while len(players) > 1:
         await asyncio.sleep(4)
         
+        # Шанс случайного заражения ЗППП (если не VIP и нет защиты)
+        if random.random() < 0.15:
+            p = random.choice(players)
+            if not p.get('is_vip') and not p.get('has_condom'):
+                if 'hiv' not in p['diseases']:
+                    p['diseases'].append('hiv')
+                    await message.answer(f"🤮 <b>{escape_html(p['name'])}</b> наступил на зараженную иглу! Кажется, это ВИЧ...")
+            elif p.get('has_condom'):
+                # Презерватив уже был использован при входе, но мы дали флаг.
+                # Пусть он защищает один раз "в процессе"? Или он уже "списан" был.
+                # В моей реализации join_hg_tr он списывается сразу.
+                pass
+
         # Выбираем случайное событие
         if random.random() < 0.4 and len(players) >= 2: # Шанс смерти
             p1_idx = random.randrange(len(players))
-            victim = players.pop(p1_idx)
+            victim = players[p1_idx]
+
+            # Влияние болезней: если у игрока ВИЧ, его шансы выжить падают
+            survival_chance = 0.3 if victim.get('is_vip') else 0.05
+            if 'hiv' in victim['diseases']:
+                survival_chance -= 0.15
+
+            # Проверка на выживание (VIP или просто очень везучий)
+            if random.random() < survival_chance:
+                reason = "VIP статус" if victim.get('is_vip') else "невероятное везение"
+                await message.answer(f"🛡 <b>{escape_html(victim['name'])}</b> сохранил жизнь благодаря {reason}!")
+                continue
+
+            players.pop(p1_idx)
             killer = random.choice(players)
             
             evt = random.choice(kill_events).format(p1=escape_html(victim['name']), p2=escape_html(killer['name']))
@@ -188,15 +294,21 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
 
     # Победитель
     winner = players[0]
-    total_pool = bet * (len(game['players']))
     
-    # Фронтмен получает 5% за организацию (не имбово, но приятно)
+    # Фронтмен получает 5% за организацию
     frontman_fee = int(total_pool * 0.05)
     prize = total_pool - frontman_fee
     
-    await update_user_balance(chat_id, winner['id'], prize)
-    await update_user_balance(chat_id, game['host_id'], frontman_fee)
-    
+    # Транзакционное начисление
+    db = get_db()
+    try:
+        await distribute_prizes_tr(db.transaction(), chat_id, winner['id'], prize, game['host_id'], frontman_fee, winner['diseases'])
+    except Exception as e:
+        print(f"HG Prize Distribution Error: {e}")
+        # Если транзакция упала, попробуем обычный баланс (fallback)
+        await update_user_balance(chat_id, winner['id'], prize)
+        await update_user_balance(chat_id, game['host_id'], frontman_fee)
+
     del active_hg[chat_id]
     
     await message.answer(
