@@ -708,7 +708,57 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         )
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
 
-        await show_bank_upgrades(callback, chat_id, banker_id)
+    elif action == "buyupg":
+        upg_type = data_parts[2]
+        banker_id = int(data_parts[3])
+
+        if callback.from_user.id != banker_id: return
+
+        bank_data = await get_bank_info(chat_id, banker_id)
+        capital = bank_data.get('capital', 0)
+
+        if upg_type == "armor":
+            lvl = bank_data.get('upgrade_armor', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 10000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_armor': lvl + 1})
+            await callback.answer(f"✅ Броневики улучшены до уровня {lvl + 1}!")
+
+        elif upg_type == "earn":
+            lvl = bank_data.get('upgrade_earnings', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 12000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_earnings': lvl + 1})
+            await callback.answer(f"✅ Вместимость улучшена до уровня {lvl + 1}!")
+
+        elif upg_type == "banker":
+            lvl = bank_data.get('upgrade_banker', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 20000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_banker': lvl + 1})
+            await callback.answer(f"✅ Доля банкира улучшена до уровня {lvl + 1}!")
+
+        elif upg_type == "market":
+            lvl = bank_data.get('upgrade_marketing', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 15000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_marketing': lvl + 1})
+            await callback.answer(f"✅ Маркетинг улучшен до уровня {lvl + 1}!")
+
+        elif upg_type == "sec":
+            lvl = bank_data.get('upgrade_security', 0)
+            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
+            price = 15000000 * (lvl + 1)
+            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_security': lvl + 1})
+            await callback.answer(f"✅ Охрана сейфа улучшена до уровня {lvl + 1}!")
+
+        # Обновляем экран улучшений
+        return await show_bank_upgrades(callback, chat_id, banker_id)
 
 async def show_bank_upgrades(callback: types.CallbackQuery, chat_id: int, banker_id: int):
     bank_data = await get_bank_info(chat_id, banker_id)
@@ -772,58 +822,6 @@ async def show_bank_upgrades(callback: types.CallbackQuery, chat_id: int, banker
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
     except Exception:
         pass
-
-    elif action == "buyupg":
-        upg_type = parts[2]
-        banker_id = int(parts[3])
-
-        if callback.from_user.id != banker_id: return
-
-        bank_data = await get_bank_info(chat_id, banker_id)
-        capital = bank_data.get('capital', 0)
-
-        if upg_type == "armor":
-            lvl = bank_data.get('upgrade_armor', 0)
-            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
-            price = 10000000 * (lvl + 1)
-            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
-            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_armor': lvl + 1})
-            await callback.answer(f"✅ Броневики улучшены до уровня {lvl + 1}!")
-
-        elif upg_type == "earn":
-            lvl = bank_data.get('upgrade_earnings', 0)
-            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
-            price = 12000000 * (lvl + 1)
-            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
-            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_earnings': lvl + 1})
-            await callback.answer(f"✅ Вместимость улучшена до уровня {lvl + 1}!")
-
-        elif upg_type == "banker":
-            lvl = bank_data.get('upgrade_banker', 0)
-            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
-            price = 20000000 * (lvl + 1)
-            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
-            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_banker': lvl + 1})
-            await callback.answer(f"✅ Доля банкира улучшена до уровня {lvl + 1}!")
-
-        elif upg_type == "market":
-            lvl = bank_data.get('upgrade_marketing', 0)
-            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
-            price = 15000000 * (lvl + 1)
-            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
-            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_marketing': lvl + 1})
-            await callback.answer(f"✅ Маркетинг улучшен до уровня {lvl + 1}!")
-
-        elif upg_type == "sec":
-            lvl = bank_data.get('upgrade_security', 0)
-            if lvl >= 5: return await callback.answer("Максимальный уровень!", show_alert=True)
-            price = 15000000 * (lvl + 1)
-            if capital < price: return await callback.answer("❌ Недостаточно капитала банка!", show_alert=True)
-            await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_security': lvl + 1})
-            await callback.answer(f"✅ Охрана сейфа улучшена до уровня {lvl + 1}!")
-
-        # Вместо рекурсии и изменения замороженного callback.data, просто обновляем экран улучшений
-        return await show_bank_upgrades(callback, chat_id, banker_id)
 
 import random
 import time
