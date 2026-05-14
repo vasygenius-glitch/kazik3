@@ -506,7 +506,7 @@ async def wipe_user_data(chat_id, user_id):
     async with lock:
         ref = get_user_ref(chat_id, user_id)
         data = await get_user_data(chat_id, user_id)
-        full_name = data.get('full_name', 'Игрок')
+        full_name = data.get('full_name', 'Player')
         default_data = {
             'balance': 500,
             'bank_deposit': 0,
