@@ -1,5 +1,4 @@
 import asyncio
-import random
 import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -79,7 +78,7 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     for i in range(4):
         await asyncio.sleep(0.5)
         try:
-            await msg.edit_text(get_roulette_frame(i * 2, random.randint(1,36), bet, title, guess))
+            await msg.edit_text(get_roulette_frame(i * 2, secure_random.randint(1,36), bet, title, guess))
         except Exception: break
 
     chance = await get_game_chance('roulette')
@@ -111,7 +110,7 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
         profit = total_win - bet
         if data.get('is_banker'): profit = int(profit * 0.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Roulette Win")
         res_text = f"✅ <b>ВЫИГРЫШ: +{profit}</b>\n{mult_text}"
     else:
         res_text = f"❌ <b>ПРОИГРЫШ: -{bet}</b>\n{mult_text}"

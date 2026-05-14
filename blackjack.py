@@ -1,5 +1,5 @@
 import asyncio
-import random
+import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -13,6 +13,7 @@ from config import CREATOR_ID
 from utils import schedule_delete
 
 router = Router()
+secure_random = secrets.SystemRandom()
 
 class BlackjackState(StatesGroup):
     playing = State()
@@ -102,7 +103,7 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
         profit = int(bet * 1.5)
         if data.get('is_banker'): profit = int(profit * 0.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Blackjack Win")
         text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
         msg = await message.answer(text)
         asyncio.create_task(schedule_delete(msg, message))
@@ -127,7 +128,7 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     
     if p_score > 21:
         is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-        if is_creator or random.randint(1, 100) <= 5:
+        if is_creator or secure_random.randint(1, 100) <= 5:
              game['player_cards'].pop()
              game['player_cards'].append({'rank': '2', 'suit': '♣'})
              p_score = calculate_score(game['player_cards'])
@@ -157,13 +158,11 @@ async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: FSMContext):
-    import secrets
     from seasons import get_glitch_text
     p_score = calculate_score(game['player_cards'])
     dealer_cards = game['dealer_cards']
     
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-    secure_random = secrets.SystemRandom()
 
     if is_creator:
         target_win = True
@@ -216,7 +215,7 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
         profit = bet
         if data.get('is_banker'): profit = int(profit * 0.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
-        await update_user_balance(game['chat_id'], game['user_id'], bet + profit)
+        await update_user_balance(game['chat_id'], game['user_id'], bet + profit, action="Blackjack Win")
         res = f"✅ <b>ПОБЕДА! +{profit}</b>"
     elif p_score < d_score:
         res = f"❌ <b>ПРОИГРЫШ! -{bet}</b>"

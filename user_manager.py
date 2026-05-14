@@ -140,7 +140,7 @@ async def get_user_data(chat_id, user_id, full_name=None):
         mark_dirty(chat_id, user_id)
         return default_data
 
-async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_debt_repayment=False):
+async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_debt_repayment=False, action="Balance Update"):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
@@ -156,7 +156,7 @@ async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_deb
 
         # WORKER 3: Logging & Anti-Cheat
         if abs(amount) >= 500000:
-            fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, "Balance Update", "Change", amount))
+            fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, action, "Change", amount))
         
         fire_and_forget(check_balance_alert(chat_id, user_id, data.get('full_name', 'Player'), new_balance))
 

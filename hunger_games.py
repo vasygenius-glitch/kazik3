@@ -1,9 +1,8 @@
-import random
 import asyncio
 import time
 import secrets
 
-s_random = secrets.SystemRandom()
+secure_random = secrets.SystemRandom()
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -187,15 +186,15 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
         
         current_round_logs = [f"📅 <b>ДЕНЬ {round_num}</b>"]
         # Количество событий зависит от числа игроков
-        num_events = s_random.randint(2, 3) if len(players) > 4 else 2
+        num_events = secure_random.randint(2, 3) if len(players) > 4 else 2
 
         for _ in range(num_events):
             if len(players) <= 1: break
 
-            evt = s_random.choice(events)
-            p1 = s_random.choice(players)
+            evt = secure_random.choice(events)
+            p1 = secure_random.choice(players)
             others = [p for p in players if p['id'] != p1['id']]
-            p2 = s_random.choice(others) if others else p1
+            p2 = secure_random.choice(others) if others else p1
             
             target = p1 if evt['target'] == 'p1' else p2
             target['health'] += evt['hp']
@@ -235,8 +234,8 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     frontman_fee = int(total_pool * 0.05)
     prize = total_pool - frontman_fee
     
-    await update_user_balance(chat_id, winner['id'], prize)
-    await update_user_balance(chat_id, game['host_id'], frontman_fee)
+    await update_user_balance(chat_id, winner['id'], prize, action="Hunger Games Win")
+    await update_user_balance(chat_id, game['host_id'], frontman_fee, action="Hunger Games Fee")
     
     if chat_id in active_hg:
         del active_hg[chat_id]

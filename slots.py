@@ -1,5 +1,4 @@
 import asyncio
-import random
 import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -79,9 +78,9 @@ async def process_slots_confirm(callback: types.CallbackQuery):
     for status in frames:
         await asyncio.sleep(0.5)
         temp_slots = [secure_random.choice(EMOJIS) for _ in range(3)]
-        if random.random() < 0.15:
+        if secure_random.random() < 0.15:
             glitches = ["ζ", "⧫", "☠", "⌬", "╳"]
-            temp_slots[random.randint(0,2)] = secure_random.choice(glitches)
+            temp_slots[secure_random.randint(0,2)] = secure_random.choice(glitches)
             
         try:
             await msg.edit_text(get_slots_frame(temp_slots, f"Вращение: {status}", bet, casino_title))
@@ -133,7 +132,7 @@ async def process_slots_confirm(callback: types.CallbackQuery):
     if profit > 0:
         if data.get('is_banker'): profit = int(profit * 0.5)
         elif data.get('is_vip'): profit += int(profit * 0.1)
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Slots Win")
 
     final_text = get_slots_frame(final_slots, status, bet, casino_title)
     final_text = await get_glitch_text(final_text)

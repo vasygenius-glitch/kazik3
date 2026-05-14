@@ -1,5 +1,4 @@
 import asyncio
-import random
 import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -175,7 +174,7 @@ async def process_cups(callback: types.CallbackQuery):
             profit += vip_profit_bonus
             vip_bonus_text = f" (👑 VIP бонус: +{vip_profit_bonus})"
 
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Cups Win")
         result_text = f"<b>Победа!</b> Вы угадали и выиграли {profit} сыроежек! {vip_bonus_text}"
     else:
         result_text = f"<b>Проигрыш!</b> Шарик был в другом месте. Вы потеряли {bet} сыроежек."

@@ -55,28 +55,28 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
         
     await callback.message.delete()
     
-    rand = secrets.SystemRandom()
+    secure_random = secrets.SystemRandom()
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-    is_win = rand.randint(1, 100) <= 35
+    is_win = secure_random.randint(1, 100) <= 35
 
     while True:
         # Draw cards (1-13 where 11, 12, 13 are face cards with 0 value)
-        p_cards = [rand.randint(1, 13), rand.randint(1, 13)]
-        b_cards = [rand.randint(1, 13), rand.randint(1, 13)]
+        p_cards = [secure_random.randint(1, 13), secure_random.randint(1, 13)]
+        b_cards = [secure_random.randint(1, 13), secure_random.randint(1, 13)]
 
         p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
         b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
 
         # Draw third card logic simplified
         if p_score < 6:
-            p_cards.append(rand.randint(1, 13))
+            p_cards.append(secure_random.randint(1, 13))
             p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
 
         if b_score < 6:
-            b_cards.append(rand.randint(1, 13))
+            b_cards.append(secure_random.randint(1, 13))
             b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
 
         if is_creator:
@@ -100,7 +100,7 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
             profit = int(profit * 0.5)
             vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
 
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Baccarat Win")
         text += f"🎉 Игрок побеждает! Вы выиграли <b>{profit}</b> сыроежек.{vip_bonus_text}"
     elif b_score > p_score:
         text += f"❌ Банкир побеждает! Вы проиграли <b>{bet}</b> сыроежек."
