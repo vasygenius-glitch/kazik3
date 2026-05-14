@@ -58,8 +58,9 @@ def invalidate_user_cache(chat_id, user_id):
             # and fsm:{chat_id}:{user_id}:data. We delete both.
             r.delete(f"fsm:{chat_id}:{user_id}:state", f"fsm:{chat_id}:{user_id}:data")
             r.close()
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.error(f"Redis cleanup error: {e}")
 
 def mark_dirty(chat_id, user_id):
     _dirty_cache.add((chat_id, user_id))
@@ -92,8 +93,9 @@ async def flush_user_data_task():
                     lock = _user_locks.get(key)
                     if lock and not lock.locked():
                         _user_locks.pop(key, None)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.error(f"Lock cleanup error: {e}")
 
 async def get_user_data(chat_id, user_id, full_name=None):
     cached_data = get_from_cache(chat_id, user_id)
@@ -140,28 +142,6 @@ async def get_user_data(chat_id, user_id, full_name=None):
         mark_dirty(chat_id, user_id)
         return default_data
 
-async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_debt_repayment=False, action="Balance Update"):
-    lock = get_user_lock(chat_id, user_id)
-    async with lock:
-        data = await get_user_data(chat_id, user_id)
-        current_balance = data.get('balance', 0)
-        
-        if min_balance is not None and current_balance + amount < min_balance:
-            return None
-            
-        new_balance = current_balance + amount
-        data['balance'] = new_balance
-        set_in_cache(chat_id, user_id, data)
-        mark_dirty(chat_id, user_id)
-
-        # WORKER 3: Logging & Anti-Cheat
-        if abs(amount) >= 500000:
-            fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, action, "Change", amount))
-        
-        fire_and_forget(check_balance_alert(chat_id, user_id, data.get('full_name', 'Player'), new_balance))
-
-        return new_balance
-
 async def safe_get_snapshot(transaction, ref):
     """
     Безопасно получает snapshot документа внутри транзакции.
@@ -174,17 +154,19 @@ async def safe_get_snapshot(transaction, ref):
         # Сначала пробуем через transaction.get()
         res = transaction.get(ref)
         if hasattr(res, '__aiter__'):
-            async for s in res: return s
+            async for s in res:
+                return s
         return await res
-    except TypeError:
+    except (TypeError, AttributeError):
         # Если упало при await, значит в этой версии библиотеки баг в transaction.get()
         # Пробуем через ref.get()
         try:
             res = ref.get(transaction=transaction)
             if hasattr(res, '__aiter__'):
-                async for s in res: return s
+                async for s in res:
+                    return s
             return await res
-        except TypeError:
+        except (TypeError, AttributeError):
             # Если и это упало, значит баг фундаментальный. Вызываем API напрямую.
             from google.cloud.firestore_v1.base_client import _parse_batch_get
             request, kwargs = ref._prep_batch_get(None, transaction, None, None, None)
@@ -192,39 +174,61 @@ async def safe_get_snapshot(transaction, ref):
             gen = ref._client._firestore_api.batch_get_documents(request=request, metadata=ref._client._rpc_metadata, **kwargs)
             async for resp in gen:
                 return _parse_batch_get(resp, {ref._document_path: ref}, ref._client)
-    return None
-
-async def update_user_balance_tr(transaction, chat_id, user_id, amount, min_balance=None):
-    """Атомарное обновление баланса внутри транзакции Firestore."""
-    ref = get_user_ref(chat_id, user_id)
-    snapshot = await safe_get_snapshot(transaction, ref)
     
-    if snapshot.exists:
-        data = snapshot.to_dict()
-        current_balance = data.get('balance', 0)
+    raise RuntimeError(f"Не удалось получить snapshot документа {ref.path}")
 
+async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_debt_repayment=False, action="Balance Update", transaction=None):
+    """
+    Универсальная функция обновления баланса.
+    Работает как с транзакцией Firestore, так и через локальный кэш с локами.
+    """
+    if transaction:
+        ref = get_user_ref(chat_id, user_id)
+        snapshot = await safe_get_snapshot(transaction, ref)
+        if not snapshot.exists:
+            return None
+        data = snapshot.to_dict()
+
+        current_balance = data.get('balance', 0)
         if min_balance is not None and current_balance + amount < min_balance:
             raise ValueError(f"Недостаточно средств. Баланс: {current_balance}, Требуется: {abs(amount)}")
 
         new_balance = current_balance + amount
+        transaction.update(ref, {'balance': new_balance})
         
-        if transaction:
-            transaction.update(ref, {'balance': new_balance})
-        else:
-            await ref.update({'balance': new_balance})
-        
+        # Синхронизация кэша
         cached_data = _user_cache.get((chat_id, user_id))
         if cached_data and "data" in cached_data:
             cached_data["data"]['balance'] = new_balance
-        
-        # WORKER 3: Logging & Anti-Cheat
-        if abs(amount) >= 500000:
-            fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, "Transaction Update", "Change", amount))
-        
-        fire_and_forget(check_balance_alert(chat_id, user_id, data.get('full_name', 'Unknown'), new_balance))
+    else:
+        lock = get_user_lock(chat_id, user_id)
+        async with lock:
+            data = await get_user_data(chat_id, user_id)
+            current_balance = data.get('balance', 0)
 
-        return new_balance
-    return None
+            if min_balance is not None and current_balance + amount < min_balance:
+                return None
+
+            new_balance = current_balance + amount
+            data['balance'] = new_balance
+            set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+
+    # Логирование и алерты (вызываются в обоих случаях)
+    full_name = data.get('full_name', 'Unknown')
+    if abs(amount) >= 500000:
+        fire_and_forget(log_transaction(user_id, full_name, None, action, "Change", amount))
+
+    fire_and_forget(check_balance_alert(chat_id, user_id, full_name, new_balance))
+
+    return new_balance
+
+async def update_user_balance_tr(transaction, chat_id, user_id, amount, min_balance=None):
+    """
+    DEPRECATED: Используйте update_user_balance с параметром transaction.
+    Оставлено для совместимости.
+    """
+    return await update_user_balance(chat_id, user_id, amount, min_balance=min_balance, transaction=transaction, action="Transaction Update")
 async def update_user_field(chat_id, user_id, field, value):
     lock = get_user_lock(chat_id, user_id)
     async with lock:

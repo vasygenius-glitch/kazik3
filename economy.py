@@ -4,7 +4,7 @@ from firebase_admin import firestore_async
 import secrets
 import time
 from economy_utils import get_global_tax
-from user_manager import get_user_data, update_user_balance, update_user_balance_tr, check_and_give_bonus, update_user_field, get_top_users
+from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users
 from seasons import apply_season_logic
 from escape import escape_html
 
@@ -265,8 +265,8 @@ async def cmd_pay(message: types.Message):
 @firestore_async.transactional
 async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
     # Используем специальную транзакционную версию с защитой от отрицательного баланса
-    await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost, min_balance=0)
-    await update_user_balance_tr(transaction, chat_id, target_id, amount)
+    await update_user_balance(chat_id, sender_id, -total_cost, min_balance=0, transaction=transaction, action="Transfer Send")
+    await update_user_balance(chat_id, target_id, amount, transaction=transaction, action="Transfer Receive")
 
     if human_admins and commission > 0:
         commission_per_admin = commission // len(human_admins)
@@ -274,7 +274,7 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_
             for admin_id in human_admins:
                 # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
                 # Но мы можем просто обновить баланс
-                await update_user_balance_tr(transaction, chat_id, admin_id, commission_per_admin)
+                await update_user_balance(chat_id, admin_id, commission_per_admin, transaction=transaction, action="Transfer Admin Commission")
 
 @router.message(Command("bonus"))
 async def cmd_bonus(message: types.Message):

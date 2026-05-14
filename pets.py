@@ -31,7 +31,7 @@ async def cmd_buypet(message: types.Message):
     if pet_id not in PETS_SHOP: return await message.answer("Такого питомца нет в магазине.")
 
     from db import get_db
-    from user_manager import get_user_ref, safe_get_snapshot, update_user_balance_tr, invalidate_user_cache
+    from user_manager import get_user_ref, safe_get_snapshot, update_user_balance, invalidate_user_cache
     from firebase_admin import firestore_async
     
     db = get_db()
@@ -49,8 +49,8 @@ async def cmd_buypet(message: types.Message):
         if data.get('balance', 0) < price:
             return False, f"Недостаточно средств. Нужно {price} сыроежек."
 
-        success, err = await update_user_balance_tr(transaction, chat_id, user_id, -price)
-        if not success: return False, err
+        new_balance = await update_user_balance(chat_id, user_id, -price, min_balance=0, transaction=transaction, action="Pet Purchase")
+        if new_balance is None: return False, "Недостаточно средств"
         
         pet_data = {
             'id': pet_id,
