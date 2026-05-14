@@ -9,6 +9,7 @@ from user_manager import get_user_data, update_user_balance, update_user_field
 from shop import ITEMS
 from utils import fire_and_forget
 from seasons import get_season_string
+from config import CREATOR_ID
 
 router = Router()
 
@@ -46,6 +47,13 @@ async def cmd_profile(message: types.Message):
     data = await get_user_data(chat_id, target_id, target_name)
 
     vip_status = "💎 VIP" if data.get('is_vip') else "Обычный"
+
+    role_text = ""
+    if data.get('is_frontman'):
+        role_text = "\n🎭 Роль: <b>Фронтмен</b>"
+    elif str(target_id) == str(CREATOR_ID):
+        role_text = "\n👑 Роль: <b>Создатель</b>"
+
     balance = data.get('balance', 0)
     rep = data.get('reputation', 0)
     clan = escape_html(data.get('clan', 'Нет'))
@@ -118,7 +126,7 @@ async def cmd_profile(message: types.Message):
     text = (
         f"👤 <b>{profile_header}: {target_name}</b>\n"
         f"<i>{bio}</i>\n\n"
-        f"Статус: {vip_status}\n"
+        f"Статус: {vip_status}{role_text}\n"
         f"Репутация: {rep} 📈\n"
         f"Предупреждения: {warns}/3 ⚠️{escort_text}\n"
         f"{debt_display}\n" # Список реальных долгов перед людьми

@@ -25,14 +25,50 @@ async def cmd_assign_frontman(message: types.Message):
     if str(message.from_user.id) != str(CREATOR_ID):
         return await message.answer("❌ Только Создатель может назначать Фронтменов.")
     
-    if not message.reply_to_message:
-        return await message.answer("Сделайте реплай на будущего Фронтмена.")
+    target_id = None
+    target_name = None
     
-    target_id = message.reply_to_message.from_user.id
-    target_name = escape_html(message.reply_to_message.from_user.full_name)
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            return await message.answer("Использование: <code>/фронтмен [реплай | ID | @username]</code>")
+
+        from user_manager import get_user_by_username_or_id
+        target_id, target_data = await get_user_by_username_or_id(message.chat.id, args[1])
+        if not target_id:
+            return await message.answer("❌ Пользователь не найден в этом чате.")
+        target_name = escape_html(target_data.get('full_name', f"ID: {target_id}"))
     
     await update_user_field(message.chat.id, target_id, 'is_frontman', True)
     await message.answer(f"🎭 <b>{target_name}</b> теперь официально <b>Фронтмен</b> голодных игр!")
+
+@router.message(Command("убрать_фронтмена"))
+async def cmd_remove_frontman(message: types.Message):
+    if str(message.from_user.id) != str(CREATOR_ID):
+        return await message.answer("❌ Только Создатель может снимать Фронтменов.")
+
+    target_id = None
+    target_name = None
+
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            return await message.answer("Использование: <code>/убрать_фронтмена [реплай | ID | @username]</code>")
+
+        from user_manager import get_user_by_username_or_id
+        target_id, target_data = await get_user_by_username_or_id(message.chat.id, args[1])
+        if not target_id:
+            return await message.answer("❌ Пользователь не найден в этом чате.")
+        target_name = escape_html(target_data.get('full_name', f"ID: {target_id}"))
+
+    await update_user_field(message.chat.id, target_id, 'is_frontman', False)
+    await message.answer(f"🎭 С <b>{target_name}</b> снята маска <b>Фронтмена</b>.")
 
 @router.message(F.text.lower().startswith("/hg_create") | F.text.lower().startswith("создать ги"))
 async def cmd_hg_create(message: types.Message):
