@@ -39,6 +39,27 @@ def set_in_cache(chat_id, user_id, data):
     
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
 
+def invalidate_user_cache(chat_id, user_id):
+    """Принудительно удаляет профиль из кэша и из грязного списка.
+    Используется при банах и вайпах."""
+    key = (chat_id, user_id)
+    _user_cache.pop(key, None)
+    _dirty_cache.discard(key)
+
+    # Также очищаем FSM стейт из redis/memory если сможем
+    import os
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        import redis
+        try:
+            r = redis.from_url(redis_url)
+            # Aiogram redis keys for FSM are usually formatted as fsm:{chat_id}:{user_id}:state
+            # and fsm:{chat_id}:{user_id}:data. We delete both.
+            r.delete(f"fsm:{chat_id}:{user_id}:state", f"fsm:{chat_id}:{user_id}:data")
+            r.close()
+        except Exception:
+            pass
+
 def mark_dirty(chat_id, user_id):
     _dirty_cache.add((chat_id, user_id))
 
@@ -163,8 +184,8 @@ async def update_user_balance_tr(transaction, chat_id, user_id, amount):
             await ref.update({'balance': new_balance})
         
         cached_data = _user_cache.get((chat_id, user_id))
-        if cached_data:
-            cached_data['balance'] = new_balance
+        if cached_data and "data" in cached_data:
+            cached_data["data"]['balance'] = new_balance
 
         return new_balance
     return None
@@ -342,10 +363,10 @@ async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_pr
 
             # Update cache locally
             cached_data = _user_cache.get((chat_id, user_id))
-            if cached_data:
-                cached_data['inventory'] = inv
-                cached_data['biz_levels'] = biz_levels
-                cached_data['balance'] = new_balance
+            if cached_data and "data" in cached_data:
+                cached_data["data"]['inventory'] = inv
+                cached_data["data"]['biz_levels'] = biz_levels
+                cached_data["data"]['balance'] = new_balance
                 mark_dirty(chat_id, user_id)
 
             return True
