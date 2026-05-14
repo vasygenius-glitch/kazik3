@@ -39,6 +39,27 @@ def set_in_cache(chat_id, user_id, data):
     
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
 
+def invalidate_user_cache(chat_id, user_id):
+    """Принудительно удаляет профиль из кэша и из грязного списка.
+    Используется при банах и вайпах."""
+    key = (chat_id, user_id)
+    _user_cache.pop(key, None)
+    _dirty_cache.discard(key)
+
+    # Также очищаем FSM стейт из redis/memory если сможем
+    import os
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        import redis
+        try:
+            r = redis.from_url(redis_url)
+            # Aiogram redis keys for FSM are usually formatted as fsm:{chat_id}:{user_id}:state
+            # and fsm:{chat_id}:{user_id}:data. We delete both.
+            r.delete(f"fsm:{chat_id}:{user_id}:state", f"fsm:{chat_id}:{user_id}:data")
+            r.close()
+        except Exception:
+            pass
+
 def mark_dirty(chat_id, user_id):
     _dirty_cache.add((chat_id, user_id))
 
@@ -163,8 +184,8 @@ async def update_user_balance_tr(transaction, chat_id, user_id, amount):
             await ref.update({'balance': new_balance})
         
         cached_data = _user_cache.get((chat_id, user_id))
-        if cached_data:
-            cached_data['balance'] = new_balance
+        if cached_data and "data" in cached_data:
+            cached_data["data"]['balance'] = new_balance
 
         return new_balance
     return None
@@ -187,7 +208,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         
         last_bonus = data.get('last_bonus_time', 0)
 
-        if current_time - last_bonus >= 3600:
+        if current_time - last_bonus >= 14400:
             bank_deposit = data.get('bank_deposit', 0)
             bank_income = 0
             is_daily = False
@@ -280,7 +301,7 @@ async def add_item_to_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        inv = data.get('inventory', {})
+        inv = data.get('inventory', {}).copy()
         inv[item_name] = inv.get(item_name, 0) + 1
 
         data['inventory'] = inv
@@ -291,8 +312,8 @@ async def remove_item_from_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        inv = data.get('inventory', {})
-        biz_levels = data.get('biz_levels', {})
+        inv = data.get('inventory', {}).copy()
+        biz_levels = data.get('biz_levels', {}).copy()
 
         if inv.get(item_name, 0) > 0:
             inv[item_name] -= 1
@@ -342,10 +363,10 @@ async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_pr
 
             # Update cache locally
             cached_data = _user_cache.get((chat_id, user_id))
-            if cached_data:
-                cached_data['inventory'] = inv
-                cached_data['biz_levels'] = biz_levels
-                cached_data['balance'] = new_balance
+            if cached_data and "data" in cached_data:
+                cached_data["data"]['inventory'] = inv
+                cached_data["data"]['biz_levels'] = biz_levels
+                cached_data["data"]['balance'] = new_balance
                 mark_dirty(chat_id, user_id)
 
             return True

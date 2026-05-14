@@ -37,6 +37,11 @@ async def cmd_ban_only_creator(message: types.Message, bot: Bot):
     reason = extract_args(message.text)
 
     try:
+        from user_manager import update_user_field, invalidate_user_cache
+        # Mark as banned internally too to match creator.py behavior
+        await update_user_field(chat_id, target.id, 'is_banned', True)
+        invalidate_user_cache(chat_id, target.id)
+
         await bot.ban_chat_member(chat_id=chat_id, user_id=target.id)
         text = f"🔨 Пользователь <b>{escape_html(target.full_name)}</b> забанен навсегда.\n"
         if reason:

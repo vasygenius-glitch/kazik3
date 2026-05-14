@@ -174,9 +174,10 @@ async def cmd_ban(message: types.Message):
     chat_id = message.chat.id
     target_id = message.reply_to_message.from_user.id
     target_name = escape_html(message.reply_to_message.from_user.full_name)
-    from user_manager import update_user_field
+    from user_manager import update_user_field, invalidate_user_cache
     await get_user_data(chat_id, target_id, target_name)
     await update_user_field(chat_id, target_id, 'is_banned', True)
+    invalidate_user_cache(chat_id, target_id)
     await message.answer(f"Пользователь забанен в боте.")
 
 @router.message(Command("unban"))
@@ -191,9 +192,10 @@ async def cmd_unban(message: types.Message):
     chat_id = message.chat.id
     target_id = message.reply_to_message.from_user.id
     target_name = escape_html(message.reply_to_message.from_user.full_name)
-    from user_manager import update_user_field
+    from user_manager import update_user_field, invalidate_user_cache
     await get_user_data(chat_id, target_id, target_name)
     await update_user_field(chat_id, target_id, 'is_banned', False)
+    invalidate_user_cache(chat_id, target_id)
     await message.answer(f"Пользователь разбанен в боте.")
 
 @router.message(Command("hide"))

@@ -31,6 +31,31 @@ async def set_global_tax(tax: int):
     db = get_db()
     fire_and_forget(db.collection('bot_settings').document('economy').set({'tax': tax}, merge=True))
 
+def format_time_left(seconds: int) -> str:
+    """Форматирует секунды в строку вида '1 час 23 минуты 1 секунда' с правильными склонениями."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+
+    def get_word(num, word_variants):
+        if num % 100 in (11, 12, 13, 14):
+            return word_variants[2]
+        if num % 10 == 1:
+            return word_variants[0]
+        if num % 10 in (2, 3, 4):
+            return word_variants[1]
+        return word_variants[2]
+
+    res = []
+    if hours > 0:
+        res.append(f"{hours} {get_word(hours, ['час', 'часа', 'часов'])}")
+    if minutes > 0:
+        res.append(f"{minutes} {get_word(minutes, ['минуту', 'минуты', 'минут'])}")
+    if secs > 0 or not res:
+        res.append(f"{secs} {get_word(secs, ['секунду', 'секунды', 'секунд'])}")
+
+    return " ".join(res)
+
 def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: int = 0, pet_id: str = None) -> int:
     """
     Calculates tax rate: 
@@ -48,8 +73,8 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     if cfg and isinstance(cfg, dict) and cfg.get("active") and cfg.get("id") == "backrooms":
         tax_multiplier = 1.5
     
-    # Налог на богатство: +5% за каждый миллион
-    wealth_surcharge = (balance // 1000000) * 5
+    # Налог на богатство: +5% за каждые 250,000 (уменьшено в 4 раза вместе с нерфом экономики)
+    wealth_surcharge = (balance // 250000) * 5
     
     calculated_tax = base_tax + wealth_surcharge
     
@@ -67,3 +92,17 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     
     # Налог ограничен 20%
     return max(1, min(20, total_tax))
+
+def calculate_biz_markup(balance: int) -> int:
+    """
+    Returns the non-stacking luxury tax markup for businesses based on the user's balance.
+    If balance > 500 million, the markup is 50%.
+    If balance > 100 million, the markup is 20%.
+    Otherwise, the markup is 0%.
+    """
+    if balance > 500_000_000:
+        return 50
+    elif balance > 100_000_000:
+        return 20
+    else:
+        return 0
