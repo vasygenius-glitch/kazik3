@@ -264,8 +264,8 @@ async def cmd_pay(message: types.Message):
 
 @firestore_async.transactional
 async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
-    # Используем специальную транзакционную версию
-    await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost)
+    # Используем специальную транзакционную версию с защитой от отрицательного баланса
+    await update_user_balance_tr(transaction, chat_id, sender_id, -total_cost, min_balance=0)
     await update_user_balance_tr(transaction, chat_id, target_id, amount)
 
     if human_admins and commission > 0:

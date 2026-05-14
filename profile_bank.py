@@ -191,22 +191,32 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(target_banker_id))
     user_ref = get_user_ref(chat_id, user_id)
 
-    if transaction:
-        # Read the latest bank capital from the database
-        doc_snapshot = await bank_ref.get(transaction=transaction)
-        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
-        user_snapshot = await safe_get_snapshot(transaction, user_ref)
-        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
-    else:
-        doc_snapshot = await bank_ref.get()
-        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
-        user_snapshot = await safe_get_snapshot(None, user_ref)
-        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+    # В транзакции читаем актуальные данные
+    doc_snapshot = await safe_get_snapshot(transaction, bank_ref)
+    bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+    if not doc_snapshot.exists:
+        raise ValueError("Банк не найден.")
+
+    user_snapshot = await safe_get_snapshot(transaction, user_ref)
+    user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+
+    if amount == -1: # "all"
+        amount = user_data.get('balance', 0)
+
+    if amount <= 0:
+        raise ValueError("Сумма должна быть положительной.")
+
+    if user_data.get('balance', 0) < amount:
+        raise ValueError("Недостаточно средств на балансе.")
 
     current_deposit = user_data.get('bank_deposit', 0)
+    current_banker_id = user_data.get('bank_name')
+
+    if current_banker_id and str(current_banker_id) != str(target_banker_id) and current_deposit > 0:
+        raise ValueError("У вас уже есть активный вклад в другом банке! Сначала снимите все средства.")
 
     # Списываем у игрока
-    await update_user_balance_tr(transaction, chat_id, user_id, -amount)
+    await update_user_balance_tr(transaction, chat_id, user_id, -amount, min_balance=0)
     
     # Обновляем поля игрока
     updates = {
@@ -222,19 +232,13 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
         await user_ref.update(updates)
 
     # Обновляем капитал банка
-    from firebase_admin import firestore_async
-    try:
-        if transaction:
-            transaction.update(bank_ref, {'capital': firestore_async.Increment(amount)})
-        else:
-            await bank_ref.update({'capital': firestore_async.Increment(amount)})
-    except Exception:
-        # Fallback if Increment fails
-        new_capital = bank_data.get('capital', 0) + amount
-        if transaction:
-            transaction.update(bank_ref, {'capital': new_capital})
-        else:
-            await bank_ref.update({'capital': new_capital})
+    new_capital = bank_data.get('capital', 0) + amount
+    if transaction:
+        transaction.update(bank_ref, {'capital': new_capital})
+    else:
+        await bank_ref.update({'capital': new_capital})
+
+    return amount, current_deposit + amount
 
 @firestore_async.transactional
 async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount):
@@ -243,31 +247,34 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(current_banker_id))
     user_ref = get_user_ref(chat_id, user_id)
 
-    if transaction:
-        # Read the latest bank capital from the database
-        doc_snapshot = await bank_ref.get(transaction=transaction)
-        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
-        user_snapshot = await safe_get_snapshot(transaction, user_ref)
-        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
-    else:
-        doc_snapshot = await bank_ref.get()
-        bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
-        user_snapshot = await safe_get_snapshot(None, user_ref)
-        user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
+    # Читаем данные внутри транзакции
+    doc_snapshot = await safe_get_snapshot(transaction, bank_ref)
+    bank_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+
+    user_snapshot = await safe_get_snapshot(transaction, user_ref)
+    user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
 
     current_deposit = user_data.get('bank_deposit', 0)
-    if current_deposit < amount:
-        raise ValueError("Недостаточно средств на вкладе.")
 
-    # Verify if bank has enough capital
-    if bank_data.get('capital', 0) < amount:
-        raise ValueError("Недостаточно капитала в банке.")
+    if amount == -1: # "all"
+        amount = current_deposit
+
+    if amount <= 0:
+        raise ValueError("Сумма должна быть положительной.")
+
+    if current_deposit < amount:
+        raise ValueError(f"На вашем вкладе только {current_deposit} сыроежек.")
+
+    # Verify if bank has enough capital (если банк существует)
+    if doc_snapshot.exists:
+        if bank_data.get('capital', 0) < amount:
+            raise ValueError("У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас.")
+    # Если банка нет, ЦБ выдает из воздуха (уже реализовано в cmd_bank, но тут тоже учтем)
 
     # Добавляем игроку
     await update_user_balance_tr(transaction, chat_id, user_id, amount)
     
     # Обновляем поля игрока
-    user_ref = get_user_ref(chat_id, user_id)
     updates = {'bank_deposit': current_deposit - amount}
     if current_deposit - amount == 0:
         updates['bank_name'] = None
@@ -278,20 +285,15 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     else:
         await user_ref.update(updates)
     
-    # Обновляем капитал банка
-    from firebase_admin import firestore_async
-    try:
-        if transaction:
-            transaction.update(bank_ref, {'capital': firestore_async.Increment(-amount)})
-        else:
-            await bank_ref.update({'capital': firestore_async.Increment(-amount)})
-    except Exception:
-        # Fallback if Increment fails
+    # Обновляем капитал банка (если он есть)
+    if doc_snapshot.exists:
         new_capital = bank_data.get('capital', 0) - amount
         if transaction:
             transaction.update(bank_ref, {'capital': new_capital})
         else:
             await bank_ref.update({'capital': new_capital})
+
+    return amount
 
 @router.message(Command("bank"))
 async def cmd_bank(message: types.Message):
@@ -390,43 +392,47 @@ async def cmd_bank(message: types.Message):
 
     if action == "deposit":
         try:
-            if amount_str == "all" or amount_str == "всё" or amount_str == "все":
-                if len(args) < 4:
-                    return await message.answer("Укажите название банка или ID: <code>/bank deposit all [Название]</code>")
-                identifier = " ".join(args[3:])
-            else:
-                if len(args) < 4:
-                    return await message.answer("Укажите название банка или ID: <code>/bank deposit [сумма] [Название]</code>")
-                identifier = " ".join(args[3:])
+            is_all = amount_str in ["all", "всё", "все"]
+            if len(args) < 4:
+                usage = "deposit all [Название]" if is_all else "deposit [сумма] [Название]"
+                return await message.answer(f"Укажите название банка или ID: <code>/bank {usage}</code>")
 
+            identifier = " ".join(args[3:])
             bank_data = await get_bank_info(chat_id, identifier)
 
             if not bank_data:
                 return await message.answer("🏦 Банк не найден.")
 
             target_banker_id = bank_data['banker_id']
-
-            if current_banker_id and current_banker_id != target_banker_id and current_deposit > 0:
-                return await message.answer("❌ У вас уже есть активный вклад в другом банке! Сначала снимите все средства.")
-
-            if data.get('balance', 0) < amount:
-                return await message.answer("Недостаточно средств на балансе.")
+            tx_amount = -1 if is_all else amount
 
             db = get_db()
             try:
                 if hasattr(db, 'transaction'):
-                    res = process_deposit_tx(db.transaction(), chat_id, user_id, target_banker_id, amount)
-                    if hasattr(res, '__aiter__'):
-                        async for _ in res: pass
+                    tx = db.transaction()
+                    res_coro = process_deposit_tx(tx, chat_id, user_id, target_banker_id, tx_amount)
+                    if hasattr(res_coro, '__aiter__'):
+                        async for r in res_coro: actual_amount, total_dep = r
                     else:
-                        await res
+                        actual_amount, total_dep = await res_coro
                 else:
-                    await process_deposit_tx(None, chat_id, user_id, target_banker_id, amount)
-                await message.answer(f"✅ Депозит пополнен на {amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {current_deposit + amount}.")
+                    actual_amount, total_dep = await process_deposit_tx(None, chat_id, user_id, target_banker_id, tx_amount)
+
+                # Синхронизируем кэш после успешной транзакции
+                from user_manager import _user_cache
+                key = (chat_id, user_id)
+                if key in _user_cache:
+                    _user_cache[key]['data']['bank_deposit'] = total_dep
+                    _user_cache[key]['data']['bank_name'] = target_banker_id
+                    # balance обновлен внутри update_user_balance_tr
+
+                await message.answer(f"✅ Депозит пополнен на {actual_amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {total_dep}.")
+            except ValueError as ve:
+                await message.answer(f"❌ {ve}")
             except Exception as e:
                 import traceback
                 print(f"Error in /bank deposit: {e}")
-                await message.answer(f"❌ Произошла ошибка при пополнении вклада:\n<code>{e}</code>\n{traceback.format_exc()[:300]}")
+                await message.answer(f"❌ Произошла ошибка при пополнении вклада:\n<code>{e}</code>")
         except Exception as e:
             import traceback
             print(f"Error in /bank deposit block: {e}")
@@ -434,47 +440,61 @@ async def cmd_bank(message: types.Message):
 
     elif action == "withdraw":
         try:
-            if amount <= 0:
-                return await message.answer("У вас нет средств на банковском счете.")
-
-            if current_deposit < amount:
-                return await message.answer(f"На вашем вкладе только {current_deposit} сыроежек.")
+            is_all = amount_str in ["all", "всё", "все"]
+            tx_amount = -1 if is_all else amount
 
             if not current_banker_id:
                 # Для старых вкладов без привязки к банку (сделанных до обновления)
-                await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
-                await update_user_balance(chat_id, user_id, amount)
-                return await message.answer(f"💸 Снято {amount} сыроежек со старого системного счета.")
+                if current_deposit <= 0:
+                    return await message.answer("У вас нет средств на банковском счете.")
+                actual_withdraw = current_deposit if is_all else amount
+                if actual_withdraw > current_deposit:
+                    actual_withdraw = current_deposit
 
-            bank_data = await get_bank_info(chat_id, current_banker_id)
-            if not bank_data:
-                # Если банк удален, отдаем деньги из "воздуха" как гарантия ЦБ
-                await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - amount)
-                await update_user_balance(chat_id, user_id, amount)
-                if current_deposit - amount == 0:
-                    await update_user_field(chat_id, user_id, 'bank_name', None)
-                return await message.answer(f"💸 Ваш банк закрылся, но ЦБ гарантирует вклады. Снято {amount} сыроежек.")
-
-            if bank_data.get('capital', 0) < amount:
-                return await message.answer(" У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас! Банкир выдал слишком много кредитов.")
+                await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - actual_withdraw)
+                await update_user_balance(chat_id, user_id, actual_withdraw)
+                return await message.answer(f"💸 Снято {actual_withdraw} сыроежек со старого системного счета.")
 
             db = get_db()
             try:
                 if hasattr(db, 'transaction'):
-                    res = process_withdraw_tx(db.transaction(), chat_id, user_id, current_banker_id, amount)
-                    if hasattr(res, '__aiter__'):
-                        async for _ in res: pass
+                    tx = db.transaction()
+                    res_coro = process_withdraw_tx(tx, chat_id, user_id, current_banker_id, tx_amount)
+                    if hasattr(res_coro, '__aiter__'):
+                        async for r in res_coro: actual_withdrawn = r
                     else:
-                        await res
+                        actual_withdrawn = await res_coro
                 else:
-                    await process_withdraw_tx(None, chat_id, user_id, current_banker_id, amount)
-                await message.answer(f"💸 Снято {amount} сыроежек со счета.")
+                    actual_withdrawn = await process_withdraw_tx(None, chat_id, user_id, current_banker_id, tx_amount)
+
+                # Синхронизируем кэш после успешной транзакции
+                from user_manager import _user_cache
+                key = (chat_id, user_id)
+                if key in _user_cache:
+                    new_dep = max(0, _user_cache[key]['data'].get('bank_deposit', 0) - actual_withdrawn)
+                    _user_cache[key]['data']['bank_deposit'] = new_dep
+                    if new_dep == 0:
+                        _user_cache[key]['data']['bank_name'] = None
+                        _user_cache[key]['data']['deposit_start_time'] = 0
+
+                await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")
             except ValueError as ve:
+                # Если банк удален, отдаем деньги из "воздуха" как гарантия ЦБ
+                if "Банк не найден" in str(ve) or "банк закрылся" in str(ve).lower():
+                    actual_withdraw = current_deposit if is_all else amount
+                    if actual_withdraw > current_deposit: actual_withdraw = current_deposit
+
+                    await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - actual_withdraw)
+                    await update_user_balance(chat_id, user_id, actual_withdraw)
+                    if current_deposit - actual_withdraw == 0:
+                        await update_user_field(chat_id, user_id, 'bank_name', None)
+                    return await message.answer(f"💸 Ваш банк закрылся, но ЦБ гарантирует вклады. Снято {actual_withdraw} сыроежек.")
+
                 await message.answer(f"❌ {ve}")
             except Exception as e:
                 import traceback
                 print(f"Error in /bank withdraw: {e}")
-                await message.answer(f"❌ Произошла ошибка при снятии со вклада:\n<code>{e}</code>\n{traceback.format_exc()[:300]}")
+                await message.answer(f"❌ Произошла ошибка при снятии со вклада:\n<code>{e}</code>")
         except Exception as e:
             import traceback
             print(f"Error in /bank withdraw block: {e}")
@@ -552,9 +572,26 @@ async def cmd_bank_offshore(message: types.Message):
         if data.get('balance', 0) < price:
             return await message.answer(f"❌ Оформление оффшорного счета стоит {price} сыроежек. У вас недостаточно средств.")
 
-        await update_user_balance(chat_id, user_id, -price)
-        await update_user_field(chat_id, user_id, 'is_offshore', True)
-        await message.answer(f"🏝 <b>Оффшорный счет активирован!</b>\nСписано {price} сыр. Теперь ваш вклад скрыт от других игроков в `/profile`.\n<i>(Банк будет снимать 0.5% от вашего депозита при начислении процентов за обслуживание)</i>")
+        db = get_db()
+        from user_manager import update_user_balance_tr, get_user_ref, mark_dirty
+
+        @firestore_async.transactional
+        async def activate_offshore_tx(transaction, chat_id, user_id, price):
+            await update_user_balance_tr(transaction, chat_id, user_id, -price, min_balance=0)
+            user_ref = get_user_ref(chat_id, user_id)
+            transaction.update(user_ref, {'is_offshore': True})
+
+        try:
+            await activate_offshore_tx(db.transaction(), chat_id, user_id, price)
+            data['is_offshore'] = True
+            data['balance'] -= price
+            set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+            await message.answer(f"🏝 <b>Оффшорный счет активирован!</b>\nСписано {price} сыр. Теперь ваш вклад скрыт от других игроков в `/profile`.\n<i>(Банк будет снимать 0.5% от вашего депозита при начислении процентов за обслуживание)</i>")
+        except ValueError as ve:
+            await message.answer(f"❌ {ve}")
+        except Exception:
+            await message.answer("❌ Ошибка при активации оффшора.")
 
 def get_bank_stats_kb(banker_id: int):
     builder = InlineKeyboardBuilder()
@@ -569,32 +606,60 @@ def get_bank_stats_kb(banker_id: int):
 async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-    user_docs = await users_ref.get()
+
+    # Оптимизированный запрос вкладчиков
+    dep_docs = await users_ref.where('bank_name', '==', user_id).get()
 
     total_deposits = 0
     total_depositors = 0
+    if hasattr(dep_docs, '__aiter__'):
+        async for doc in dep_docs:
+            total_deposits += doc.to_dict().get('bank_deposit', 0)
+            total_depositors += 1
+    else:
+        for doc in dep_docs:
+            total_deposits += doc.to_dict().get('bank_deposit', 0)
+            total_depositors += 1
+
     total_loans_given = 0
     overdue_loans = 0
-
     import time
     current_time = time.time()
 
-    for user_doc in user_docs:
-        u_data = user_doc.to_dict()
+    # Оптимизированный запрос должников
+    debt_docs = await users_ref.where('debts', '!=', {}).get()
 
-        if str(u_data.get('bank_name')) == str(user_id):
-            total_deposits += u_data.get('bank_deposit', 0)
-            total_depositors += 1
-
+    async def process_debtor(doc):
+        nonlocal total_loans_given, overdue_loans
+        u_data = doc.to_dict()
         debts = u_data.get('debts', {})
         for k, v in debts.items():
             if k.startswith(f"bank_{user_id}_") and v > 0:
                 total_loans_given += v
                 parts = k.split("_")
                 if len(parts) >= 3:
-                    due_date = int(parts[2])
-                    if current_time > due_date:
-                        overdue_loans += v
+                    try:
+                        due_date = int(parts[2])
+                        if current_time > due_date:
+                            overdue_loans += v
+                    except ValueError: pass
+
+    if hasattr(debt_docs, '__aiter__'):
+        async for doc in debt_docs: await process_debtor(doc)
+    else:
+        for doc in debt_docs:
+            u_data = doc.to_dict()
+            debts = u_data.get('debts', {})
+            for k, v in debts.items():
+                if k.startswith(f"bank_{user_id}_") and v > 0:
+                    total_loans_given += v
+                    parts = k.split("_")
+                    if len(parts) >= 3:
+                        try:
+                            due_date = int(parts[2])
+                            if current_time > due_date:
+                                overdue_loans += v
+                        except ValueError: pass
 
     rate = bank_data.get('deposit_rate', 3.0)
     capital = bank_data.get('capital', 0)
@@ -660,15 +725,20 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
 
     elif action == "deps":
-        user_docs = await users_ref.get()
+        user_docs = await users_ref.where('bank_name', '==', banker_id).get()
         depositors = []
-        for doc in user_docs:
+
+        def add_dep(doc):
             u_data = doc.to_dict()
-            if str(u_data.get('bank_name')) == str(banker_id):
-                depositors.append({
-                    'name': u_data.get('full_name', 'Unknown'),
-                    'deposit': u_data.get('bank_deposit', 0)
-                })
+            depositors.append({
+                'name': u_data.get('full_name', 'Unknown'),
+                'deposit': u_data.get('bank_deposit', 0)
+            })
+
+        if hasattr(user_docs, '__aiter__'):
+            async for doc in user_docs: add_dep(doc)
+        else:
+            for doc in user_docs: add_dep(doc)
 
         depositors.sort(key=lambda x: x['deposit'], reverse=True)
         text = f"👥 <b>Топ вкладчиков банка {escape_html(bank_data.get('name'))}</b>\n\n"
@@ -681,9 +751,10 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
 
     elif action == "loans":
-        user_docs = await users_ref.get()
+        user_docs = await users_ref.where('debts', '!=', {}).get()
         debtors = []
-        for doc in user_docs:
+
+        def add_debtor(doc):
             u_data = doc.to_dict()
             debts = u_data.get('debts', {})
             total_debt = sum(v for k, v in debts.items() if k.startswith(f"bank_{banker_id}_") and v > 0)
@@ -692,6 +763,11 @@ async def cb_bank_stats(callback: types.CallbackQuery):
                     'name': u_data.get('full_name', 'Unknown'),
                     'debt': total_debt
                 })
+
+        if hasattr(user_docs, '__aiter__'):
+            async for doc in user_docs: add_debtor(doc)
+        else:
+            for doc in user_docs: add_debtor(doc)
 
         debtors.sort(key=lambda x: x['debt'], reverse=True)
         text = f"🤝 <b>Топ должников банка {escape_html(bank_data.get('name'))}</b>\n\n"
