@@ -216,14 +216,19 @@ async def safe_get_snapshot(transaction, ref):
                 return _parse_batch_get(resp, {ref._document_path: ref}, ref._client)
     return None
 
-async def update_user_balance_tr(transaction, chat_id, user_id, amount):
+async def update_user_balance_tr(transaction, chat_id, user_id, amount, min_balance=None):
     """Атомарное обновление баланса внутри транзакции Firestore."""
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     
     if snapshot.exists:
         data = snapshot.to_dict()
-        new_balance = data.get('balance', 0) + amount
+        current_balance = data.get('balance', 0)
+
+        if min_balance is not None and current_balance + amount < min_balance:
+            raise ValueError(f"Недостаточно средств. Баланс: {current_balance}, Требуется: {abs(amount)}")
+
+        new_balance = current_balance + amount
         
         if transaction:
             transaction.update(ref, {'balance': new_balance})

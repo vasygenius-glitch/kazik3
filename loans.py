@@ -123,27 +123,56 @@ async def process_bank_loan(callback: types.CallbackQuery):
     guarantor_id = loan_info['guarantor_id']
     total_debt = int(amount * (1 + percent / 100))
 
-    bank_data = await get_bank_info(chat_id, lender_id)
-    if not bank_data or bank_data.get('capital', 0) < amount:
-        return await callback.message.edit_text("❌ У банка уже не хватает капитала.")
+    db = get_db()
+    from user_manager import update_user_balance_tr, get_user_ref, safe_get_snapshot, set_in_cache, mark_dirty
 
-    # Выдаем кредит из капитала банка
-    await create_or_update_bank(chat_id, lender_id, {'capital': bank_data.get('capital', 0) - amount})
-    await update_user_balance(chat_id, borrower_id, amount)
+    @firestore_async.transactional
+    async def issue_loan_tx(transaction, chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id):
+        bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(lender_id))
+        user_ref = get_user_ref(chat_id, borrower_id)
 
-    borrower_data = await get_user_data(chat_id, borrower_id)
-    debts = borrower_data.get('debts', {})
-    
-    due_date = int(time.time()) + (term_days * 86400)
-    # Формат долга: bank_ID_DUEDATE_GUARANTORID_PRINCIPAL
-    g_id_str = str(guarantor_id) if guarantor_id else "none"
-    str_lender = f"bank_{lender_id}_{due_date}_{g_id_str}_{amount}"
+        bank_snap = await safe_get_snapshot(transaction, bank_ref)
+        if not bank_snap.exists or bank_snap.to_dict().get('capital', 0) < amount:
+            raise ValueError("У банка недостаточно капитала.")
 
-    debts[str_lender] = debts.get(str_lender, 0) + total_debt
-    
-    await update_user_field(chat_id, borrower_id, 'debts', debts)
+        user_snap = await safe_get_snapshot(transaction, user_ref)
+        if not user_snap.exists:
+            raise ValueError("Заемщик не найден.")
 
-    await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
+        user_data = user_snap.to_dict()
+
+        # 1. Снимаем капитал у банка
+        transaction.update(bank_ref, {'capital': bank_snap.to_dict()['capital'] - amount})
+
+        # 2. Начисляем баланс заемщику
+        new_balance = user_data.get('balance', 0) + amount
+
+        # 3. Добавляем долг
+        debts = user_data.get('debts', {}).copy()
+        due_date = int(time.time()) + (term_days * 86400)
+        g_id_str = str(guarantor_id) if guarantor_id else "none"
+        str_lender = f"bank_{lender_id}_{due_date}_{g_id_str}_{amount}"
+        debts[str_lender] = debts.get(str_lender, 0) + total_debt
+
+        updates = {
+            'balance': new_balance,
+            'debts': debts
+        }
+        transaction.update(user_ref, updates)
+
+        # Синхронизация кэша
+        user_data.update(updates)
+        set_in_cache(chat_id, borrower_id, user_data)
+        mark_dirty(chat_id, borrower_id)
+        return True
+
+    try:
+        await issue_loan_tx(db.transaction(), chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id)
+        await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
+    except ValueError as ve:
+        await callback.message.edit_text(f"❌ Ошибка: {ve}")
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Произошла ошибка при оформлении кредита.")
 
 @router.message(F.text.lower().startswith("выплатить") | F.text.lower().startswith("вернуть"))
 async def cmd_repay(message: types.Message):
