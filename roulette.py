@@ -2,8 +2,10 @@ import asyncio
 import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from casino_utils import CasinoState
 
-from user_manager import get_user_data, update_user_balance
+from user_manager import get_user_data, update_user_balance, is_frontman
 from chances import get_game_chance
 from escape import escape_html
 from config import CREATOR_ID
@@ -28,7 +30,10 @@ def get_roulette_frame(ball_pos, status, bet, title, guess):
     )
 
 @router.message(Command("roulette"))
-async def cmd_roulette(message: types.Message):
+async def cmd_roulette(message: types.Message, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        await state.clear()
+
     chat_id, user_id = message.chat.id, message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
@@ -52,7 +57,10 @@ async def cmd_roulette(message: types.Message):
     await ask_casino_confirmation(message, "roulette", bet, guess=guess)
 
 @router.callback_query(F.data.startswith("cas_conf_roulette_"))
-async def process_roulette_confirm(callback: types.CallbackQuery):
+async def process_roulette_confirm(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        return await callback.answer("У вас уже идет игра!", show_alert=True)
+
     parts = callback.data.split("_")
     try:
         bet = int(parts[3])
@@ -68,6 +76,7 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
         return await callback.answer("Недостаточно средств!", show_alert=True)
         
     await callback.message.delete()
+    await state.set_state(CasinoState.playing)
 
     from seasons import get_season_string, get_glitch_text
     title = await get_season_string("roulette_start", "ВИХРЬ СУДЬБЫ")
@@ -82,9 +91,9 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
         except Exception: break
 
     chance = await get_game_chance('roulette')
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    is_fm = await is_frontman(chat_id, user_id)
 
-    if is_creator: result_number = guess
+    if is_fm: result_number = guess
     elif chance != -1:
         if secure_random.randint(1, 100) <= chance:
             result_number = guess + secure_random.choice([-1, 0, 1])
@@ -128,4 +137,5 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     try:
         await msg.edit_text(final_text)
     except Exception: pass
+    await state.clear()
     asyncio.create_task(schedule_delete(msg, message))

@@ -1,9 +1,12 @@
 from aiogram import types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
+from aiogram.fsm.state import State, StatesGroup
 from aiogram import Router, F
 
 router = Router()
+
+class CasinoState(StatesGroup):
+    playing = State()
 
 @router.callback_query(F.data == "cas_cancel")
 async def process_cas_cancel(callback: types.CallbackQuery):

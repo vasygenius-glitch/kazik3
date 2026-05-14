@@ -4,8 +4,10 @@ import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from casino_utils import CasinoState
 
-from user_manager import get_user_data, update_user_balance, check_and_give_bonus
+from user_manager import get_user_data, update_user_balance, check_and_give_bonus, is_frontman
 from chances import get_game_chance
 from escape import escape_html
 from utils import schedule_delete
@@ -15,8 +17,6 @@ router = Router()
 
 secure_random = secrets.SystemRandom()
 
-active_cups_games = {}
-
 def get_cups_keyboard(game_id: str):
     builder = InlineKeyboardBuilder()
     builder.button(text="🪣 1", callback_data=f"cups|{game_id}|0")
@@ -25,7 +25,9 @@ def get_cups_keyboard(game_id: str):
     return builder.as_markup()
 
 @router.message(Command("cups"))
-async def cmd_cups(message: types.Message):
+async def cmd_cups(message: types.Message, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        await state.clear()
     chat_id = message.chat.id
     user_id = message.from_user.id
     full_name = escape_html(message.from_user.full_name)
@@ -68,35 +70,38 @@ async def cmd_cups(message: types.Message):
     await ask_casino_confirmation(message, "cups", bet)
 
 @router.callback_query(F.data.startswith("cas_conf_cups_"))
-async def process_cups_confirm(callback: types.CallbackQuery):
+async def process_cups_confirm(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        return await callback.answer("У вас уже идет игра!", show_alert=True)
+
     try:
         bet = int(callback.data.split("_")[3])
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
     full_name = escape_html(callback.from_user.full_name)
-    data = await get_user_data(chat_id, user_id, full_name)
     
     new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
     if new_balance is None:
         return await callback.answer("Недостаточно средств!", show_alert=True)
 
     await callback.message.delete()
+    await state.set_state(CasinoState.playing)
 
     game_id = f"{chat_id}-{user_id}-{callback.message.message_id}"
     winning_cup = secure_random.randint(0, 2)
     
     bonus_text = "" # Simplified for now as it's not critical
 
-    active_cups_games[game_id] = {
-        'original_msg': callback.message,
-        'user_id': user_id,
-        'chat_id': chat_id,
-        'full_name': full_name,
-        'bet': bet,
-        'winning_cup': winning_cup,
-        'bonus_text': bonus_text
-    }
+    await state.update_data(
+        user_id=user_id,
+        chat_id=chat_id,
+        full_name=full_name,
+        bet=bet,
+        winning_cup=winning_cup,
+        bonus_text=bonus_text,
+        game_id=game_id
+    )
 
     text = (
         f"{bonus_text}"
@@ -109,7 +114,10 @@ async def process_cups_confirm(callback: types.CallbackQuery):
     await callback.message.answer(text, reply_markup=get_cups_keyboard(game_id))
 
 @router.callback_query(F.data.startswith("cups|"))
-async def process_cups(callback: types.CallbackQuery):
+async def process_cups(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() != CasinoState.playing.state:
+        return await callback.answer("Игра уже завершена.", show_alert=True)
+
     parts = callback.data.split("|")
     if len(parts) != 3:
         await callback.answer()
@@ -118,15 +126,12 @@ async def process_cups(callback: types.CallbackQuery):
     game_id = parts[1]
     chosen_cup = int(parts[2])
 
-    game = active_cups_games.pop(game_id, None)
-    if not game:
-        await callback.answer("Эта игра уже завершена или не найдена.", show_alert=True)
-        return
+    game = await state.get_data()
+    if not game or game.get('game_id') != game_id:
+        return await callback.answer("Эта игра уже завершена или не найдена.", show_alert=True)
 
     if callback.from_user.id != game['user_id']:
-        await callback.answer("Это не ваша игра!", show_alert=True)
-        active_cups_games[game_id] = game # Put back if wrong user
-        return
+        return await callback.answer("Это не ваша игра!", show_alert=True)
 
     # Animation
     await callback.message.edit_text("⏳ <i>Поднимаем наперсток...</i>")
@@ -135,9 +140,9 @@ async def process_cups(callback: types.CallbackQuery):
     winning_cup = game['winning_cup']
     bet = game['bet']
 
-    is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
+    is_fm = await is_frontman(game['chat_id'], game['user_id'])
 
-    if is_creator:
+    if is_fm:
         winning_cup = chosen_cup
     else:
         # Жестко закодированные шансы: 35% победа, 65% проигрыш
@@ -189,4 +194,5 @@ async def process_cups(callback: types.CallbackQuery):
     )
 
     await callback.message.edit_text(final_text)
+    await state.clear()
     await callback.answer()

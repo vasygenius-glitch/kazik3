@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import get_db
 from escape import escape_html
-from user_manager import get_user_data, update_user_balance, update_user_field
+from user_manager import get_user_data, update_user_balance, update_user_field, is_frontman
 
 router = Router()
 
@@ -412,19 +412,18 @@ async def callback_tactical_duel(callback: types.CallbackQuery):
         rand = secrets.SystemRandom()
         roll = rand.randint(1, 100)
 
-        from config import CREATOR_ID
-        is_me_creator = CREATOR_ID and int(me['id']) == int(CREATOR_ID)
-        is_enemy_creator = CREATOR_ID and int(enemy['id']) == int(CREATOR_ID)
+        is_me_fm = await is_frontman(chat_id, me['id'])
+        is_enemy_fm = await is_frontman(chat_id, enemy['id'])
 
         from diseases import get_active_diseases
         me_diseases = await get_active_diseases(chat_id, me['id'])
         if 'mycoplasmosis' in me_diseases:
             me['acc'] = 0
 
-        if is_me_creator:
+        if is_me_fm:
             roll = 0 # Guaranteed hit
             enemy['cover'] = False # Ignore cover
-        elif is_enemy_creator:
+        elif is_enemy_fm:
             roll = 101 # Guaranteed miss
 
         if enemy['cover']:

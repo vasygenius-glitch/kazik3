@@ -1,5 +1,20 @@
-import pytest
+import sys
 from unittest.mock import AsyncMock, MagicMock, patch
+
+def mock_decorator(func):
+    func.to_wrap = func
+    return func
+
+mock_firestore_async = MagicMock()
+mock_firestore_async.transactional.side_effect = mock_decorator
+sys.modules['firebase_admin.firestore_async'] = mock_firestore_async
+
+# Mock other dependencies needed for import
+sys.modules['db'] = MagicMock()
+sys.modules['config'] = MagicMock()
+sys.modules['config'].CREATOR_ID = 999
+
+import pytest
 from hunger_games import join_hg_tr, distribute_prizes_tr
 import time
 
@@ -26,7 +41,7 @@ async def test_join_hg_tr_success():
 
         mock_snap.return_value = snapshot
 
-        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        player_data, error, updates = await join_hg_tr.to_wrap(transaction, chat_id, user_id, base_bet)
 
         assert error is None
         assert player_data['id'] == user_id
@@ -59,7 +74,7 @@ async def test_join_hg_tr_vip_discount():
 
         mock_snap.return_value = snapshot
 
-        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        player_data, error, updates = await join_hg_tr.to_wrap(transaction, chat_id, user_id, base_bet)
 
         assert error is None
         assert player_data['bet_paid'] == 800 # 20% discount
@@ -88,7 +103,7 @@ async def test_distribute_prizes_tr():
 
         mock_snap.side_effect = [winner_snap, host_snap]
 
-        winner_upd, host_upd = await distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
+        winner_upd, host_upd = await distribute_prizes_tr.to_wrap(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
 
         assert winner_upd['balance'] == 5000
         assert 'hiv' in winner_upd['diseases']

@@ -16,9 +16,11 @@ class TestBaccarat(unittest.IsolatedAsyncioTestCase):
     @patch('baccarat.get_user_data')
     @patch('baccarat.update_user_balance')
     @patch('baccarat.schedule_delete')
+    @patch('baccarat.is_frontman')
     @patch('baccarat.secrets.SystemRandom')
-    async def test_baccarat_win(self, mock_random, mock_schedule_delete, mock_update_balance, mock_get_user_data):
+    async def test_baccarat_win(self, mock_random, mock_fm, mock_schedule_delete, mock_update_balance, mock_get_user_data):
         mock_get_user_data.return_value = {'balance': 1000}
+        mock_fm.return_value = False
 
         # Симулируем: сначала случайное значение для шанса (до 35 = победа)
         # Затем карты: p_cards = [9, 9], b_cards = [1, 1]
@@ -43,23 +45,28 @@ class TestBaccarat(unittest.IsolatedAsyncioTestCase):
             callback.message.delete = AsyncMock()
             callback.answer = AsyncMock()
 
+            state = AsyncMock()
+            state.get_state = AsyncMock(return_value=None)
+
             # update_user_balance returns the new balance if successful
-            mock_update_balance.side_effect = [-100, 200] # First call: -bet, Second call: +profit
+            mock_update_balance.side_effect = [900, 1100] # First call: -bet, Second call: +profit
 
             with patch('config.CREATOR_ID', 999):
-                await process_baccarat_confirm(callback)
+                await process_baccarat_confirm(callback, state)
 
             # First call is the bet deduction
             mock_update_balance.assert_any_call(1, 2, -100, min_balance=-5000)
             # Second call is the win payment (bet + profit)
-            mock_update_balance.assert_any_call(1, 2, 200)
+            mock_update_balance.assert_any_call(1, 2, 200, action="Baccarat Win")
 
     @patch('baccarat.get_user_data')
     @patch('baccarat.update_user_balance')
     @patch('baccarat.schedule_delete')
+    @patch('baccarat.is_frontman')
     @patch('baccarat.secrets.SystemRandom')
-    async def test_baccarat_lose(self, mock_random, mock_schedule_delete, mock_update_balance, mock_get_user_data):
+    async def test_baccarat_lose(self, mock_random, mock_fm, mock_schedule_delete, mock_update_balance, mock_get_user_data):
         mock_get_user_data.return_value = {'balance': 1000}
+        mock_fm.return_value = False
 
         # Симулируем: шанс > 35 = поражение.
         mock_random_instance = MagicMock()
@@ -81,19 +88,24 @@ class TestBaccarat(unittest.IsolatedAsyncioTestCase):
             callback.message.delete = AsyncMock()
             callback.answer = AsyncMock()
 
+            state = AsyncMock()
+            state.get_state = AsyncMock(return_value=None)
+
             mock_update_balance.return_value = 900
 
             with patch('config.CREATOR_ID', 999):
-                await process_baccarat_confirm(callback)
+                await process_baccarat_confirm(callback, state)
 
             mock_update_balance.assert_called_once_with(1, 2, -100, min_balance=-5000)
 
     @patch('baccarat.get_user_data')
     @patch('baccarat.update_user_balance')
     @patch('baccarat.schedule_delete')
+    @patch('baccarat.is_frontman')
     @patch('baccarat.secrets.SystemRandom')
-    async def test_baccarat_creator_win(self, mock_random, mock_schedule_delete, mock_update_balance, mock_get_user_data):
+    async def test_baccarat_creator_win(self, mock_random, mock_fm, mock_schedule_delete, mock_update_balance, mock_get_user_data):
         mock_get_user_data.return_value = {'balance': 1000}
+        mock_fm.return_value = True
 
         mock_random_instance = MagicMock()
         mock_random_instance.randint.return_value = 1
@@ -107,10 +119,13 @@ class TestBaccarat(unittest.IsolatedAsyncioTestCase):
         callback.message.delete = AsyncMock()
         callback.answer = AsyncMock()
 
+        state = AsyncMock()
+        state.get_state = AsyncMock(return_value=None)
+
         mock_update_balance.side_effect = [900, 1100]
 
         with patch('config.CREATOR_ID', 999):
-            await process_baccarat_confirm(callback)
+            await process_baccarat_confirm(callback, state)
 
         mock_update_balance.assert_any_call(1, 999, -100, min_balance=-5000)
         # In the new code, creator just wins naturally based on RNG,

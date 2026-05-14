@@ -49,7 +49,10 @@ async def test_duel_god_mode_creator_shoots(setup_duel):
     sys.modules['economy_utils'].get_global_tax = AsyncMock(return_value=10)
 
     with patch("rp_clans.update_user_balance", new_callable=AsyncMock) as mock_update, \
+         patch("rp_clans.is_frontman", new_callable=AsyncMock) as mock_fm, \
          patch("rp_clans.render_tactical_duel", new_callable=AsyncMock) as mock_render:
+
+        mock_fm.side_effect = lambda cid, uid: cid == 123 and uid == creator_id
 
         await rp_clans.callback_tactical_duel(callback)
 
@@ -76,8 +79,11 @@ async def test_duel_god_mode_enemy_shoots_creator(setup_duel):
     sys.modules['diseases'].get_active_diseases = AsyncMock(return_value=[])
 
     with patch("rp_clans.update_user_balance", new_callable=AsyncMock) as mock_update, \
+         patch("rp_clans.is_frontman", new_callable=AsyncMock) as mock_fm, \
          patch("rp_clans.secrets.SystemRandom.randint", return_value=1), \
          patch("rp_clans.render_tactical_duel", new_callable=AsyncMock) as mock_render:
+
+        mock_fm.side_effect = lambda cid, uid: cid == 123 and uid == creator_id
 
         await rp_clans.callback_tactical_duel(callback)
 

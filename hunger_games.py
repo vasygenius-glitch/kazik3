@@ -3,11 +3,15 @@ import asyncio
 import time
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command, or_f
+from aiogram.fsm.context import FSMContext
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from casino_utils import CasinoState
+from utils import fire_and_forget
 from escape import escape_html
 from user_manager import (
     get_user_data, update_user_balance, update_user_field,
-    update_user_balance_tr, get_user_ref, safe_get_snapshot
+    update_user_balance_tr, get_user_ref, safe_get_snapshot, is_frontman as is_frontman_global,
+    invalidate_user_cache
 )
 from config import CREATOR_ID
 from db import get_db
@@ -21,10 +25,7 @@ active_hg = {}
 
 # --- ПРОВЕРКИ ---
 async def is_frontman(chat_id: int, user_id: int) -> bool:
-    if str(user_id) == str(CREATOR_ID):
-        return True
-    data = await get_user_data(chat_id, user_id)
-    return data.get('is_frontman', False)
+    return await is_frontman_global(chat_id, user_id)
 
 @router.message(Command("фронтмен"))
 async def cmd_assign_frontman(message: types.Message):
@@ -184,7 +185,10 @@ async def join_hg_tr(transaction, chat_id, user_id, base_bet):
     return player_data, None, updates
 
 @router.callback_query(F.data.startswith("hg_join_"))
-async def cb_hg_join(callback: types.CallbackQuery):
+async def cb_hg_join(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        return await callback.answer("Вы уже участвуете в игре!", show_alert=True)
+
     chat_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
     
@@ -203,8 +207,10 @@ async def cb_hg_join(callback: types.CallbackQuery):
     
     db = get_db()
     try:
+        await state.set_state(CasinoState.playing)
         player_data, error, updates = await join_hg_tr(db.transaction(), chat_id, user_id, game['bet'])
         if error:
+            await state.clear()
             return await callback.answer(error, show_alert=True)
 
         from user_manager import set_in_cache, mark_dirty, get_user_data
@@ -236,7 +242,7 @@ async def cb_hg_join(callback: types.CallbackQuery):
     )
 
 @router.callback_query(F.data.startswith("hg_start_"))
-async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
+async def cb_hg_start(callback: types.CallbackQuery, bot: Bot, state: FSMContext):
     chat_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
     
@@ -249,6 +255,11 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
     if len(game['players']) < 3:
         return await callback.answer("Нужно минимум 3 трибута для начала резни!", show_alert=True)
     
+    if await state.get_state() == CasinoState.playing.state and user_id == game['host_id']:
+         # The host might also be a player, but if they are just host they might not be in 'playing' state
+         # Actually HG host doesn't pay bet unless they joined as player.
+         pass
+
     game['state'] = 'running'
     await callback.message.edit_text("🔔 <b>ГОНГ ПРОЗВУЧАЛ! ТРИБУТЫ БЕГУТ К РОГУ ИЗОБИЛИЯ!</b>")
     asyncio.create_task(run_hg_simulation(chat_id, callback.message, bot))
@@ -342,6 +353,8 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
                 target['health'] = 0
                 log_entry += f"\n💀 <b>{escape_html(target['name'])} ПОГИБ!</b>"
                 players.remove(target)
+                # Clear FSM for dead player
+                fire_and_forget(invalidate_user_cache(chat_id, target['id']))
             current_round_logs.append(log_entry)
 
         status = "\n📊 <b>Живые:</b>\n" + "\n".join([f"— {escape_html(p['name'])} ({p['health']} HP)" for p in players])
@@ -358,6 +371,9 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     frontman_fee = int(total_pool * 0.05)
     prize = total_pool - frontman_fee
     
+    # Clear FSM for winner
+    fire_and_forget(invalidate_user_cache(chat_id, winner['id']))
+
     db = get_db()
     try:
         winner_upd, host_upd = await distribute_prizes_tr(db.transaction(), chat_id, winner['id'], prize, game['host_id'], frontman_fee, winner['diseases'])

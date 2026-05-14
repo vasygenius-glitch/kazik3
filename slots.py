@@ -3,8 +3,10 @@ import random
 import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from casino_utils import CasinoState
 
-from user_manager import get_user_data, update_user_balance
+from user_manager import get_user_data, update_user_balance, is_frontman
 
 from escape import escape_html
 from config import CREATOR_ID
@@ -26,7 +28,10 @@ def get_slots_frame(slots, status_text, bet, title):
     )
 
 @router.message(Command("slots"))
-async def cmd_slots(message: types.Message):
+async def cmd_slots(message: types.Message, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        await state.clear()
+
     chat_id, user_id = message.chat.id, message.from_user.id
     full_name = escape_html(message.from_user.full_name)
 
@@ -54,7 +59,10 @@ async def cmd_slots(message: types.Message):
     await ask_casino_confirmation(message, "slots", bet)
 
 @router.callback_query(F.data.startswith("cas_conf_slots_"))
-async def process_slots_confirm(callback: types.CallbackQuery):
+async def process_slots_confirm(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        return await callback.answer("У вас уже идет игра!", show_alert=True)
+
     try:
         bet = int(callback.data.split("_")[3])
     except: return
@@ -68,6 +76,7 @@ async def process_slots_confirm(callback: types.CallbackQuery):
         return await callback.answer("Недостаточно средств!", show_alert=True)
         
     await callback.message.delete()
+    await state.set_state(CasinoState.playing)
     
     from seasons import get_season_string
     casino_title = await get_season_string("bj_start", "КАЗИНО ЗАКУЛИСЬЕ")
@@ -88,17 +97,17 @@ async def process_slots_confirm(callback: types.CallbackQuery):
         except Exception: break
 
     is_forced_win = False
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    is_fm = await is_frontman(chat_id, user_id)
 
-    if is_creator:
+    if is_fm:
         is_forced_win = True
     elif secure_random.randint(1, 100) <= 35:
         is_forced_win = True
 
     if is_forced_win:
-        if is_creator or secure_random.randint(1, 100) <= 15:
+        if is_fm or secure_random.randint(1, 100) <= 15:
             # 3-of-a-kind
-            if is_creator: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
+            if is_fm: final_slots = ["7️⃣", "7️⃣", "7️⃣"]
             else:
                 win_types = ["jackpot", "mega", "three"]
                 chosen_win = secure_random.choice(win_types)
@@ -153,4 +162,5 @@ async def process_slots_confirm(callback: types.CallbackQuery):
     try:
         await msg.edit_text(final_text)
     except Exception: pass
+    await state.clear()
     asyncio.create_task(schedule_delete(msg, message))

@@ -2,13 +2,17 @@ import asyncio
 import secrets
 from aiogram import Router, F, types
 from aiogram.filters import Command
-from user_manager import get_user_data, update_user_balance
+from aiogram.fsm.context import FSMContext
+from casino_utils import CasinoState
+from user_manager import get_user_data, update_user_balance, is_frontman
 from utils import schedule_delete
 
 router = Router()
 
 @router.message(Command("craps"))
-async def cmd_craps(message: types.Message):
+async def cmd_craps(message: types.Message, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        await state.clear()
     args = message.text.split()
     if len(args) < 2:
         return await message.answer("Укажите ставку: <code>/craps 100</code>")
@@ -36,26 +40,28 @@ async def cmd_craps(message: types.Message):
     await ask_casino_confirmation(message, "craps", bet)
 
 @router.callback_query(F.data.startswith("cas_conf_craps_"))
-async def process_craps_confirm(callback: types.CallbackQuery):
+async def process_craps_confirm(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        return await callback.answer("У вас уже идет игра!", show_alert=True)
+
     try:
         bet = int(callback.data.split("_")[3])
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
-    data = await get_user_data(chat_id, user_id)
     
     new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
     if new_balance is None:
         return await callback.answer("Недостаточно средств!", show_alert=True)
         
     await callback.message.delete()
+    await state.set_state(CasinoState.playing)
     
     secure_random = secrets.SystemRandom()
 
-    from config import CREATOR_ID
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    is_fm = await is_frontman(chat_id, user_id)
 
-    if is_creator:
+    if is_fm:
         is_forced_win = True
     else:
         is_forced_win = (secure_random.randint(1, 100) <= 35)
@@ -82,7 +88,7 @@ async def process_craps_confirm(callback: types.CallbackQuery):
         if is_win == is_forced_win:
             break
 
-    if is_creator:
+    if is_fm:
         die1 = 3
         die2 = 4
         total = 7
@@ -105,4 +111,5 @@ async def process_craps_confirm(callback: types.CallbackQuery):
             text += f"❌ Вы не выкинули поинт. Проиграно <b>{bet}</b> сыроежек."
 
     msg = await callback.message.answer(text)
+    await state.clear()
     asyncio.create_task(schedule_delete(msg, callback.message))

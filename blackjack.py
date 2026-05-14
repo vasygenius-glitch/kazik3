@@ -4,18 +4,15 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
+from casino_utils import CasinoState
 
-from user_manager import get_user_data, update_user_balance
+from user_manager import get_user_data, update_user_balance, is_frontman
 from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
 
 router = Router()
-
-class BlackjackState(StatesGroup):
-    playing = State()
 
 def get_bj_keyboard(game_id: str):
     builder = InlineKeyboardBuilder()
@@ -44,7 +41,7 @@ def get_bj_frame(player_cards, dealer_cards, p_score, d_score, status, user_name
 
 @router.message(Command("bj"))
 async def cmd_bj(message: types.Message, state: FSMContext):
-    if await state.get_state() == BlackjackState.playing.state:
+    if await state.get_state() == CasinoState.playing.state:
         # Автоматический сброс залипшей игры
         await state.clear()
         # return await message.answer("Завершите прошлую игру!")
@@ -71,14 +68,17 @@ async def cmd_bj(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("cas_conf_blackjack_"))
 async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
+    if await state.get_state() == CasinoState.playing.state:
+        return await callback.answer("У вас уже идет игра!", show_alert=True)
+
     try:
         bet = int(callback.data.split("_")[3])
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
     full_name = escape_html(callback.from_user.full_name)
-    data = await get_user_data(chat_id, user_id, full_name)
     
+    data = await get_user_data(chat_id, user_id, full_name)
     new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
     if new_balance is None:
         return await callback.answer("Недостаточно средств!", show_alert=True)
@@ -86,11 +86,13 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete()
 
     game_id = f"{chat_id}_{user_id}_{callback.message.message_id}"
-    player_cards = [get_random_card(), get_random_card()]
-    dealer_cards = [get_random_card(), get_random_card()]
     
-    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+    if await is_frontman(chat_id, user_id):
         player_cards = [{'rank': 'A', 'suit': '♠'}, {'rank': 'K', 'suit': '♠'}]
+    else:
+        player_cards = [get_random_card(), get_random_card()]
+
+    dealer_cards = [get_random_card(), get_random_card()]
 
     p_score = calculate_score(player_cards)
     d_score = calculate_score(dealer_cards)
@@ -108,7 +110,7 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
         asyncio.create_task(schedule_delete(msg, callback.message))
         return
 
-    await state.set_state(BlackjackState.playing)
+    await state.set_state(CasinoState.playing)
     await state.update_data(game_id=game_id, user_id=user_id, chat_id=chat_id, full_name=full_name, bet=bet, player_cards=player_cards, dealer_cards=dealer_cards, title=title)
 
     text = get_bj_frame(player_cards, dealer_cards, p_score, d_score, "Ваш ход...", full_name, bet, title)
@@ -117,7 +119,7 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("bj_hit_"))
 async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
-    if await state.get_state() != BlackjackState.playing.state: return await callback.answer()
+    if await state.get_state() != CasinoState.playing.state: return await callback.answer()
     game = await state.get_data()
     if game.get('processing'): return await callback.answer()
     if callback.from_user.id != game['user_id']: return await callback.answer()
@@ -127,8 +129,8 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     
     if p_score > 21:
         secure_random = secrets.SystemRandom()
-        is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-        if is_creator or secure_random.randint(1, 100) <= 5:
+        is_fm = await is_frontman(game['chat_id'], game['user_id'])
+        if is_fm or secure_random.randint(1, 100) <= 5:
              game['player_cards'].pop()
              game['player_cards'].append({'rank': '2', 'suit': '♣'})
              p_score = calculate_score(game['player_cards'])
@@ -148,7 +150,7 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("bj_stand_"))
 async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
-    if await state.get_state() != BlackjackState.playing.state: return await callback.answer()
+    if await state.get_state() != CasinoState.playing.state: return await callback.answer()
     game = await state.get_data()
     if game.get('processing'): return await callback.answer()
     if callback.from_user.id != game['user_id']: return await callback.answer()
@@ -163,10 +165,10 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
     p_score = calculate_score(game['player_cards'])
     dealer_cards = game['dealer_cards']
     
-    is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
+    is_fm = await is_frontman(game['chat_id'], game['user_id'])
     secure_random = secrets.SystemRandom()
 
-    if is_creator:
+    if is_fm:
         target_win = True
     else:
         target_win = secure_random.randint(1, 100) <= 35

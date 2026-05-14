@@ -614,6 +614,14 @@ async def get_user_by_username_or_id(chat_id, identifier):
 
     return None, None
 
+async def is_frontman(chat_id: int, user_id: int) -> bool:
+    """Проверяет, является ли пользователь создателем или фронтменом."""
+    from config import CREATOR_ID
+    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+        return True
+    data = await get_user_data(chat_id, user_id)
+    return data.get('is_frontman', False)
+
 async def wipe_user_data(chat_id, user_id):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
