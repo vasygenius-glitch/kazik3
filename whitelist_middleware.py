@@ -89,7 +89,7 @@ class WhitelistMiddleware(BaseMiddleware):
         from diseases import get_active_diseases
 
         # Получаем данные пользователя
-        u_data = await get_user_data(chat.id, user_id, event.from_user.full_name, event.from_user.username)
+        u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
         if u_data and 'aids' in u_data.get('diseases', {}):
             active_diseases = await get_active_diseases(chat.id, user_id)
             if 'aids' in active_diseases:
