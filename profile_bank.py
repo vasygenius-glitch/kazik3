@@ -14,6 +14,8 @@ from config import CREATOR_ID
 router = Router()
 
 _bank_cache = {}
+_bank_name_to_id_cache = {}
+_banks_indexed_chats = set()
 BANK_CACHE_TTL = 10.0
 
 def get_bank_from_cache(chat_id, identifier):
@@ -163,19 +165,33 @@ async def get_bank_info(chat_id: int, identifier):
 
     # Если не ID, ищем по имени банка
     search_name = str(identifier).lower()
-    docs = await banks_ref.get()
-    for doc in docs:
-        b_data = doc.to_dict()
-        b_name = b_data.get('name', '').lower()
-        if b_name.startswith(search_name) or search_name in b_name:
-            b_data['banker_id'] = int(doc.id)
-            set_bank_in_cache(chat_id, identifier, b_data)
-            return b_data
+
+    if chat_id not in _banks_indexed_chats:
+        docs = await banks_ref.get()
+        for doc in docs:
+            b_data = doc.to_dict()
+            b_name = b_data.get('name', '').lower()
+            if b_name:
+                _bank_name_to_id_cache[(chat_id, b_name)] = int(doc.id)
+        _banks_indexed_chats.add(chat_id)
+
+    for (c_id, b_name), b_id in _bank_name_to_id_cache.items():
+        if c_id == chat_id and (b_name.startswith(search_name) or search_name in b_name):
+            return await get_bank_info(chat_id, b_id)
 
     return None
 
 async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
     current_data = await get_bank_info(chat_id, banker_id) or {}
+
+    if 'name' in data:
+        old_name = current_data.get('name', '').lower()
+        new_name = data['name'].lower()
+        if old_name and old_name != new_name:
+            _bank_name_to_id_cache.pop((chat_id, old_name), None)
+        if new_name:
+            _bank_name_to_id_cache[(chat_id, new_name)] = banker_id
+
     current_data.update(data)
     current_data['banker_id'] = banker_id
     set_bank_in_cache(chat_id, banker_id, current_data)
