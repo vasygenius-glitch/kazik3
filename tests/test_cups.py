@@ -23,23 +23,19 @@ class TestCupsGame(unittest.IsolatedAsyncioTestCase):
 
         with patch("cups.get_user_data", new_callable=AsyncMock) as mock_get_data, \
              patch("cups.check_and_give_bonus", new_callable=AsyncMock) as mock_bonus, \
-             patch("cups.update_user_balance", new_callable=AsyncMock) as mock_update:
+             patch("cups.update_user_balance", new_callable=AsyncMock) as mock_update, \
+             patch("casino_utils.ask_casino_confirmation", new_callable=AsyncMock) as mock_conf:
 
             mock_get_data.return_value = {'balance': 1000}
-            mock_bonus.return_value = (False, {}, "")
+            mock_bonus.return_value = (False, {})
 
             # Since get_active_diseases is imported locally inside the func, we mock it globally in sys.modules
             sys.modules['diseases'].get_active_diseases = AsyncMock(return_value=[])
 
-            # In cups.py it unpacks 2 items: bonus_given, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
-            # Memory says it should return 3 items, but the file unpacks 2.
-            # Let's mock it to return 2 to fit the existing code in cups.py if needed, or 3 if the file was modified elsewhere, but based on the error it unpacks 2.
-            mock_bonus.return_value = (False, {})
-
             await cups.cmd_cups(msg)
-            mock_update.assert_called_once_with(123, 456, -100)
-            msg.answer.assert_called_once()
-            self.assertTrue(len(cups.active_cups_games) > 0)
+            # Balance is NOT updated in cmd_cups anymore, it's done in confirmation callback
+            mock_update.assert_not_called()
+            mock_conf.assert_called_once_with(msg, "cups", 100)
 
     async def test_process_cups_win_rate(self):
         game_id = "test_game_1"

@@ -4,13 +4,9 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance
 from utils import schedule_delete
+from cards import get_random_card, get_baccarat_score, format_cards
 
 router = Router()
-
-def get_baccarat_value(card_val):
-    if card_val > 9:
-        return 0
-    return card_val
 
 @router.message(Command("baccarat"))
 async def cmd_baccarat(message: types.Message):
@@ -55,41 +51,44 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
         
     await callback.message.delete()
     
-    rand = secrets.SystemRandom()
+    secure_random = secrets.SystemRandom()
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-    is_win = rand.randint(1, 100) <= 35
+    is_win = secure_random.randint(1, 100) <= 35
 
     while True:
-        # Draw cards (1-13 where 11, 12, 13 are face cards with 0 value)
-        p_cards = [rand.randint(1, 13), rand.randint(1, 13)]
-        b_cards = [rand.randint(1, 13), rand.randint(1, 13)]
+        p_cards = [get_random_card(), get_random_card()]
+        b_cards = [get_random_card(), get_random_card()]
 
-        p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
-        b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+        p_score = get_baccarat_score(p_cards)
+        b_score = get_baccarat_score(b_cards)
 
-        # Draw third card logic simplified
+        # Draw third card logic
         if p_score < 6:
-            p_cards.append(rand.randint(1, 13))
-            p_score = sum(get_baccarat_value(c) for c in p_cards) % 10
+            p_cards.append(get_random_card())
+            p_score = get_baccarat_score(p_cards)
 
         if b_score < 6:
-            b_cards.append(rand.randint(1, 13))
-            b_score = sum(get_baccarat_value(c) for c in b_cards) % 10
+            b_cards.append(get_random_card())
+            b_score = get_baccarat_score(b_cards)
 
         if is_creator:
-            p_score = 9
-            b_score = 1
-            break
+            break # Creator uses real random, or we can force win
 
         if is_win and p_score > b_score:
             break
         elif not is_win and b_score > p_score:
             break
+        elif not is_win and p_score == b_score:
+             break # Tie is also not a player win
     
-    text = f"🃏 <b>Баккара</b>\n\nОчки Игрока: <b>{p_score}</b>\nОчки Банкира: <b>{b_score}</b>\n\n"
+    text = (
+        f"🃏 <b>Баккара</b>\n\n"
+        f"Игрок: {format_cards(p_cards)} (<b>{p_score}</b>)\n"
+        f"Банкир: {format_cards(b_cards)} (<b>{b_score}</b>)\n\n"
+    )
 
     if p_score > b_score:
         profit = bet
@@ -100,7 +99,7 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
             profit = int(profit * 0.5)
             vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
 
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Baccarat Win")
         text += f"🎉 Игрок побеждает! Вы выиграли <b>{profit}</b> сыроежек.{vip_bonus_text}"
     elif b_score > p_score:
         text += f"❌ Банкир побеждает! Вы проиграли <b>{bet}</b> сыроежек."
