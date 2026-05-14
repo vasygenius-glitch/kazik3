@@ -48,8 +48,8 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     if cfg and isinstance(cfg, dict) and cfg.get("active") and cfg.get("id") == "backrooms":
         tax_multiplier = 1.5
     
-    # Налог на богатство: +5% за каждый миллион
-    wealth_surcharge = (balance // 1000000) * 5
+    # Налог на богатство: +5% за каждые 250,000 (уменьшено в 4 раза вместе с нерфом экономики)
+    wealth_surcharge = (balance // 250000) * 5
     
     calculated_tax = base_tax + wealth_surcharge
     
@@ -67,3 +67,17 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
     
     # Налог ограничен 20%
     return max(1, min(20, total_tax))
+
+def calculate_biz_markup(balance: int) -> int:
+    """
+    Returns the non-stacking luxury tax markup for businesses based on the user's balance.
+    If balance > 500 million, the markup is 50%.
+    If balance > 100 million, the markup is 20%.
+    Otherwise, the markup is 0%.
+    """
+    if balance > 500_000_000:
+        return 50
+    elif balance > 100_000_000:
+        return 20
+    else:
+        return 0

@@ -11,29 +11,29 @@ router = Router()
 
 ITEMS = {
     # БИЗНЕСЫ (Окупаемость - 10 сборов)
-    "шаурма": {"name": "🏪 Ларёк с шаурмой", "price": 100000, "cat": "biz", "action": "business", "income": 10000},
-    "мойка": {"name": "🚿 Автомойка", "price": 500000, "cat": "biz", "action": "business", "income": 50000},
-    "вендинг": {"name": "🍬 Вендинг", "price": 800000, "cat": "biz", "action": "business", "income": 80000},
-    "кофейня": {"name": "☕️ Кофейня", "price": 1500000, "cat": "biz", "action": "business", "income": 150000},
-    "ресторан": {"name": "🍽 Ресторан", "price": 3000000, "cat": "biz", "action": "business", "income": 300000},
-    "отель": {"name": "🏨 Отель", "price": 7000000, "cat": "biz", "action": "business", "income": 700000},
-    "ферма": {"name": "🌽 Ферма", "price": 12000000, "cat": "biz", "action": "business", "income": 1200000},
-    "завод": {"name": "🏭 Завод", "price": 25000000, "cat": "biz", "action": "business", "income": 2500000},
-    "салон": {"name": "🚙 Автосалон", "price": 50000000, "cat": "biz", "action": "business", "income": 5000000},
-    "нефть": {"name": "🛢 Вышка", "price": 100000000, "cat": "biz", "action": "business", "income": 10000000},
-    "банк": {"name": "🏦 Банк", "price": 250000000, "cat": "biz", "action": "business", "income": 25000000},
-    "айти": {"name": "💻 IT-компания", "price": 500000000, "cat": "biz", "action": "business", "income": 50000000},
-    "казино": {"name": "🎰 Казино", "price": 1000000000, "cat": "biz", "action": "business", "income": 100000000},
-    "космодром": {"name": "🚀 Космодром", "price": 5000000000, "cat": "biz", "action": "business", "income": 500000000},
-    "планета": {"name": "🪐 Колония", "price": 10000000000, "cat": "biz", "action": "business", "income": 1000000000},
+    "шаурма": {"name": "🏪 Ларёк с шаурмой", "price": 25000, "cat": "biz", "action": "business", "income": 2500},
+    "мойка": {"name": "🚿 Автомойка", "price": 125000, "cat": "biz", "action": "business", "income": 12500},
+    "вендинг": {"name": "🍬 Вендинг", "price": 200000, "cat": "biz", "action": "business", "income": 20000},
+    "кофейня": {"name": "☕️ Кофейня", "price": 375000, "cat": "biz", "action": "business", "income": 37500},
+    "ресторан": {"name": "🍽 Ресторан", "price": 750000, "cat": "biz", "action": "business", "income": 75000},
+    "отель": {"name": "🏨 Отель", "price": 1750000, "cat": "biz", "action": "business", "income": 175000},
+    "ферма": {"name": "🌽 Ферма", "price": 3000000, "cat": "biz", "action": "business", "income": 300000},
+    "завод": {"name": "🏭 Завод", "price": 6250000, "cat": "biz", "action": "business", "income": 625000},
+    "салон": {"name": "🚙 Автосалон", "price": 12500000, "cat": "biz", "action": "business", "income": 1250000},
+    "нефть": {"name": "🛢 Вышка", "price": 25000000, "cat": "biz", "action": "business", "income": 2500000},
+    "банк": {"name": "🏦 Банк", "price": 62500000, "cat": "biz", "action": "business", "income": 6250000},
+    "айти": {"name": "💻 IT-компания", "price": 125000000, "cat": "biz", "action": "business", "income": 12500000},
+    "казино": {"name": "🎰 Казино", "price": 250000000, "cat": "biz", "action": "business", "income": 25000000},
+    "космодром": {"name": "🚀 Космодром", "price": 1250000000, "cat": "biz", "action": "business", "income": 125000000},
+    "планета": {"name": "🪐 Колония", "price": 2500000000, "cat": "biz", "action": "business", "income": 250000000},
     
     # МАШИНЫ
-    "лада": {"name": "🚗 Lada Priora", "price": 50000, "cat": "cars", "action": "car", "income": 2000},
-    "камри": {"name": "🚙 Toyota Camry", "price": 150000, "cat": "cars", "action": "car", "income": 7000},
-    "бмв": {"name": "🚕 BMW M5", "price": 500000, "cat": "cars", "action": "car", "income": 20000},
-    "гелик": {"name": "⬛️ Geländewagen", "price": 1200000, "cat": "cars", "action": "car", "income": 50000},
-    "бугатти": {"name": "🏎 Bugatti Chiron", "price": 5000000, "cat": "cars", "action": "car", "income": 200000},
-    "самолет": {"name": "🛩 Частный Jet", "price": 50000000, "cat": "cars", "action": "car", "income": 2500000},
+    "лада": {"name": "🚗 Lada Priora", "price": 12500, "cat": "cars", "action": "car", "income": 500},
+    "камри": {"name": "🚙 Toyota Camry", "price": 37500, "cat": "cars", "action": "car", "income": 1750},
+    "бмв": {"name": "🚕 BMW M5", "price": 125000, "cat": "cars", "action": "car", "income": 5000},
+    "гелик": {"name": "⬛️ Geländewagen", "price": 300000, "cat": "cars", "action": "car", "income": 12500},
+    "бугатти": {"name": "🏎 Bugatti Chiron", "price": 1250000, "cat": "cars", "action": "car", "income": 50000},
+    "самолет": {"name": "🛩 Частный Jet", "price": 12500000, "cat": "cars", "action": "car", "income": 625000},
     
     # ПРОЧЕЕ
     "вип": {"name": "💎 Статус VIP", "price": 1000000, "cat": "other", "action": "other"},
@@ -89,11 +89,19 @@ def get_sell_confirm_kb(item_id):
 
 def get_category_kb(category, balance, base_tax, negotiation_skill=0):
     builder = InlineKeyboardBuilder()
+    from economy_utils import calculate_biz_markup
     tax_rate = calculate_progressive_tax(balance, base_tax, negotiation_skill)
     
     for item_id, info in ITEMS.items():
         if info.get('cat') == category:
+            # Считаем обычный налог
             markup = int(info['price'] * (tax_rate / 100.0))
+
+            # Налог на роскошь для бизнесов
+            if category == "biz":
+                biz_markup_percent = calculate_biz_markup(balance)
+                markup += int(info['price'] * (biz_markup_percent / 100.0))
+
             final_price = info['price'] + markup
             builder.button(text=f"{info['name']} - {final_price} сыр.", callback_data=f"buy_{item_id}")
     builder.button(text="⬅️ Назад", callback_data="shop_main")
@@ -205,8 +213,17 @@ async def process_buy(callback: types.CallbackQuery):
     base_tax = await get_global_tax()
     pet_data = data.get('pet', {})
     pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
-    final_price = item['price'] + int(item['price'] * (tax_rate / 100.0))
+
+    balance = data.get('balance', 0)
+    tax_rate = calculate_progressive_tax(balance, base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
+
+    markup = int(item['price'] * (tax_rate / 100.0))
+    if item.get('cat') == "biz":
+        from economy_utils import calculate_biz_markup
+        biz_markup_percent = calculate_biz_markup(balance)
+        markup += int(item['price'] * (biz_markup_percent / 100.0))
+
+    final_price = item['price'] + markup
 
     if data.get('balance', 0) < final_price:
         return await callback.answer(f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True)
@@ -279,14 +296,6 @@ async def process_sell_confirm(callback: types.CallbackQuery):
         success = await remove_item_from_inventory(chat_id, user_id, item_id)
         if not success:
             return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
-
-        # Удаляем связанную запись уровня бизнеса
-        from user_manager import update_user_field
-        biz_levels = data.get('biz_levels', {})
-        if item_id in biz_levels:
-            del biz_levels[item_id]
-            await update_user_field(chat_id, user_id, 'biz_levels', biz_levels)
-
     sell_price = int(item['price'] * 0.75)
     await update_user_balance(chat_id, user_id, sell_price)
 
