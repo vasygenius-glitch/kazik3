@@ -280,7 +280,7 @@ async def add_item_to_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        inv = data.get('inventory', {})
+        inv = data.get('inventory', {}).copy()
         inv[item_name] = inv.get(item_name, 0) + 1
 
         data['inventory'] = inv
@@ -291,8 +291,8 @@ async def remove_item_from_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        inv = data.get('inventory', {})
-        biz_levels = data.get('biz_levels', {})
+        inv = data.get('inventory', {}).copy()
+        biz_levels = data.get('biz_levels', {}).copy()
 
         if inv.get(item_name, 0) > 0:
             inv[item_name] -= 1
