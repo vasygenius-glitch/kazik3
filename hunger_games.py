@@ -183,57 +183,65 @@ async def join_hg_tr(transaction, chat_id, user_id, base_bet):
     }
     return player_data, None, updates
 
+_hg_locks = {}
+
+def get_hg_lock(chat_id):
+    if chat_id not in _hg_locks:
+        _hg_locks[chat_id] = asyncio.Lock()
+    return _hg_locks[chat_id]
+
 @router.callback_query(F.data.startswith("hg_join_"))
 async def cb_hg_join(callback: types.CallbackQuery):
     chat_id = int(callback.data.split("_")[2])
     user_id = callback.from_user.id
     
-    if chat_id not in active_hg:
-        return await callback.answer("Игры уже закончились или не начинались.", show_alert=True)
-    
-    game = active_hg[chat_id]
-    if game['state'] != 'lobby':
-        return await callback.answer("Игра уже в процессе!", show_alert=True)
-    
-    if any(p['id'] == user_id for p in game['players']):
-        return await callback.answer("Вы уже в списке трибутов.", show_alert=True)
-    
-    if len(game['players']) >= 10:
-        return await callback.answer("Арена переполнена! Максимум 10 человек.", show_alert=True)
-    
-    db = get_db()
-    try:
-        player_data, error, updates = await join_hg_tr(db.transaction(), chat_id, user_id, game['bet'])
-        if error:
-            return await callback.answer(error, show_alert=True)
+    async with get_hg_lock(chat_id):
+        if chat_id not in active_hg:
+            return await callback.answer("Игры уже закончились или не начинались.", show_alert=True)
 
-        from user_manager import set_in_cache, mark_dirty, get_user_data
-        data = await get_user_data(chat_id, user_id)
-        data.update(updates)
-        set_in_cache(chat_id, user_id, data)
-        mark_dirty(chat_id, user_id)
+        game = active_hg[chat_id]
+        if game['state'] != 'lobby':
+            return await callback.answer("Игра уже в процессе!", show_alert=True)
 
-        game['players'].append(player_data)
-        await callback.answer("Вы вступили в Голодные Игры! Да пребудет с вами удача.")
-    except Exception as e:
-        print(f"HG Join Error: {e}")
-        return await callback.answer("Произошла ошибка при вступлении.", show_alert=True)
-    
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Вступить в игру 🗡", callback_data=f"hg_join_{chat_id}")
-    if user_id == game['host_id']:
-        builder.button(text="НАЧАТЬ ЖАТВУ 🩸", callback_data=f"hg_start_{chat_id}")
-    builder.adjust(1)
-    
-    await callback.message.edit_text(
-        f"🏆 <b>ГОЛОДНЫЕ ИГРЫ: СБОР ТРИБУТОВ</b>\n\n"
-        f"🎭 Организатор: <b>{escape_html(game['host_name'])}</b>\n"
-        f"💰 Взнос: <b>{game['bet']}</b> сыр.\n"
-        f"👥 Игроков: <b>{len(game['players'])} / 10</b>\n\n"
-        f"<b>Список участников:</b>\n" + 
-        "\n".join([f"— {escape_html(p['name'])}" for p in game['players']]),
-        reply_markup=builder.as_markup()
-    )
+        if any(p['id'] == user_id for p in game['players']):
+            return await callback.answer("Вы уже в списке трибутов.", show_alert=True)
+
+        if len(game['players']) >= 10:
+            return await callback.answer("Арена переполнена! Максимум 10 человек.", show_alert=True)
+
+        db = get_db()
+        try:
+            player_data, error, updates = await join_hg_tr(db.transaction(), chat_id, user_id, game['bet'])
+            if error:
+                return await callback.answer(error, show_alert=True)
+
+            from user_manager import set_in_cache, mark_dirty, get_user_data
+            data = await get_user_data(chat_id, user_id)
+            data.update(updates)
+            set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+
+            game['players'].append(player_data)
+            await callback.answer("Вы вступили в Голодные Игры! Да пребудет с вами удача.")
+        except Exception as e:
+            print(f"HG Join Error: {e}")
+            return await callback.answer("Произошла ошибка при вступлении.", show_alert=True)
+
+        builder = InlineKeyboardBuilder()
+        builder.button(text="Вступить в игру 🗡", callback_data=f"hg_join_{chat_id}")
+        if user_id == game['host_id']:
+            builder.button(text="НАЧАТЬ ЖАТВУ 🩸", callback_data=f"hg_start_{chat_id}")
+        builder.adjust(1)
+
+        await callback.message.edit_text(
+            f"🏆 <b>ГОЛОДНЫЕ ИГРЫ: СБОР ТРИБУТОВ</b>\n\n"
+            f"🎭 Организатор: <b>{escape_html(game['host_name'])}</b>\n"
+            f"💰 Взнос: <b>{game['bet']}</b> сыр.\n"
+            f"👥 Игроков: <b>{len(game['players'])} / 10</b>\n\n"
+            f"<b>Список участников:</b>\n" +
+            "\n".join([f"— {escape_html(p['name'])}" for p in game['players']]),
+            reply_markup=builder.as_markup()
+        )
 
 @router.callback_query(F.data.startswith("hg_start_"))
 async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):

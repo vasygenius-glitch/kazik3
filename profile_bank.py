@@ -583,10 +583,13 @@ async def cmd_bank_offshore(message: types.Message):
 
         try:
             await activate_offshore_tx(db.transaction(), chat_id, user_id, price)
-            data['is_offshore'] = True
-            data['balance'] -= price
-            set_in_cache(chat_id, user_id, data)
-            mark_dirty(chat_id, user_id)
+            from user_manager import get_user_lock, get_user_data, set_in_cache, mark_dirty
+            async with get_user_lock(chat_id, user_id):
+                fresh_data = await get_user_data(chat_id, user_id)
+                fresh_data['is_offshore'] = True
+                set_in_cache(chat_id, user_id, fresh_data)
+                mark_dirty(chat_id, user_id)
+
             await message.answer(f"🏝 <b>Оффшорный счет активирован!</b>\nСписано {price} сыр. Теперь ваш вклад скрыт от других игроков в `/profile`.\n<i>(Банк будет снимать 0.5% от вашего депозита при начислении процентов за обслуживание)</i>")
         except ValueError as ve:
             await message.answer(f"❌ {ve}")

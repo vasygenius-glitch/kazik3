@@ -45,14 +45,19 @@ def set_in_cache(chat_id, user_id, data):
             _username_to_id_cache.pop((chat_id, old_username.lower()), None)
 
     if len(_user_cache) >= MAX_CACHE_SIZE and key not in _user_cache:
-        # Простая очистка старейшего элемента
-        oldest_key = next(iter(_user_cache))
-        oldest_entry = _user_cache.pop(oldest_key)
+        # Ищем старейший элемент, которого НЕТ в _dirty_cache
+        evict_key = None
+        for k in _user_cache:
+            if k not in _dirty_cache:
+                evict_key = k
+                break
 
-        # Удаляем юзернейм вытесненного пользователя из индекса
-        evicted_username = oldest_entry["data"].get("username")
-        if evicted_username:
-            _username_to_id_cache.pop((oldest_key[0], evicted_username.lower()), None)
+        if evict_key:
+            oldest_entry = _user_cache.pop(evict_key)
+            # Удаляем юзернейм вытесненного пользователя из индекса
+            evicted_username = oldest_entry["data"].get("username")
+            if evicted_username:
+                _username_to_id_cache.pop((evict_key[0], evicted_username.lower()), None)
     
     _user_cache[key] = {"data": data.copy(), "timestamp": time.time()}
 
