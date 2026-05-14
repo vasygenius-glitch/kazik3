@@ -2,7 +2,7 @@ import secrets
 import asyncio
 import time
 from aiogram import Router, types, F, Bot
-from aiogram.filters import Command
+from aiogram.filters import Command, or_f
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from escape import escape_html
 from user_manager import (
@@ -253,7 +253,7 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
     await callback.message.edit_text("🔔 <b>ГОНГ ПРОЗВУЧАЛ! ТРИБУТЫ БЕГУТ К РОГУ ИЗОБИЛИЯ!</b>")
     asyncio.create_task(run_hg_simulation(chat_id, callback.message, bot))
 
-@router.message(Command("hg_cancel") | F.text.lower().startswith("отменить ги"))
+@router.message(or_f(Command("hg_cancel"), F.text.lower().startswith("отменить ги")))
 async def cmd_hg_cancel(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
