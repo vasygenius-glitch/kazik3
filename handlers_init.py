@@ -28,6 +28,7 @@ from escort import router as escort_router
 from contracts import router as contracts_router
 from diseases import router as diseases_router
 from inventory import router as inventory_router
+from hunger_games import router as hunger_games_router
 from admin_pm import router as admin_pm_router
 
 from aiogram import Router
@@ -133,4 +134,5 @@ def register_all_handlers(dp: Dispatcher):
     from casino_utils import router as casino_utils_router
     dp.include_router(casino_utils_router)
     dp.include_router(admin_pm_router)
+    dp.include_router(hunger_games_router)
     dp.include_router(catch_all_router)
