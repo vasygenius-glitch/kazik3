@@ -108,12 +108,12 @@ async def infect_user(chat_id: int, user_id: int) -> list:
     await update_user_field(chat_id, user_id, 'diseases', current_diseases)
     return infected_list
 
-async def get_active_diseases(chat_id: int, user_id: int) -> list:
+async def get_active_diseases(chat_id: int, user_id: int, u_data: dict = None) -> list:
     """Возвращает список ID активных болезней пользователя."""
     from user_manager import get_user_data, update_user_field
 
     # Оптимизация: получаем профиль. Если болезней нет, даже не проверяем иммунитет (экономим базу)
-    data = await get_user_data(chat_id, user_id)
+    data = u_data if u_data is not None else await get_user_data(chat_id, user_id)
     diseases = data.get('diseases', {})
     if not diseases:
         return []

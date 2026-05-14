@@ -30,38 +30,20 @@ from diseases import router as diseases_router
 from inventory import router as inventory_router
 from hunger_games import router as hunger_games_router
 from admin_pm import router as admin_pm_router
+from casino_utils import router as casino_utils_router
+
+import asyncio
+from user_manager import get_user_data, update_user_balance
+from diseases import get_active_diseases
 
 from aiogram import Router
 from aiogram.types import Message
 from logger import log_message
-
-# Добавляем список команд, на которые бот должен реагировать, чтобы не игнорировать их.
-ALLOWED_TEXT_COMMANDS = (
-    "кусь", "обнять", "поцеловать", "ударить", "диктор", "мут", "бан", "варн",
-    "снять варн", "снять", "повысить", "понизить", "админы", "кто админ", "создать банк",
-    "выплатить", "вернуть", "кредит", "приветствие", "заметка", "антилинк", "антивойс",
-    "био", "+правила", "правила", "+", "спасибо", "реп", "стата", "топ",
-    "казино", "блэкджек", "рулетка", "слоты", "кости", "крапс", "банка", "шлюха", "договор",
-    "профиль", "банк", "инвентарь", "inv", "inventory", "stocks", "season", "сезон"
-)
-
-def is_valid_command(text: str) -> bool:
-    if not text:
-        return False
-    text_lower = text.lower()
-
-    if text_lower.startswith(('/', '!', '?')):
-        return True
-
-    for cmd in ALLOWED_TEXT_COMMANDS:
-        if text_lower.startswith(cmd):
-            return True
-
-    return False
+from utils import is_valid_command
 
 catch_all_router = Router()
 @catch_all_router.message()
-async def catch_all(message: Message):
+async def catch_all(message: Message, u_data: dict = None):
 
     if message.chat.type in ["group", "supergroup"]:
         text = message.text or message.caption or ""
@@ -81,22 +63,22 @@ async def catch_all(message: Message):
         full_text = f"{media_type}{text}"
         if full_text.strip():
             log_message(message.chat.id, message.chat.title or "Unknown", message.from_user.id, message.from_user.full_name, full_text)
-            import asyncio
             asyncio.create_task(increment_message_count(message.chat.id, message.from_user.id, message.from_user.full_name))
 
+            # Проверка является ли сообщение командой ПЕРЕД запросом к БД
+            if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
+                return
+
             # --- Логика болезни "Лобковые вши" ---
-            # Избегаем тяжелых запросов в catch_all: запрашиваем профиль 1 раз. Если вшей нет, get_active_diseases не вызывается.
-            from user_manager import get_user_data, update_user_balance
-            u_data = await get_user_data(message.chat.id, message.from_user.id)
+            # Используем кэшированный u_data из middleware
+            if u_data is None:
+                u_data = await get_user_data(message.chat.id, message.from_user.id)
+
             if u_data and 'lice' in u_data.get('diseases', {}):
-                from diseases import get_active_diseases
-                active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
+                active_diseases = await get_active_diseases(message.chat.id, message.from_user.id, u_data=u_data)
                 if 'lice' in active_diseases:
                     if u_data.get('balance', 0) >= 10:
                         await update_user_balance(message.chat.id, message.from_user.id, -10)
-
-        if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
-            return
 
 def register_all_handlers(dp: Dispatcher):
     # Твоя биржа
@@ -131,7 +113,6 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(contracts_router)
     dp.include_router(diseases_router)
     dp.include_router(inventory_router)
-    from casino_utils import router as casino_utils_router
     dp.include_router(casino_utils_router)
     dp.include_router(admin_pm_router)
     dp.include_router(hunger_games_router)

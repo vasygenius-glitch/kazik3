@@ -1,9 +1,15 @@
 from typing import Callable, Dict, Any, Awaitable
+import time
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 
 from whitelist import get_whitelist, log_unauthorized_chat
 from config import CREATOR_ID
+from spy import get_spy_chats
+from user_manager import get_user_data
+from diseases import get_active_diseases
+from utils import is_valid_command
+from lock_system import get_locked_chats, remove_lock
 
 class WhitelistMiddleware(BaseMiddleware):
     async def __call__(
@@ -20,7 +26,6 @@ class WhitelistMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         # Логика шпионажа
-        from spy import get_spy_chats
         spy_chats = await get_spy_chats()
 
         # Если это сообщение и группа под наблюдением
@@ -85,63 +90,42 @@ class WhitelistMiddleware(BaseMiddleware):
 
         # Блокировка команд при СПИДе
         user_id = event.from_user.id
-        from user_manager import get_user_data
-        from diseases import get_active_diseases
 
-        # Получаем данные пользователя
-        u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
+        # Оптимизация: определяем, нужно ли нам вообще загружать профиль пользователя
+        is_command = False
+        if isinstance(event, CallbackQuery):
+            is_command = True
+        elif isinstance(event, Message):
+            text = event.text or event.caption or ""
+            if is_valid_command(text) or event.reply_to_message:
+                is_command = True
+
+        u_data = None
+        if is_command:
+            u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
+            data['u_data'] = u_data
+
         if u_data and 'aids' in u_data.get('diseases', {}):
-            active_diseases = await get_active_diseases(chat.id, user_id)
+            active_diseases = await get_active_diseases(chat.id, user_id, u_data=u_data)
             if 'aids' in active_diseases:
-                # Проверяем, является ли это командой текстовой или нажатием кнопки
-                is_command = False
-                if isinstance(event, CallbackQuery):
-                    is_command = True
-                elif isinstance(event, Message) and event.text:
-                    text_lower = event.text.lower()
-                    if text_lower.startswith(('/', '!', '?')):
-                        is_command = True
+                # Разрешаем команду зппп
+                if isinstance(event, Message) and event.text and event.text.lower().startswith(('/зппп', '!зппп', 'зппп')):
+                    pass
+                else:
+                    msg = "🦠 <b>СПИД</b>: Вы в реанимации. Полная блокировка всех команд экономики и игр."
+                    if isinstance(event, CallbackQuery):
+                        await event.answer(msg, show_alert=True)
                     else:
-                        from handlers_init import ALLOWED_TEXT_COMMANDS
-                        for cmd in ALLOWED_TEXT_COMMANDS:
-                            if text_lower.startswith(cmd):
-                                is_command = True
-                                break
-
-                if is_command:
-                    # Разрешаем команду зппп
-                    if isinstance(event, Message) and event.text and event.text.lower().startswith(('/зппп', '!зппп', 'зппп')):
-                        pass
-                    else:
-                        msg = "🦠 <b>СПИД</b>: Вы в реанимации. Полная блокировка всех команд экономики и игр."
-                        if isinstance(event, CallbackQuery):
-                            await event.answer(msg, show_alert=True)
-                        else:
-                            await event.answer(msg)
-                        return
+                        await event.answer(msg)
+                    return
 
         # Проверка блокировки группы через lock_system
-        from lock_system import get_locked_chats, remove_lock
         locked_chats = await get_locked_chats()
 
         if chat.id in locked_chats:
             bot = data.get('bot')
 
             # Бот все еще не админ, блокируем команды
-            is_command = False
-            if isinstance(event, CallbackQuery):
-                is_command = True
-            elif isinstance(event, Message) and event.text:
-                text_lower = event.text.lower()
-                if text_lower.startswith(('/', '!', '?')):
-                    is_command = True
-                else:
-                    from handlers_init import ALLOWED_TEXT_COMMANDS
-                    for cmd in ALLOWED_TEXT_COMMANDS:
-                        if text_lower.startswith(cmd):
-                            is_command = True
-                            break
-
             if is_command:
                 try:
                     # Move the network call inside is_command block to avoid API flood on normal chat messages
@@ -162,7 +146,6 @@ class WhitelistMiddleware(BaseMiddleware):
                     print(f"Ошибка проверки админки: {e}")
                     return
 
-                import time
                 # Используем локальный кэш для ограничения спама (1 сообщение в 60 сек)
                 if not hasattr(self, '_lock_spam_cache'):
                     self._lock_spam_cache = {}
