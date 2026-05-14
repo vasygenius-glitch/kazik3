@@ -626,14 +626,14 @@ async def cmd_bank_stats(message: types.Message):
 
 @router.callback_query(F.data.startswith("bstat_"))
 async def cb_bank_stats(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    action = parts[1]
+    data_parts = callback.data.split("_")
+    action = data_parts[1]
 
     if action == "buyupg":
-        upg_type = parts[2]
-        banker_id = int(parts[3])
+        upg_type = data_parts[2]
+        banker_id = int(data_parts[3])
     else:
-        banker_id = int(parts[2])
+        banker_id = int(data_parts[2])
 
 
     if callback.from_user.id != banker_id:
@@ -708,61 +708,70 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         )
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
 
-    elif action == "upgrades":
-        lvl_armor = bank_data.get('upgrade_armor', 0)
-        lvl_market = bank_data.get('upgrade_marketing', 0)
-        lvl_earnings = bank_data.get('upgrade_earnings', 0)
-        lvl_banker = bank_data.get('upgrade_banker', 0)
-        lvl_security = bank_data.get('upgrade_security', 0)
+        await show_bank_upgrades(callback, chat_id, banker_id)
 
-        armor_price = 10000000 * (lvl_armor + 1)
-        market_price = 15000000 * (lvl_market + 1)
-        earn_price = 12000000 * (lvl_earnings + 1)
-        banker_price = 20000000 * (lvl_banker + 1)
-        sec_price = 15000000 * (lvl_security + 1)
+async def show_bank_upgrades(callback: types.CallbackQuery, chat_id: int, banker_id: int):
+    bank_data = await get_bank_info(chat_id, banker_id)
+    if not bank_data:
+        return await callback.answer("❌ Банк не найден.", show_alert=True)
+        
+    lvl_armor = bank_data.get('upgrade_armor', 0)
+    lvl_market = bank_data.get('upgrade_marketing', 0)
+    lvl_earnings = bank_data.get('upgrade_earnings', 0)
+    lvl_banker = bank_data.get('upgrade_banker', 0)
+    lvl_security = bank_data.get('upgrade_security', 0)
 
-        armor_status = f"{lvl_armor}/5" if lvl_armor < 5 else "МАКС."
-        market_status = f"{lvl_market}/5" if lvl_market < 5 else "МАКС."
-        earn_status = f"{lvl_earnings}/5" if lvl_earnings < 5 else "МАКС."
-        banker_status = f"{lvl_banker}/5" if lvl_banker < 5 else "МАКС."
-        sec_status = f"{lvl_security}/5" if lvl_security < 5 else "МАКС."
+    armor_price = 10000000 * (lvl_armor + 1)
+    market_price = 15000000 * (lvl_market + 1)
+    earn_price = 12000000 * (lvl_earnings + 1)
+    banker_price = 20000000 * (lvl_banker + 1)
+    sec_price = 15000000 * (lvl_security + 1)
 
-        text = (
-            f"⬆️ <b>Улучшения банка</b>\n"
-            f"Капитал: <b>{bank_data.get('capital', 0)}</b> сыр.\n\n"
+    armor_status = f"{lvl_armor}/5" if lvl_armor < 5 else "МАКС."
+    market_status = f"{lvl_market}/5" if lvl_market < 5 else "МАКС."
+    earn_status = f"{lvl_earnings}/5" if lvl_earnings < 5 else "МАКС."
+    banker_status = f"{lvl_banker}/5" if lvl_banker < 5 else "МАКС."
+    sec_status = f"{lvl_security}/5" if lvl_security < 5 else "МАКС."
 
-            f"🛡 <b>Броневики (Инкассация)</b>: Ур. {armor_status}\n"
-            f"<i>Снижает начальный риск нападения при /incass.</i>\n"
-            f"Цена: {armor_price if lvl_armor < 5 else '—'} сыр.\n\n"
+    text = (
+        f"⬆️ <b>Улучшения банка</b>\n"
+        f"Капитал: <b>{bank_data.get('capital', 0)}</b> сыр.\n\n"
 
-            f"💼 <b>Вместимость мешков</b>: Ур. {earn_status}\n"
-            f"<i>+10% к добыче при инкассации за уровень.</i>\n"
-            f"Цена: {earn_price if lvl_earnings < 5 else '—'} сыр.\n\n"
+        f"🛡 <b>Броневики (Инкассация)</b>: Ур. {armor_status}\n"
+        f"<i>Снижает начальный риск нападения при /incass.</i>\n"
+        f"Цена: {armor_price if lvl_armor < 5 else '—'} сыр.\n\n"
 
-            f"👔 <b>Доля Банкира</b>: Ур. {banker_status}\n"
-            f"<i>+5% к вашей личной премии от инкассации.</i>\n"
-            f"Цена: {banker_price if lvl_banker < 5 else '—'} сыр.\n\n"
+        f"💼 <b>Вместимость мешков</b>: Ур. {earn_status}\n"
+        f"<i>+10% к добыче при инкассации за уровень.</i>\n"
+        f"Цена: {earn_price if lvl_earnings < 5 else '—'} сыр.\n\n"
 
-            f"📈 <b>Маркетинг (Субсидии)</b>: Ур. {market_status}\n"
-            f"<i>+20% к ежедневным субсидиям ЦБ.</i>\n"
-            f"Цена: {market_price if lvl_market < 5 else '—'} сыр.\n\n"
+        f"👔 <b>Доля Банкира</b>: Ур. {banker_status}\n"
+        f"<i>+5% к вашей личной премии от инкассации.</i>\n"
+        f"Цена: {banker_price if lvl_banker < 5 else '—'} сыр.\n\n"
 
-            f"🔐 <b>Сейфовая Охрана</b>: Ур. {sec_status}\n"
-            f"<i>Снижает шанс, что игроки украдут ваши деньги через /steal (до 5% при макс ур).</i>\n"
-            f"Цена: {sec_price if lvl_security < 5 else '—'} сыр."
-        )
+        f"📈 <b>Маркетинг (Субсидии)</b>: Ур. {market_status}\n"
+        f"<i>+20% к ежедневным субсидиям ЦБ.</i>\n"
+        f"Цена: {market_price if lvl_market < 5 else '—'} сыр.\n\n"
 
-        builder = InlineKeyboardBuilder()
-        if lvl_armor < 5: builder.button(text=f"🛡 Броневики", callback_data=f"bstat_buyupg_armor_{banker_id}")
-        if lvl_earnings < 5: builder.button(text=f"💼 Вместимость", callback_data=f"bstat_buyupg_earn_{banker_id}")
-        if lvl_banker < 5: builder.button(text=f"👔 Доля", callback_data=f"bstat_buyupg_banker_{banker_id}")
-        if lvl_market < 5: builder.button(text=f"📈 Маркетинг", callback_data=f"bstat_buyupg_market_{banker_id}")
-        if lvl_security < 5: builder.button(text=f"🔐 Охрана", callback_data=f"bstat_buyupg_sec_{banker_id}")
+        f"🔐 <b>Сейфовая Охрана</b>: Ур. {sec_status}\n"
+        f"<i>Снижает шанс, что игроки украдут ваши деньги через /steal (до 5% при макс ур).</i>\n"
+        f"Цена: {sec_price if lvl_security < 5 else '—'} сыр."
+    )
 
-        builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
-        builder.adjust(2, 2, 1, 1)
+    builder = InlineKeyboardBuilder()
+    if lvl_armor < 5: builder.button(text=f"🛡 Броневики", callback_data=f"bstat_buyupg_armor_{banker_id}")
+    if lvl_earnings < 5: builder.button(text=f"💼 Вместимость", callback_data=f"bstat_buyupg_earn_{banker_id}")
+    if lvl_banker < 5: builder.button(text=f"👔 Доля", callback_data=f"bstat_buyupg_banker_{banker_id}")
+    if lvl_market < 5: builder.button(text=f"📈 Маркетинг", callback_data=f"bstat_buyupg_market_{banker_id}")
+    if lvl_security < 5: builder.button(text=f"🔐 Охрана", callback_data=f"bstat_buyupg_sec_{banker_id}")
 
+    builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
+    builder.adjust(2, 2, 1, 1)
+
+    try:
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    except Exception:
+        pass
 
     elif action == "buyupg":
         upg_type = parts[2]
@@ -813,8 +822,8 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             await create_or_update_bank(chat_id, banker_id, {'capital': capital - price, 'upgrade_security': lvl + 1})
             await callback.answer(f"✅ Охрана сейфа улучшена до уровня {lvl + 1}!")
 
-        callback.data = f"bstat_upgrades_{banker_id}"
-        await cb_bank_stats(callback)
+        # Вместо рекурсии и изменения замороженного callback.data, просто обновляем экран улучшений
+        return await show_bank_upgrades(callback, chat_id, banker_id)
 
 import random
 import time
