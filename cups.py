@@ -9,6 +9,7 @@ from user_manager import get_user_data, update_user_balance, check_and_give_bonu
 from chances import get_game_chance
 from escape import escape_html
 from utils import schedule_delete
+from config import CREATOR_ID
 
 router = Router()
 
@@ -134,7 +135,6 @@ async def process_cups(callback: types.CallbackQuery):
     winning_cup = game['winning_cup']
     bet = game['bet']
 
-    from config import CREATOR_ID
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
 
     if is_creator:
@@ -175,7 +175,7 @@ async def process_cups(callback: types.CallbackQuery):
             profit += vip_profit_bonus
             vip_bonus_text = f" (👑 VIP бонус: +{vip_profit_bonus})"
 
-        await update_user_balance(chat_id, user_id, bet + profit)
+        await update_user_balance(chat_id, user_id, bet + profit, action="Cups Win")
         result_text = f"<b>Победа!</b> Вы угадали и выиграли {profit} сыроежек! {vip_bonus_text}"
     else:
         result_text = f"<b>Проигрыш!</b> Шарик был в другом месте. Вы потеряли {bet} сыроежек."

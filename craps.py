@@ -50,7 +50,7 @@ async def process_craps_confirm(callback: types.CallbackQuery):
         
     await callback.message.delete()
     
-    rand = secrets.SystemRandom()
+    secure_random = secrets.SystemRandom()
 
     from config import CREATOR_ID
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
@@ -58,11 +58,11 @@ async def process_craps_confirm(callback: types.CallbackQuery):
     if is_creator:
         is_forced_win = True
     else:
-        is_forced_win = (rand.randint(1, 100) <= 35)
+        is_forced_win = (secure_random.randint(1, 100) <= 35)
 
     while True:
-        die1 = rand.randint(1, 6)
-        die2 = rand.randint(1, 6)
+        die1 = secure_random.randint(1, 6)
+        die2 = secure_random.randint(1, 6)
         total = die1 + die2
 
         if total in [7, 11]:
@@ -75,7 +75,7 @@ async def process_craps_confirm(callback: types.CallbackQuery):
             is_craps = True
         else:
             # Simplified craps
-            is_win = rand.choice([True, False])
+            is_win = secure_random.choice([True, False])
             is_natural = False
             is_craps = False
 
@@ -93,13 +93,13 @@ async def process_craps_confirm(callback: types.CallbackQuery):
     text = f"🎲 <b>Крэпс</b>\n\nБросок: <b>{die1} + {die2} = {total}</b>\n\n"
 
     if is_natural:
-        await update_user_balance(chat_id, user_id, bet * 2)
+        await update_user_balance(chat_id, user_id, bet * 2, action="Craps Win")
         text += f"🎉 Натуральная победа (Pass Line)! Вы выиграли <b>{bet}</b> сыроежек."
     elif is_craps:
         text += f"❌ Крэпс! Вы проиграли <b>{bet}</b> сыроежек."
     else:
         if is_win:
-            await update_user_balance(chat_id, user_id, bet * 2)
+            await update_user_balance(chat_id, user_id, bet * 2, action="Craps Win")
             text += f"🎯 Вы выиграли поинт! Выиграно <b>{bet}</b> сыроежек."
         else:
             text += f"❌ Вы не выкинули поинт. Проиграно <b>{bet}</b> сыроежек."

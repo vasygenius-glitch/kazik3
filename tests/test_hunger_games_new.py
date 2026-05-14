@@ -1,6 +1,5 @@
-
 import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from hunger_games import join_hg_tr, distribute_prizes_tr
 import time
 
@@ -11,6 +10,7 @@ async def test_join_hg_tr_success():
     user_id = 456
     base_bet = 1000
 
+    # Mock snapshot
     snapshot = MagicMock()
     snapshot.exists = True
     snapshot.to_dict.return_value = {
@@ -21,24 +21,49 @@ async def test_join_hg_tr_success():
         'full_name': 'Test User'
     }
 
-    with patch('hunger_games.get_user_ref') as mock_ref,          patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
+    with patch('hunger_games.get_user_ref') as mock_ref, \
+         patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
 
         mock_snap.return_value = snapshot
 
-        # The function is decorated with @firestore_async.transactional
-        # In our tests, we can just call the __wrapped__ function directly.
-        if hasattr(join_hg_tr, '__wrapped__'):
-            player_data, error = await join_hg_tr.__wrapped__(transaction, chat_id, user_id, base_bet)
-        else:
-            player_data, error = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
 
         assert error is None
-        assert player_data['health'] == 100
+        assert player_data['id'] == user_id
+        assert player_data['bet_paid'] == 1000
         assert player_data['has_condom'] is True
         transaction.update.assert_called_once()
-        updated_data = transaction.update.call_args[0][1]
-        assert updated_data['balance'] == 1000
-        assert 'condom' not in updated_data['inventory']
+        # Check that balance was deducted and condom removed
+        assert updates['balance'] == 1000
+        assert 'condom' not in updates['inventory']
+
+@pytest.mark.asyncio
+async def test_join_hg_tr_vip_discount():
+    transaction = MagicMock()
+    chat_id = 123
+    user_id = 456
+    base_bet = 1000
+
+    snapshot = MagicMock()
+    snapshot.exists = True
+    snapshot.to_dict.return_value = {
+        'balance': 2000,
+        'is_vip': True,
+        'inventory': {},
+        'diseases': {},
+        'full_name': 'VIP User'
+    }
+
+    with patch('hunger_games.get_user_ref'), \
+         patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
+
+        mock_snap.return_value = snapshot
+
+        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+
+        assert error is None
+        assert player_data['bet_paid'] == 800 # 20% discount
+        assert updates['balance'] == 1200
 
 @pytest.mark.asyncio
 async def test_distribute_prizes_tr():
@@ -50,18 +75,22 @@ async def test_distribute_prizes_tr():
     fee = 250
     winner_diseases = ['hiv']
 
-    snapshot = MagicMock()
-    snapshot.exists = True
-    snapshot.to_dict.return_value = {'diseases': {}}
+    winner_snap = MagicMock()
+    winner_snap.exists = True
+    winner_snap.to_dict.return_value = {'balance': 0, 'diseases': {}}
 
-    with patch('hunger_games.update_user_balance_tr', new_callable=AsyncMock) as mock_upd_bal,          patch('hunger_games.get_user_ref'),          patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
+    host_snap = MagicMock()
+    host_snap.exists = True
+    host_snap.to_dict.return_value = {'balance': 0}
 
-        mock_snap.return_value = snapshot
+    with patch('hunger_games.get_user_ref'), \
+         patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
 
-        if hasattr(distribute_prizes_tr, '__wrapped__'):
-            await distribute_prizes_tr.__wrapped__(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
-        else:
-            await distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
+        mock_snap.side_effect = [winner_snap, host_snap]
 
-        assert mock_upd_bal.call_count == 2
-        transaction.update.assert_called_once()
+        winner_upd, host_upd = await distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
+
+        assert winner_upd['balance'] == 5000
+        assert 'hiv' in winner_upd['diseases']
+        assert host_upd['balance'] == 250
+        assert transaction.update.call_count == 2

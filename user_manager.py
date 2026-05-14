@@ -95,24 +95,14 @@ async def flush_user_data_task():
         except Exception:
             pass
 
-async def get_user_data(chat_id, user_id, full_name=None, username=None):
+async def get_user_data(chat_id, user_id, full_name=None):
     cached_data = get_from_cache(chat_id, user_id)
     if cached_data:
-        updated = False
         if full_name and cached_data.get('full_name') != full_name:
             cached_data['full_name'] = full_name
-            updated = True
-        if username and cached_data.get('username') != username:
-            cached_data['username'] = username
-            updated = True
-
-        if updated:
             set_in_cache(chat_id, user_id, cached_data)
             ref = get_user_ref(chat_id, user_id)
-            upd = {}
-            if full_name: upd['full_name'] = full_name
-            if username: upd['username'] = username
-            fire_and_forget(ref.update(upd))
+            fire_and_forget(ref.update({'full_name': full_name}))
         return cached_data
 
     ref = get_user_ref(chat_id, user_id)
@@ -120,20 +110,9 @@ async def get_user_data(chat_id, user_id, full_name=None, username=None):
 
     if doc.exists:
         data = doc.to_dict()
-        updated = False
         if full_name and data.get('full_name') != full_name:
             data['full_name'] = full_name
-            updated = True
-        if username and data.get('username') != username:
-            data['username'] = username
-            updated = True
-
-        if updated:
-            upd = {}
-            if full_name: upd['full_name'] = full_name
-            if username: upd['username'] = username
-            fire_and_forget(ref.update(upd))
-
+            fire_and_forget(ref.update({'full_name': full_name}))
         set_in_cache(chat_id, user_id, data)
         return data
     else:
@@ -154,7 +133,6 @@ async def get_user_data(chat_id, user_id, full_name=None, username=None):
             'full_name': default_name,
             'is_vip': False,
             'is_banker': False, # НОВАЯ РОЛЬ БАНКИРА
-            'username': username,
             'debts': {},
             'escort_count': 0
         }
@@ -162,7 +140,7 @@ async def get_user_data(chat_id, user_id, full_name=None, username=None):
         mark_dirty(chat_id, user_id)
         return default_data
 
-async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_debt_repayment=False):
+async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_debt_repayment=False, action="Balance Update"):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
@@ -178,7 +156,7 @@ async def update_user_balance(chat_id, user_id, amount, min_balance=None, is_deb
 
         # WORKER 3: Logging & Anti-Cheat
         if abs(amount) >= 500000:
-            fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, "Balance Update", "Change", amount))
+            fire_and_forget(log_transaction(user_id, data.get('full_name', 'Unknown'), None, action, "Change", amount))
         
         fire_and_forget(check_balance_alert(chat_id, user_id, data.get('full_name', 'Player'), new_balance))
 
@@ -618,18 +596,16 @@ async def get_user_by_username_or_id(chat_id, identifier):
             if u_name == username:
                 return key[1], entry['data']
 
-    # Если в кэше нет, ищем в БД
-    docs = await users_ref.get()
+    # Если в кэше нет, ищем в БД (индексированный запрос)
+    query = users_ref.where('username', '==', username).limit(1)
+    docs = await query.get()
+
     if hasattr(docs, '__aiter__'):
         async for doc in docs:
-            d = doc.to_dict()
-            if d.get('username', '').lower() == username:
-                return int(doc.id), d
+            return int(doc.id), doc.to_dict()
     else:
         for doc in docs:
-            d = doc.to_dict()
-            if d.get('username', '').lower() == username:
-                return int(doc.id), d
+            return int(doc.id), doc.to_dict()
 
     return None, None
 
