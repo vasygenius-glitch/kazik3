@@ -1,7 +1,7 @@
 import asyncio
 import random
 import secrets
-from aiogram import Router, types
+from aiogram import Router, F, types
 from aiogram.filters import Command
 
 from user_manager import get_user_data, update_user_balance
