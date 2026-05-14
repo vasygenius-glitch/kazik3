@@ -1,6 +1,9 @@
 import random
 import asyncio
 import time
+import secrets
+
+s_random = secrets.SystemRandom()
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -145,62 +148,101 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
     asyncio.create_task(run_hg_simulation(chat_id, callback.message, bot))
 
 async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
-    game = active_hg[chat_id]
+    game = active_hg.get(chat_id)
+    if not game: return
+
     players = game['players']
+    # Гарантируем наличие здоровья у всех участников
+    for p in players:
+        p['health'] = 100
+
     bet = game['bet']
+    initial_count = len(players)
     
+    # Расширенный список событий с влиянием на HP
     events = [
-        "{p1} нашел заржавевший меч и чувствует себя увереннее.",
-        "{p1} наступил на ловушку и потерял 30 HP.",
-        "{p1} и {p2} вступили в схватку! {p1} победил, оставив {p2} истекать кровью.",
-        "{p1} спрятался в кустах и съел лечебные ягоды (+20 HP).",
-        "{p1} выследил {p2} и прикончил его точным броском копья!",
-        "{p1} упал с обрыва, пытаясь достать припасы. Минус 50 HP.",
-        "{p1} объединился с {p2}, но ночью {p1} предал напарника!",
-        "Дикие звери напали на {p1}! Он чудом спасся, но потерял много крови.",
-        "{p1} нашел спонсорскую посылку с едой."
+        {"text": "🍎 {p1} нашел спонсорскую посылку с едой (+25 HP).", "hp": 25, "target": "p1"},
+        {"text": "🗡 {p1} ранил {p2} в честной дуэли (-35 HP).", "hp": -35, "target": "p2"},
+        {"text": "🏹 {p1} подстрелил {p2} из засады (-30 HP).", "hp": -30, "target": "p2"},
+        {"text": "🪵 {p1} наступил на шипы в лесу (-20 HP).", "hp": -20, "target": "p1"},
+        {"text": "🧗 {p1} упал с крутого склона (-40 HP).", "hp": -40, "target": "p1"},
+        {"text": "🐍 {p1} укусила гадюка (-15 HP).", "hp": -15, "target": "p1"},
+        {"text": "🍓 {p1} нашел лечебные ягоды (+15 HP).", "hp": 15, "target": "p1"},
+        {"text": "🔥 {p1} случайно обжегся, разводя костер (-10 HP).", "hp": -10, "target": "p1"},
+        {"text": "💧 {p1} утолил жажду из чистого ручья (+10 HP).", "hp": 10, "target": "p1"},
+        {"text": "🐝 На {p1} напал рой диких ос (-25 HP).", "hp": -25, "target": "p1"},
+        {"text": "⚡️ В {p1} чуть не попала молния! (-30 HP).", "hp": -30, "target": "p1"},
+        {"text": "🍄 {p1} съел подозрительный гриб... (-20 HP).", "hp": -20, "target": "p1"},
+        {"text": "🎁 Спонсоры прислали {p1} бинты (+40 HP).", "hp": 40, "target": "p1"},
+        {"text": "🔪 {p1} и {p2} сцепились в рукопашную! {p1} ранил {p2} (-25 HP).", "hp": -25, "target": "p2"},
+        {"text": "🐺 Дикие звери напали на {p1}! (-45 HP).", "hp": -45, "target": "p1"},
     ]
-    
-    kill_events = [
-        "💀 {p1} зверски убит {p2}!",
-        "💀 {p1} не пережил холодную ночь на арене.",
-        "💀 {p1} подорвался на мине у Рога Изобилия.",
-        "💀 {p1} проиграл дуэль с {p2} и испустил дух."
-    ]
+
+    main_msg = await message.answer("🚀 <b>Игры начались! Высадка на арену...</b>")
+    round_num = 1
+    all_logs = []
 
     while len(players) > 1:
-        await asyncio.sleep(4)
+        await asyncio.sleep(5)
         
-        # Выбираем случайное событие
-        if random.random() < 0.4 and len(players) >= 2: # Шанс смерти
-            p1_idx = random.randrange(len(players))
-            victim = players.pop(p1_idx)
-            killer = random.choice(players)
-            
-            evt = random.choice(kill_events).format(p1=escape_html(victim['name']), p2=escape_html(killer['name']))
-            await message.answer(evt)
-        else:
-            p1 = random.choice(players)
-            p2 = random.choice(players) if len(players) > 1 else p1
-            
-            evt = random.choice(events).format(p1=escape_html(p1['name']), p2=escape_html(p2['name']))
-            await message.answer(f"🏃 {evt}")
+        current_round_logs = [f"📅 <b>ДЕНЬ {round_num}</b>"]
+        # Количество событий зависит от числа игроков
+        num_events = s_random.randint(2, 3) if len(players) > 4 else 2
 
-    # Победитель
+        for _ in range(num_events):
+            if len(players) <= 1: break
+
+            evt = s_random.choice(events)
+            p1 = s_random.choice(players)
+            others = [p for p in players if p['id'] != p1['id']]
+            p2 = s_random.choice(others) if others else p1
+            
+            target = p1 if evt['target'] == 'p1' else p2
+            target['health'] += evt['hp']
+            if target['health'] > 100: target['health'] = 100
+            
+            log_entry = evt['text'].format(p1=escape_html(p1['name']), p2=escape_html(p2['name']))
+
+            if target['health'] <= 0:
+                target['health'] = 0
+                log_entry += f"\n💀 <b>{escape_html(target['name'])} ПОГИБ!</b>"
+                players.remove(target)
+
+            current_round_logs.append(log_entry)
+
+        # Формируем статус выживших
+        status = "\n📊 <b>Живые:</b>\n" + "\n".join([f"— {escape_html(p['name'])} ({p['health']} HP)" for p in players])
+
+        # Храним только последние 2 дня в одном сообщении для компактности
+        all_logs.append("\n".join(current_round_logs))
+        if len(all_logs) > 2:
+            all_logs.pop(0)
+
+        full_text = "🏆 <b>ГОЛОДНЫЕ ИГРЫ В РАЗГАРЕ</b>\n\n" + "\n\n".join(all_logs) + "\n" + status
+
+        try:
+            await main_msg.edit_text(full_text)
+        except Exception:
+            # Если сообщение нельзя редактировать, отправляем новое
+            main_msg = await message.answer(full_text)
+
+        round_num += 1
+
+    # Завершение игры
     winner = players[0]
-    total_pool = bet * (len(game['players']))
+    total_pool = bet * initial_count
     
-    # Фронтмен получает 5% за организацию (не имбово, но приятно)
     frontman_fee = int(total_pool * 0.05)
     prize = total_pool - frontman_fee
     
     await update_user_balance(chat_id, winner['id'], prize)
     await update_user_balance(chat_id, game['host_id'], frontman_fee)
     
-    del active_hg[chat_id]
+    if chat_id in active_hg:
+        del active_hg[chat_id]
     
     await message.answer(
         f"👑 <b>ПОБЕДИТЕЛЬ ГОЛОДНЫХ ИГР — {escape_html(winner['name'])}!</b>\n\n"
         f"💰 Выигрыш: <b>{prize}</b> сыр.\n"
-        f"🎭 Фронтмен {escape_html(game['host_name'])} получил <b>{frontman_fee}</b> за зрелищность."
+        f"🎭 Фронтмен {escape_html(game['host_name'])} получил <b>{frontman_fee}</b> за организацию."
     )
