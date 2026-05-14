@@ -10,7 +10,7 @@ from config import CREATOR_ID
 
 router = Router()
 
-# Состояния игр: {chat_id: {state: 'lobby/running', players: [], bet: 0, host_id: 0}}
+# Состояния игр: {chat_id: {state: 'lobby/running', participants: [], bet: 0, host_id: 0}}
 active_hg = {}
 
 # --- ПРОВЕРКИ ---
@@ -34,7 +34,8 @@ async def cmd_assign_frontman(message: types.Message):
     await update_user_field(message.chat.id, target_id, 'is_frontman', True)
     await message.answer(f"🎭 <b>{target_name}</b> теперь официально <b>Фронтмен</b> голодных игр!")
 
-@router.message(F.text.lower().startswith("/hg_create") | F.text.lower().startswith("создать ги"))
+@router.message(Command("hg_create"))
+@router.message(F.text.lower().startswith("создать ги"))
 async def cmd_hg_create(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -54,7 +55,7 @@ async def cmd_hg_create(message: types.Message):
     
     active_hg[chat_id] = {
         'state': 'lobby',
-        'players': [], # List of {id: int, name: str}
+        'participants': [], # List of {id: int, name: str}
         'bet': bet,
         'host_id': user_id,
         'host_name': message.from_user.full_name,
@@ -85,10 +86,10 @@ async def cb_hg_join(callback: types.CallbackQuery):
     if game['state'] != 'lobby':
         return await callback.answer("Игра уже в процессе!", show_alert=True)
     
-    if any(p['id'] == user_id for p in game['players']):
+    if any(p['id'] == user_id for p in game['participants']):
         return await callback.answer("Вы уже в списке трибутов.", show_alert=True)
     
-    if len(game['players']) >= 10:
+    if len(game['participants']) >= 10:
         return await callback.answer("Арена переполнена! Максимум 10 человек.", show_alert=True)
     
     # Списание ставки
@@ -98,7 +99,7 @@ async def cb_hg_join(callback: types.CallbackQuery):
     
     await update_user_balance(chat_id, user_id, -game['bet'])
     
-    game['players'].append({
+    game['participants'].append({
         'id': user_id,
         'name': callback.from_user.full_name,
         'health': 100,
@@ -118,9 +119,9 @@ async def cb_hg_join(callback: types.CallbackQuery):
         f"🏆 <b>ГОЛОДНЫЕ ИГРЫ: СБОР ТРИБУТОВ</b>\n\n"
         f"🎭 Организатор: <b>{escape_html(game['host_name'])}</b>\n"
         f"💰 Взнос: <b>{game['bet']}</b> сыр.\n"
-        f"👥 Игроков: <b>{len(game['players'])} / 10</b>\n\n"
+        f"👥 Игроков: <b>{len(game['participants'])} / 10</b>\n\n"
         f"<b>Список участников:</b>\n" + 
-        "\n".join([f"— {escape_html(p['name'])}" for p in game['players']]),
+        "\n".join([f"— {escape_html(p['name'])}" for p in game['participants']]),
         reply_markup=builder.as_markup()
     )
 
@@ -135,7 +136,7 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
     if user_id != game['host_id']:
         return await callback.answer("Только Фронтмен может дать сигнал к началу!", show_alert=True)
     
-    if len(game['players']) < 3:
+    if len(game['participants']) < 3:
         return await callback.answer("Нужно минимум 3 трибута для начала резни!", show_alert=True)
     
     game['state'] = 'running'
@@ -144,9 +145,35 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
     # Запускаем симуляцию
     asyncio.create_task(run_hg_simulation(chat_id, callback.message, bot))
 
+@router.message(Command("hg_cancel"))
+@router.message(F.text.lower().startswith("отменить ги"))
+async def cmd_hg_cancel(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    if chat_id not in active_hg:
+        return await message.answer("❌ В этом чате нет активных Голодных Игр.")
+
+    game = active_hg[chat_id]
+
+    # Только Фронтмен или Создатель может отменить
+    if not await is_frontman(chat_id, user_id):
+        return await message.answer("❌ Только Фронтмен или Создатель может отменить игры.")
+
+    if game['state'] != 'lobby':
+        return await message.answer("❌ Игра уже началась, отмена невозможна!")
+
+    # Возврат ставок
+    for p in game['participants']:
+        await update_user_balance(chat_id, p['id'], game['bet'])
+
+    del active_hg[chat_id]
+    await message.answer("🚫 <b>Голодные Игры отменены Фронтменом.</b> Все взносы возвращены.")
+
 async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     game = active_hg[chat_id]
-    players = game['players']
+    # Используем копию списка участников для симуляции
+    players = list(game['participants'])
     bet = game['bet']
     
     events = [
@@ -188,7 +215,7 @@ async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
 
     # Победитель
     winner = players[0]
-    total_pool = bet * (len(game['players']))
+    total_pool = bet * (len(game['participants']))
     
     # Фронтмен получает 5% за организацию (не имбово, но приятно)
     frontman_fee = int(total_pool * 0.05)
