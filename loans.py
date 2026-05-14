@@ -124,7 +124,7 @@ async def process_bank_loan(callback: types.CallbackQuery):
     total_debt = int(amount * (1 + percent / 100))
 
     db = get_db()
-    from user_manager import update_user_balance_tr, get_user_ref, safe_get_snapshot, set_in_cache, mark_dirty
+    from user_manager import update_user_balance, get_user_ref, safe_get_snapshot, set_in_cache, mark_dirty
 
     @firestore_async.transactional
     async def issue_loan_tx(transaction, chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id):

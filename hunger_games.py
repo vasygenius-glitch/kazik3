@@ -7,7 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from escape import escape_html
 from user_manager import (
     get_user_data, update_user_balance, update_user_field,
-    update_user_balance_tr, get_user_ref, safe_get_snapshot
+    get_user_ref, safe_get_snapshot
 )
 from config import CREATOR_ID
 from db import get_db

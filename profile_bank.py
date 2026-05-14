@@ -186,7 +186,7 @@ async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
 
 @firestore_async.transactional
 async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, amount):
-    from user_manager import update_user_balance_tr, get_user_ref, safe_get_snapshot
+    from user_manager import update_user_balance, get_user_ref, safe_get_snapshot
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(target_banker_id))
     user_ref = get_user_ref(chat_id, user_id)
@@ -216,7 +216,7 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
         raise ValueError("У вас уже есть активный вклад в другом банке! Сначала снимите все средства.")
 
     # Списываем у игрока
-    await update_user_balance_tr(transaction, chat_id, user_id, -amount, min_balance=0)
+    await update_user_balance(chat_id, user_id, -amount, min_balance=0, transaction=transaction, action="Bank Deposit")
     
     # Обновляем поля игрока
     updates = {
@@ -242,7 +242,7 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
 
 @firestore_async.transactional
 async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount):
-    from user_manager import update_user_balance_tr, get_user_ref, safe_get_snapshot
+    from user_manager import update_user_balance, get_user_ref, safe_get_snapshot
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(current_banker_id))
     user_ref = get_user_ref(chat_id, user_id)
@@ -272,7 +272,7 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     # Если банка нет, ЦБ выдает из воздуха (уже реализовано в cmd_bank, но тут тоже учтем)
 
     # Добавляем игроку
-    await update_user_balance_tr(transaction, chat_id, user_id, amount)
+    await update_user_balance(chat_id, user_id, amount, transaction=transaction, action="Bank Withdraw")
     
     # Обновляем поля игрока
     updates = {'bank_deposit': current_deposit - amount}
@@ -424,7 +424,7 @@ async def cmd_bank(message: types.Message):
                 if key in _user_cache:
                     _user_cache[key]['data']['bank_deposit'] = total_dep
                     _user_cache[key]['data']['bank_name'] = target_banker_id
-                    # balance обновлен внутри update_user_balance_tr
+                    # balance обновлен внутри update_user_balance
 
                 await message.answer(f"✅ Депозит пополнен на {actual_amount} сыр. в банке <b>{escape_html(bank_data.get('name'))}</b>.\nВаш общий вклад: {total_dep}.")
             except ValueError as ve:
@@ -573,11 +573,11 @@ async def cmd_bank_offshore(message: types.Message):
             return await message.answer(f"❌ Оформление оффшорного счета стоит {price} сыроежек. У вас недостаточно средств.")
 
         db = get_db()
-        from user_manager import update_user_balance_tr, get_user_ref, mark_dirty
+        from user_manager import update_user_balance, get_user_ref, mark_dirty
 
         @firestore_async.transactional
         async def activate_offshore_tx(transaction, chat_id, user_id, price):
-            await update_user_balance_tr(transaction, chat_id, user_id, -price, min_balance=0)
+            await update_user_balance(chat_id, user_id, -price, min_balance=0, transaction=transaction, action="Bank License Purchase")
             user_ref = get_user_ref(chat_id, user_id)
             transaction.update(user_ref, {'is_offshore': True})
 
