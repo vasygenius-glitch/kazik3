@@ -95,14 +95,24 @@ async def flush_user_data_task():
         except Exception:
             pass
 
-async def get_user_data(chat_id, user_id, full_name=None):
+async def get_user_data(chat_id, user_id, full_name=None, username=None):
     cached_data = get_from_cache(chat_id, user_id)
     if cached_data:
+        updated = False
         if full_name and cached_data.get('full_name') != full_name:
             cached_data['full_name'] = full_name
+            updated = True
+        if username and cached_data.get('username') != username:
+            cached_data['username'] = username
+            updated = True
+
+        if updated:
             set_in_cache(chat_id, user_id, cached_data)
             ref = get_user_ref(chat_id, user_id)
-            fire_and_forget(ref.update({'full_name': full_name}))
+            upd = {}
+            if full_name: upd['full_name'] = full_name
+            if username: upd['username'] = username
+            fire_and_forget(ref.update(upd))
         return cached_data
 
     ref = get_user_ref(chat_id, user_id)
@@ -110,9 +120,20 @@ async def get_user_data(chat_id, user_id, full_name=None):
 
     if doc.exists:
         data = doc.to_dict()
+        updated = False
         if full_name and data.get('full_name') != full_name:
             data['full_name'] = full_name
-            fire_and_forget(ref.update({'full_name': full_name}))
+            updated = True
+        if username and data.get('username') != username:
+            data['username'] = username
+            updated = True
+
+        if updated:
+            upd = {}
+            if full_name: upd['full_name'] = full_name
+            if username: upd['username'] = username
+            fire_and_forget(ref.update(upd))
+
         set_in_cache(chat_id, user_id, data)
         return data
     else:
@@ -133,6 +154,7 @@ async def get_user_data(chat_id, user_id, full_name=None):
             'full_name': default_name,
             'is_vip': False,
             'is_banker': False, # НОВАЯ РОЛЬ БАНКИРА
+            'username': username,
             'debts': {},
             'escort_count': 0
         }
@@ -565,6 +587,52 @@ async def get_all_users_in_chat(chat_id):
     ref = db.collection('chats').document(str(chat_id)).collection('users')
     docs = await ref.get()
     return docs
+
+async def get_user_by_username_or_id(chat_id, identifier):
+    """
+    Поиск пользователя в конкретном чате по ID или юзернейму.
+    identifier может быть "12345" или "@username".
+    """
+    db = get_db()
+    users_ref = db.collection('chats').document(str(chat_id)).collection('users')
+
+    # Пытаемся как ID
+    target_id = None
+    try:
+        target_id = int(identifier.replace("@", ""))
+    except ValueError:
+        pass
+
+    if target_id:
+        doc = await users_ref.document(str(target_id)).get()
+        if doc.exists:
+            return target_id, doc.to_dict()
+
+    # Если не ID или ID не найден, ищем по юзернейму
+    username = identifier.replace("@", "").lower()
+
+    # Сначала ищем в кэше (быстрее)
+    for key, entry in _user_cache.items():
+        if key[0] == chat_id:
+            u_name = entry['data'].get('username', '').lower()
+            if u_name == username:
+                return key[1], entry['data']
+
+    # Если в кэше нет, ищем в БД
+    docs = await users_ref.get()
+    if hasattr(docs, '__aiter__'):
+        async for doc in docs:
+            d = doc.to_dict()
+            if d.get('username', '').lower() == username:
+                return int(doc.id), d
+    else:
+        for doc in docs:
+            d = doc.to_dict()
+            if d.get('username', '').lower() == username:
+                return int(doc.id), d
+
+    return None, None
+
 async def wipe_user_data(chat_id, user_id):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
