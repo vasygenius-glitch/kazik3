@@ -881,8 +881,8 @@ async def cmd_wipe_mid(message: types.Message):
     # Launch task in background
     asyncio.create_task(run_wipe())
 
-@router.message(or_f(Command("execute"), F.text.regexp(r"^[!/]*казнить(\s|$)")))
-async def cmd_execute(message: types.Message, bot: Bot):
+@router.message(or_f(Command("execute"), F.text.lower().regexp(r"^[!/]*казнить(\s|$)")))
+async def cmd_execute(message: types.Message):
     if not is_creator(message):
         return
 
@@ -893,7 +893,7 @@ async def cmd_execute(message: types.Message, bot: Bot):
     target_name = escape_html(target_user.full_name)
     
     # Ссылка на эпичную картинку (прямая ссылка)
-    image_url = "https://upload.wikimedia.org/wikipedia/commons/8/8c/Guillotine_at_the_Conciergerie.jpg"
+    image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Guillotine_at_the_Conciergerie.jpg/800px-Guillotine_at_the_Conciergerie.jpg"
     
     caption = (
         f"⚖️ <b>СУД ЛИНЧА СОСТОЯЛСЯ!</b>\n\n"
@@ -902,4 +902,7 @@ async def cmd_execute(message: types.Message, bot: Bot):
         f"💀 Да смилуются боги над его душой!"
     )
 
-    await message.answer_photo(photo=image_url, caption=caption)
+    try:
+        await message.answer_photo(photo=image_url, caption=caption, parse_mode="HTML")
+    except Exception:
+        await message.answer(caption, parse_mode="HTML")
