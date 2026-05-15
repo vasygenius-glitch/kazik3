@@ -281,7 +281,9 @@ async def cmd_hg_cancel(message: types.Message):
 
 @router.message(Command("hg_reset"))
 async def cmd_hg_reset(message: types.Message):
-    if str(message.from_user.id) != str(CREATOR_ID):
+    user_id = message.from_user.id
+    if not CREATOR_ID or int(user_id) != int(CREATOR_ID):
+        # Если это не создатель, просто игнорируем (стандартное поведение для админ-команд)
         return
     
     chat_id = message.chat.id
