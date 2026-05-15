@@ -1179,7 +1179,6 @@ async def cb_incass(callback: types.CallbackQuery):
                 reply_markup=builder.as_markup()
             )
 
-        )
 
 @router.message(F.text.lower().startswith("аудит"))
 async def cmd_shadow_audit(message: types.Message):
