@@ -433,7 +433,8 @@ async def cmd_work(message: types.Message):
         else:
             penalty = rand.randint(100, 300)
             final_earnings = 0
-            await update_user_balance(chat_id, user_id, -penalty, is_debt_repayment=True)
+            # Ограничиваем штраф текущим балансом, чтобы не уходить в минус на обычной работе
+            await update_user_balance(chat_id, user_id, -penalty, min_balance=0, is_debt_repayment=True)
             collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Они отобрали весь заработок и выбили еще <b>{penalty}</b> сыроежек сверху в счет погашения кредита."
     elif pet_id == 'dragon' and (debts or balance < 0):
          pet_msg += "\n🐉 Ваш дракон отпугнул поджидавших вас коллекторов!"
@@ -679,7 +680,7 @@ async def cmd_crime(message: types.Message):
         await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
     else:
         fine = rand.randint(500, 1500)
-        await update_user_balance(chat_id, user_id, -fine, is_debt_repayment=True)
+        await update_user_balance(chat_id, user_id, -fine, min_balance=0, is_debt_repayment=True)
         await message.answer(f"🚔 Тебя поймали! Суд выписал штраф в <b>{fine}</b> сыроежек.")
 @router.message(F.text.lower().startswith("ограбить банк"))
 async def cmd_rob_bank(message: types.Message):
