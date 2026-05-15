@@ -901,7 +901,8 @@ async def cmd_execute(message: types.Message, bot: Bot):
     from aiogram.types import FSInputFile
     import os
     
-    image_path = r"C:\Users\Admin1\.gemini\antigravity\brain\6446a2d5-382d-43a8-95f4-e8a1b687e7aa\epic_execution_guillotine_1778859976599.png"
+    # Путь теперь относительный, чтобы работало в Docker/на сервере
+    image_path = "assets/execution.png"
     
     caption = (
         f"⚖️ <b>ВЫСШАЯ МЕРА НАКАЗАНИЯ!</b>\n\n"
