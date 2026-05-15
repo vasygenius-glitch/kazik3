@@ -881,7 +881,7 @@ async def cmd_wipe_mid(message: types.Message):
     # Launch task in background
     asyncio.create_task(run_wipe())
 
-@router.message(F.text.regexp(r"^[!/]*казнить(\s|$)") | Command("execute"))
+@router.message(or_f(Command("execute"), F.text.regexp(r"^[!/]*казнить(\s|$)")))
 async def cmd_execute(message: types.Message, bot: Bot):
     if not is_creator(message):
         return
