@@ -892,8 +892,8 @@ async def cmd_execute(message: types.Message, bot: Bot):
     target_user = message.reply_to_message.from_user
     target_name = escape_html(target_user.full_name)
     
-    # Ссылка на эпичную картинку
-    image_url = "https://images.unsplash.com/photo-1519074063912-ad25b57b6d1e?q=80&w=1000&auto=format&fit=crop"
+    # Ссылка на эпичную картинку (прямая ссылка)
+    image_url = "https://upload.wikimedia.org/wikipedia/commons/8/8c/Guillotine_at_the_Conciergerie.jpg"
     
     caption = (
         f"⚖️ <b>СУД ЛИНЧА СОСТОЯЛСЯ!</b>\n\n"
