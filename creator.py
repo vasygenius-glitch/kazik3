@@ -568,6 +568,51 @@ async def cmd_info(message: types.Message):
 
     await message.answer(text)
 
+@router.message(Command("nalog"))
+async def cmd_nalog(message: types.Message, bot: Bot):
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Укажите процент налога: <code>/nalog 15</code>")
+        return
+
+    try:
+        tax = int(args[1])
+        if tax < 0 or tax > 100:
+            await message.answer("Налог должен быть от 0 до 100.")
+            return
+
+        from economy_utils import set_global_tax
+        await set_global_tax(tax)
+
+        from whitelist import get_whitelist
+        whitelist = await get_whitelist()
+
+        import secrets
+        phrases_up =[
+            f"⚠️ <b>ВНИМАНИЕ: ЭКОНОМИЧЕСКИЙ КРИЗИС!</b>\nНалоги повышены до <b>{tax}%</b>! Запасайтесь сыроежками!",
+            f"🏛 <b>УКАЗ ГУБЕРНАТОРА:</b>\nКазна пустеет. Налоги увеличены до <b>{tax}%</b>.",
+            f"💼 <b>НОВОСТИ ЭКОНОМИКИ:</b>\nНалоговая ставка выросла! Теперь при переводах удерживается <b>{tax}%</b>."
+        ]
+        phrases_down =[
+            f"🎉 <b>ПРАЗДНИК В СТРАНЕ!</b>\nНалоги снижены до <b>{tax}%</b>! Время переводить сыроежки!",
+            f"🏛 <b>УКАЗ ГУБЕРНАТОРА:</b>\nЭкономика процветает. Налоги уменьшены до <b>{tax}%</b>.",
+            f"💼 <b>НОВОСТИ ЭКОНОМИКИ:</b>\nНалоговое бремя ослабло! Теперь при переводах удерживается всего <b>{tax}%</b>."
+        ]
+
+        text = secrets.choice(phrases_up) if tax >= 15 else secrets.choice(phrases_down)
+
+        success_count = 0
+        for chat_id in whitelist.keys():
+            try:
+                await bot.send_message(chat_id, text)
+                success_count += 1
+            except Exception:
+                pass
+
+        await message.answer(f"✅ Налог установлен на {tax}%. Уведомлено {success_count} групп.")
     except ValueError:
         await message.answer("Процент должен быть числом.")
 
