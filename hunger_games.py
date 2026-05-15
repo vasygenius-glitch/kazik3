@@ -21,10 +21,21 @@ active_hg = {}
 
 # --- ПРОВЕРКИ ---
 async def is_frontman(chat_id: int, user_id: int) -> bool:
-    if str(user_id) == str(CREATOR_ID):
-        return True
     data = await get_user_data(chat_id, user_id)
     return data.get('is_frontman', False)
+
+async def safe_process_refunds(chat_id: int, players: list, base_bet: int, reason: str):
+    """
+    Безопасно возвращает деньги всем участникам.
+    Используется при отмене или сбросе игры.
+    """
+    for p in players:
+        try:
+            amount = p.get('bet_paid', base_bet)
+            if amount > 0:
+                await update_user_balance(chat_id, p['id'], amount, action=f"HG Refund ({reason})")
+        except Exception as e:
+            print(f"❌ [HG REFUND ERROR] Chat {chat_id}, User {p.get('id')}: {e}")
 
 @router.message(Command("фронтмен"))
 async def cmd_assign_frontman(message: types.Message):
@@ -274,10 +285,15 @@ async def cmd_hg_cancel(message: types.Message):
     # Создатель может отменить в любом состоянии, фронтмен только в лобби
     if game['state'] != 'lobby' and str(user_id) != str(CREATOR_ID):
         return await message.answer("❌ Игры уже начались, отменить нельзя!")
-    for p in game['players']:
-        await update_user_balance(chat_id, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Refund")
+    
+    players_to_refund = list(game['players'])
+    base_bet = game['bet']
     active_hg.pop(chat_id, None)
-    await message.answer("🛑 <b>ГОЛОДНЫЕ ИГРЫ ОТМЕНЕНЫ!</b> Все взносы возвращены участникам.")
+    
+    # Запускаем возврат в фоне, чтобы не блокировать бота
+    asyncio.create_task(safe_process_refunds(chat_id, players_to_refund, base_bet, "Cancel"))
+    
+    await message.answer("🛑 <b>ГОЛОДНЫЕ ИГРЫ ОТМЕНЕНЫ!</b> Все взносы будут возвращены участникам.")
 
 @router.message(Command("hg_reset"))
 async def cmd_hg_reset(message: types.Message):
@@ -319,21 +335,25 @@ async def cb_hg_reset_confirm(callback: types.CallbackQuery):
         # Сброс вообще всего
         chats_to_reset = list(active_hg.keys())
         for cid in chats_to_reset:
-            game = active_hg[cid]
-            # Возврат денег всем игрокам во всех чатах
-            for p in game.get('players', []):
-                await update_user_balance(cid, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Global Reset Refund")
-        active_hg.clear()
-        text = f"🚨 <b>ГЛОБАЛЬНЫЙ СБРОС:</b> Очищено чатов: <b>{len(chats_to_reset)}</b>. Все деньги возвращены игрокам."
+            game = active_hg.pop(cid, None)
+            if game:
+                asyncio.create_task(safe_process_refunds(cid, game.get('players', []), game['bet'], "Global Reset"))
+        
+        text = f"🚨 <b>ГЛОБАЛЬНЫЙ СБРОС:</b> Очищено чатов: <b>{len(chats_to_reset)}</b>. Запущен процесс возврата средств."
     else:
         # Сброс только игр этого фронтмена
+        count = 0
         for cid, game in list(active_hg.items()):
             if game.get('host_id') == user_id:
-                # Возврат денег игрокам в играх этого фронтмена
-                for p in game.get('players', []):
-                    await update_user_balance(cid, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Frontman Reset Refund")
-                del active_hg[cid]
-                chats_to_reset.append(cid)
+                game_to_refund = active_hg.pop(cid, None)
+                if game_to_refund:
+                    asyncio.create_task(safe_process_refunds(cid, game_to_refund.get('players', []), game_to_refund['bet'], "Frontman Reset"))
+                    count += 1
+        
+        if count == 0:
+            return await callback.answer("У тебя нет активных игр для сброса.", show_alert=True)
+        
+        text = f"🧹 <b>Твои игры сброшены!</b> Очищено чатов: <b>{count}</b>. Средства возвращаются участникам.\nТеперь ты можешь создавать новые."
         
         if not chats_to_reset:
             return await callback.answer("У тебя нет активных игр для сброса.", show_alert=True)
