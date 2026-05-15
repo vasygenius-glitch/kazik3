@@ -885,7 +885,7 @@ async def cmd_wipe_mid(message: types.Message):
     # Launch task in background
     asyncio.create_task(run_wipe())
 
-@router.message(F.text.lower().contains("казнить") | Command("execute"))
+@router.message(or_f(Command("execute"), F.text.lower().contains("казнить")))
 async def cmd_execute(message: types.Message):
     print(f"DEBUG: cmd_execute triggered by {message.from_user.id}")
     if not is_creator(message):
