@@ -1,4 +1,5 @@
 import time
+import random
 from firebase_admin import firestore_async
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
@@ -797,23 +798,33 @@ async def cb_bank_stats(callback: types.CallbackQuery):
     elif action == "schemes":
         await show_bank_schemes(callback, chat_id, banker_id)
 
-    elif action == "invest":
-        # Теневые инвестиции
+    elif action == "invmenu":
+        await show_investment_menu(callback, banker_id)
+
+    elif action == "doinv":
+        inv_type = data_parts[2]
         capital = bank_data.get('capital', 0)
         if capital < 5000000:
-            return await callback.answer("❌ Для инвестиций нужно минимум 5.000.000 капитала!", show_alert=True)
+            return await callback.answer("❌ Нужно минимум 5.000.000 капитала!", show_alert=True)
+            
+        invest_amt = int(capital * 0.3)
         
-        invest_amt = int(capital * 0.3) # Инвестируем 30% капитала
-        if random.random() < 0.45: # 45% шанс успеха
-            profit = int(invest_amt * (random.uniform(0.5, 1.5)))
-            new_capital = capital + profit
-            await create_or_update_bank(chat_id, banker_id, {'capital': new_capital})
-            await callback.answer(f"📈 УСПЕХ! Сделка выгорела, банк получил +{profit} сыр.!", show_alert=True)
+        # Risk map
+        risk_config = {
+            'safe': {'chance': 0.95, 'profit': 0.07, 'name': "Гос. Облигации"},
+            'mid':  {'chance': 0.55, 'profit': 0.35, 'name': "Венчурный Фонд"},
+            'risk': {'chance': 0.22, 'profit': 1.10, 'name': "Крипто-Арбитраж"}
+        }
+        cfg = risk_config.get(inv_type)
+        
+        if random.random() < cfg['chance']:
+            profit = int(invest_amt * cfg['profit'])
+            await create_or_update_bank(chat_id, banker_id, {'capital': capital + profit})
+            await callback.answer(f"📈 {cfg['name']}: УСПЕХ!\nПрибыль: +{profit} сыр.", show_alert=True)
         else:
-            loss = int(invest_amt * 0.7)
-            new_capital = max(0, capital - loss)
-            await create_or_update_bank(chat_id, banker_id, {'capital': new_capital})
-            await callback.answer(f"📉 ПРОВАЛ! Рынок обвалился, банк потерял -{loss} сыр.!", show_alert=True)
+            loss = int(invest_amt * 0.8) # Теряем 80% от вложенных 30%
+            await create_or_update_bank(chat_id, banker_id, {'capital': max(0, capital - loss)})
+            await callback.answer(f"📉 {cfg['name']}: ПРОВАЛ!\nПотеряно: -{loss} сыр.", show_alert=True)
         await show_bank_schemes(callback, chat_id, banker_id)
 
     elif action == "forge":
@@ -840,23 +851,38 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         # Теневой аудит (требует реплая или ID)
         await callback.answer("Чтобы провести аудит, используйте команду:\nаудит [ID/реплай]", show_alert=True)
 
-    elif action == "lobby":
-        # Лоббирование
+    elif action == "lobbymenu":
+        await show_lobbying_menu(callback, banker_id)
+
+    elif action == "actlobby":
+        lobby_type = data_parts[2]
         capital = bank_data.get('capital', 0)
-        if capital < 10000000:
-            return await callback.answer("❌ Для лоббирования нужно минимум 10.000.000 капитала!", show_alert=True)
         
+        lobby_config = {
+            'golden': {'price': 15000000, 'hours': 4, 'name': "Золотой Век"},
+            'tax':    {'price': 10000000, 'hours': 6, 'name': "Налоговый Рай"},
+            'work':   {'price': 12000000, 'hours': 4, 'name': "Индустриализация"},
+            'crime':  {'price': 20000000, 'hours': 3, 'name': "Криминальная Амнистия"}
+        }
+        cfg = lobby_config.get(lobby_type)
+        
+        if capital < cfg['price']:
+            return await callback.answer(f"❌ Нужно {cfg['price']} капитала для {cfg['name']}!", show_alert=True)
+            
         current_time = int(time.time())
         if current_time < bank_data.get('lobby_until', 0):
             return await callback.answer("⏳ Лобби уже активно!", show_alert=True)
 
+        lobby_until = current_time + (cfg['hours'] * 3600)
         await create_or_update_bank(chat_id, banker_id, {
-            'capital': capital - 10000000,
-            'lobby_until': current_time + 14400 # 4 часа
+            'capital': capital - cfg['price'],
+            'lobby_until': lobby_until,
+            'lobby_type': lobby_type
         })
-        await callback.message.answer(f"📢 <b>ЛОББИРОВАНИЕ!</b> Банкир <b>{escape_html(callback.from_user.full_name)}</b> пролоббировал налоговые льготы! \n🚀 В ближайшие 4 часа все игроки получают <b>+20%</b> к прибыли из /bonus!")
-        await callback.answer("✅ Лобби успешно активировано!", show_alert=True)
-        await show_bank_schemes(callback, chat_id, banker_id)
+        
+        msg_text = f"📢 <b>ЛОББИРОВАНИЕ!</b>\n\nБанк <b>{escape_html(bank_data.get('name'))}</b> пролоббировал программу <b>{cfg['name']}</b>!\n🚀 В ближайшие {cfg['hours']} ч. в чате действуют особые условия!"
+        await callback.message.edit_text(msg_text)
+        await callback.message.answer(msg_text) # Дублируем в чат
 
     elif action == "upgrades":
         await show_bank_upgrades(callback, chat_id, banker_id)
@@ -1070,10 +1096,6 @@ async def show_investment_menu(callback: types.CallbackQuery, banker_id: int):
     builder.button(text="⬅️ К схемам", callback_data=f"bstat_schemes_{banker_id}")
     builder.adjust(1)
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
-
-import random
-import time
-
 # ================= ИНКАССАЦИЯ (ИГРА ДЛЯ БАНКИРОВ) =================
 active_incass = {}
 
