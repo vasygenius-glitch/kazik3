@@ -76,7 +76,7 @@ async def cmd_remove_frontman(message: types.Message):
     await update_user_field(message.chat.id, target_id, 'is_frontman', False)
     await message.answer(f"🎭 С <b>{target_name}</b> снята маска <b>Фронтмена</b>.")
 
-@router.message(F.text.lower().startswith("/hg_create") | F.text.lower().startswith("создать ги"))
+@router.message(F.text.regexp(r"^[!/]+(hg_create|создать ги)(\s|$)") | Command("hg_create"))
 async def cmd_hg_create(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -261,7 +261,7 @@ async def cb_hg_start(callback: types.CallbackQuery, bot: Bot):
     await callback.message.edit_text("🔔 <b>ГОНГ ПРОЗВУЧАЛ! ТРИБУТЫ БЕГУТ К РОГУ ИЗОБИЛИЯ!</b>")
     asyncio.create_task(run_hg_simulation(chat_id, callback.message, bot))
 
-@router.message(or_f(Command("hg_cancel"), F.text.lower().startswith("отменить ги")))
+@router.message(or_f(Command("hg_cancel"), F.text.regexp(r"^[!/]+(hg_cancel|отменить ги)(\s|$)")))
 async def cmd_hg_cancel(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -276,7 +276,7 @@ async def cmd_hg_cancel(message: types.Message):
         return await message.answer("❌ Игры уже начались, отменить нельзя!")
     for p in game['players']:
         await update_user_balance(chat_id, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Refund")
-    del active_hg[chat_id]
+    active_hg.pop(chat_id, None)
     await message.answer("🛑 <b>ГОЛОДНЫЕ ИГРЫ ОТМЕНЕНЫ!</b> Все взносы возвращены участникам.")
 
 @router.message(Command("hg_reset"))
