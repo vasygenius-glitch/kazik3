@@ -265,18 +265,25 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     if current_deposit < amount:
         raise ValueError(f"На вашем вкладе только {current_deposit} сыроежек.")
 
-    # Verify if bank has enough capital (если банк существует)
+    # Если банка нет, ЦБ выдает из воздуха (гарантия вкладов)
+    # Если банк есть, проверяем ликвидность
     if doc_snapshot.exists:
         if bank_data.get('capital', 0) < amount:
             raise ValueError("У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас.")
-    # Если банка нет, ЦБ выдает из воздуха (уже реализовано в cmd_bank, но тут тоже учтем)
-
-    # Добавляем игроку
+        
+        # Обновляем капитал банка
+        new_capital = bank_data.get('capital', 0) - amount
+        if transaction:
+            transaction.update(bank_ref, {'capital': new_capital})
+        else:
+            await bank_ref.update({'capital': new_capital})
+    
+    # Добавляем игроку на баланс
     await update_user_balance(chat_id, user_id, amount, transaction=transaction, action="Bank Withdraw")
     
-    # Обновляем поля игрока
+    # Обновляем поля игрока (вклад и привязку)
     updates = {'bank_deposit': current_deposit - amount}
-    if current_deposit - amount == 0:
+    if current_deposit - amount <= 0:
         updates['bank_name'] = None
         updates['deposit_start_time'] = 0
     
@@ -284,18 +291,10 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
         transaction.update(user_ref, updates)
     else:
         await user_ref.update(updates)
-    
-    # Обновляем капитал банка (если он есть)
-    if doc_snapshot.exists:
-        new_capital = bank_data.get('capital', 0) - amount
-        if transaction:
-            transaction.update(bank_ref, {'capital': new_capital})
-        else:
-            await bank_ref.update({'capital': new_capital})
 
     return amount
 
-@router.message(Command("bank"))
+@router.message(Command("bank", prefix="!/"))
 async def cmd_bank(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -479,17 +478,6 @@ async def cmd_bank(message: types.Message):
 
                 await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")
             except ValueError as ve:
-                # Если банк удален, отдаем деньги из "воздуха" как гарантия ЦБ
-                if "Банк не найден" in str(ve) or "банк закрылся" in str(ve).lower():
-                    actual_withdraw = current_deposit if is_all else amount
-                    if actual_withdraw > current_deposit: actual_withdraw = current_deposit
-
-                    await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - actual_withdraw)
-                    await update_user_balance(chat_id, user_id, actual_withdraw)
-                    if current_deposit - actual_withdraw == 0:
-                        await update_user_field(chat_id, user_id, 'bank_name', None)
-                    return await message.answer(f"💸 Ваш банк закрылся, но ЦБ гарантирует вклады. Снято {actual_withdraw} сыроежек.")
-
                 await message.answer(f"❌ {ve}")
             except Exception as e:
                 import traceback
