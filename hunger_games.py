@@ -76,7 +76,7 @@ async def cmd_remove_frontman(message: types.Message):
     await update_user_field(message.chat.id, target_id, 'is_frontman', False)
     await message.answer(f"🎭 С <b>{target_name}</b> снята маска <b>Фронтмена</b>.")
 
-@router.message(F.text.regexp(r"^[!/]+(hg_create|создать ги)(\s|$)") | Command("hg_create"))
+@router.message(or_f(Command("hg_create"), F.text.regexp(r"^[!/]+(hg_create|создать ги)(\s|$)")))
 async def cmd_hg_create(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
