@@ -885,30 +885,60 @@ async def cmd_wipe_mid(message: types.Message):
     # Launch task in background
     asyncio.create_task(run_wipe())
 
-@router.message(or_f(Command("execute"), F.text.lower().contains("казнить")))
-async def cmd_execute(message: types.Message):
-    print(f"DEBUG: cmd_execute triggered by {message.from_user.id}")
+@router.message(or_f(Command("execute"), F.text.lower() == "казнить"))
+async def cmd_execute(message: types.Message, bot: Bot):
     if not is_creator(message):
-        print(f"DEBUG: User {message.from_user.id} is NOT creator")
         return
 
     if not message.reply_to_message:
         return await message.answer("Ответьте на сообщение грешника, которого нужно <b>казнить</b>.")
 
     target_user = message.reply_to_message.from_user
+    target_id = target_user.id
+    chat_id = message.chat.id
     target_name = escape_html(target_user.full_name)
     
-    # Ссылка на эпичную картинку (прямая ссылка)
-    image_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8c/Guillotine_at_the_Conciergerie.jpg/800px-Guillotine_at_the_Conciergerie.jpg"
+    from user_manager import update_user_field, invalidate_user_cache
+    # 1. Бан в боте
+    await update_user_field(chat_id, target_id, 'is_banned', True)
+    # 2. Обнуление баланса
+    await update_user_field(chat_id, target_id, 'balance', 0)
+    await update_user_field(chat_id, target_id, 'bank_deposit', 0)
+    invalidate_user_cache(chat_id, target_id)
+    
+    # Ссылка на эпичную картинку (сгенерирована специально для вас)
+    # Используем путь к сгенерированному файлу
+    from aiogram.types import FSInputFile
+    import os
+    
+    image_path = r"C:\Users\Admin1\.gemini\antigravity\brain\6446a2d5-382d-43a8-95f4-e8a1b687e7aa\epic_execution_guillotine_1778859976599.png"
     
     caption = (
-        f"⚖️ <b>СУД ЛИНЧА СОСТОЯЛСЯ!</b>\n\n"
-        f"Пользователь <b>{target_name}</b> (<code>{target_user.id}</code>) был признан виновным в ереси и приговорен к <b>высшей мере наказания</b>!\n\n"
-        f"⚔️ <i>Приговор приведен в исполнение немедленно по приказу Создателя.</i>\n"
-        f"💀 Да смилуются боги над его душой!"
+        f"⚖️ <b>ВЫСШАЯ МЕРА НАКАЗАНИЯ!</b>\n\n"
+        f"Пользователь <b>{target_name}</b> (<code>{target_id}</code>) был признан виновным в предательстве и приговорен к <b>казни</b>!\n\n"
+        f"🚫 <b>Последствия:</b>\n"
+        f"• Вечный бан в системе Kazik\n"
+        f"• Полная конфискация имущества и денег\n\n"
+        f"⚔️ <i>Приговор приведен в исполнение немедленно по воле Создателя.</i>\n"
+        f"💀 Прощай, {target_name}."
     )
 
     try:
-        await message.answer_photo(photo=image_url, caption=caption, parse_mode="HTML")
+        if os.path.exists(image_path):
+            photo = FSInputFile(image_path)
+            await message.answer_photo(photo=photo, caption=caption)
+        else:
+            # Фолбэк на внешнюю ссылку если локальный файл пропал
+            await message.answer_photo(
+                photo="https://i.imgur.com/8Qp4S3q.png", # Запасная ссылка на эпичную казнь
+                caption=caption
+            )
+    except Exception as e:
+        print(f"Ошибка отправки фото казни: {e}")
+        await message.answer(caption)
+    
+    # Попытка кикнуть из чата
+    try:
+        await bot.ban_chat_member(chat_id, target_id)
     except Exception:
-        await message.answer(caption, parse_mode="HTML")
+        pass
