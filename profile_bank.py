@@ -783,6 +783,9 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         )
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
 
+    elif action == "upgrades":
+        await show_bank_upgrades(callback, chat_id, banker_id)
+
     elif action == "buyupg":
         upg_type = data_parts[2]
         banker_id = int(data_parts[3])
