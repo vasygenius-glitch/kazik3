@@ -880,3 +880,36 @@ async def cmd_wipe_mid(message: types.Message):
 
     # Launch task in background
     asyncio.create_task(run_wipe())
+
+@router.message(F.text.regexp(r"^[!/]+казнить(\s|$)") | Command("execute"))
+async def cmd_execute(message: types.Message, bot: Bot):
+    if not is_creator(message):
+        return
+
+    if not message.reply_to_message:
+        return await message.answer("Ответьте на сообщение грешника, которого нужно <b>казнить</b>.")
+
+    target_user = message.reply_to_message.from_user
+    target_name = escape_html(target_user.full_name)
+    
+    # Ссылка на эпичную картинку
+    image_url = "https://images.unsplash.com/photo-1519074063912-ad25b57b6d1e?q=80&w=1000&auto=format&fit=crop"
+    
+    caption = (
+        f"⚖️ <b>СУД ЛИНЧА СОСТОЯЛСЯ!</b>\n\n"
+        f"Пользователь <b>{target_name}</b> (<code>{target_user.id}</code>) был признан виновным в ереси и приговорен к <b>высшей мере наказания</b>!\n\n"
+        f"⚔️ <i>Приговор приведен в исполнение немедленно по приказу Создателя.</i>\n"
+        f"💀 Покойся с миром (в муте на 1 минуту)."
+    )
+
+    try:
+        from datetime import timedelta
+        await bot.restrict_chat_member(
+            chat_id=message.chat.id,
+            user_id=target_user.id,
+            permissions=types.ChatPermissions(can_send_messages=False),
+            until_date=timedelta(minutes=1)
+        )
+        await message.answer_photo(photo=image_url, caption=caption)
+    except Exception:
+        await message.answer_photo(photo=image_url, caption=caption + "\n\n<i>(P.S. У меня нет прав на мут, но казнь засчитана!)</i>")
