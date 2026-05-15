@@ -268,6 +268,15 @@ async def cmd_delvip(message: types.Message):
     await update_user_field(chat_id, target_id, 'is_vip', False)
     await message.answer(f"Пользователь {target_name} лишен статуса VIP.")
 
+@router.message(Command("check_id"))
+async def cmd_check_id(message: types.Message):
+    user_id = message.from_user.id
+    await message.answer(
+        f"👤 Твой ID: <code>{user_id}</code>\n"
+        f"⚙️ В конфиге (CREATOR_ID): <code>{CREATOR_ID}</code>\n\n"
+        f"<i>Если ID не совпадают, команды Создателя работать не будут!</i>"
+    )
+
 from whitelist import add_to_whitelist, remove_from_whitelist, get_whitelist
 from spy import toggle_spy
 
