@@ -367,27 +367,29 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             # if pet and pet.get('id') == 'dog':
             #     base_bonus = int(base_bonus * 1.5)
 
-            extra_income = biz_income + car_income + bank_income
-            
             # --- ЛОББИРОВАНИЕ БАНКИРОВ ---
-            lobby_bonus = 0
+            lobby_boost = 1.0
             from db import get_db
             db = get_db()
             banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
             # Ищем банки с активным лобби
             active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
             
-            has_active_lobby = False
             for b_doc in active_lobbies:
                 b_data = b_doc.to_dict()
                 blacklist = b_data.get('lobby_blacklist', [])
                 if user_id not in blacklist:
-                    has_active_lobby = True
+                    lobby_boost = 1.2
                     break
             
-            if has_active_lobby:
-                lobby_bonus = int(extra_income * 0.20)
-                extra_income += lobby_bonus
+            if lobby_boost > 1.0:
+                base_bonus = int(base_bonus * lobby_boost)
+                biz_income = int(biz_income * lobby_boost)
+                car_income = int(car_income * lobby_boost)
+                # Пересчитываем extra_income с учетом лобби
+                extra_income = biz_income + car_income + bank_income
+            else:
+                extra_income = biz_income + car_income + bank_income
 
             tax_amt = int(extra_income * (tax_percent / 100.0))
             
