@@ -318,19 +318,27 @@ async def cb_hg_reset_confirm(callback: types.CallbackQuery):
     if is_admin:
         # Сброс вообще всего
         chats_to_reset = list(active_hg.keys())
+        for cid in chats_to_reset:
+            game = active_hg[cid]
+            # Возврат денег всем игрокам во всех чатах
+            for p in game.get('players', []):
+                await update_user_balance(cid, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Global Reset Refund")
         active_hg.clear()
-        text = f"🚨 <b>ГЛОБАЛЬНЫЙ СБРОС:</b> Очищено чатов: <b>{len(chats_to_reset)}</b>."
+        text = f"🚨 <b>ГЛОБАЛЬНЫЙ СБРОС:</b> Очищено чатов: <b>{len(chats_to_reset)}</b>. Все деньги возвращены игрокам."
     else:
         # Сброс только игр этого фронтмена
         for cid, game in list(active_hg.items()):
             if game.get('host_id') == user_id:
+                # Возврат денег игрокам в играх этого фронтмена
+                for p in game.get('players', []):
+                    await update_user_balance(cid, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Frontman Reset Refund")
                 del active_hg[cid]
                 chats_to_reset.append(cid)
         
         if not chats_to_reset:
             return await callback.answer("У тебя нет активных игр для сброса.", show_alert=True)
         
-        text = f"🧹 <b>Твои игры сброшены!</b> Очищено чатов: <b>{len(chats_to_reset)}</b>.\nТеперь ты можешь создавать новые."
+        text = f"🧹 <b>Твои игры сброшены!</b> Очищено чатов: <b>{len(chats_to_reset)}</b>. Деньги возвращены участникам.\nТеперь ты можешь создавать новые."
 
     await callback.message.edit_text(text)
 
