@@ -281,17 +281,58 @@ async def cmd_hg_cancel(message: types.Message):
 
 @router.message(Command("hg_reset"))
 async def cmd_hg_reset(message: types.Message):
-    user_id = message.from_user.id
-    if not CREATOR_ID or int(user_id) != int(CREATOR_ID):
-        # Если это не создатель, просто игнорируем (стандартное поведение для админ-команд)
-        return
-    
     chat_id = message.chat.id
-    if chat_id in active_hg:
-        del active_hg[chat_id]
-        await message.answer("🧹 <b>Состояние Голодных Игр в этом чате полностью сброшено.</b> Можно создавать новые.")
+    user_id = message.from_user.id
+    
+    # Проверка: либо Создатель, либо Фронтмен
+    is_admin = str(user_id) == str(CREATOR_ID)
+    if not is_admin:
+        is_f = await is_frontman(chat_id, user_id)
+        if not is_f:
+            return # Игнорируем обычных пользователей
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Да, сбросить 🧨", callback_data=f"hg_reset_confirm")
+    builder.button(text="Отмена ❌", callback_data=f"hg_reset_cancel")
+    builder.adjust(2)
+
+    await message.answer(
+        "⚠️ <b>ЭКСТРЕННЫЙ ПЕРЕЗАПУСК</b> ⚠️\n\n"
+        "Вы уверены, что хотите прервать игры?\n"
+        "• <i>Для Фронтмена: сбросятся все ВАШИ игры во всех чатах.</i>\n"
+        "• <i>Для Создателя: сбросятся ВООБЩЕ ВСЕ игры в памяти бота.</i>",
+        reply_markup=builder.as_markup()
+    )
+
+@router.callback_query(F.data == "hg_reset_cancel")
+async def cb_hg_reset_cancel(callback: types.CallbackQuery):
+    await callback.message.edit_text("✅ Действие отменено.")
+
+@router.callback_query(F.data == "hg_reset_confirm")
+async def cb_hg_reset_confirm(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    is_admin = str(user_id) == str(CREATOR_ID)
+    
+    chats_to_reset = []
+    
+    if is_admin:
+        # Сброс вообще всего
+        chats_to_reset = list(active_hg.keys())
+        active_hg.clear()
+        text = f"🚨 <b>ГЛОБАЛЬНЫЙ СБРОС:</b> Очищено чатов: <b>{len(chats_to_reset)}</b>."
     else:
-        await message.answer("❌ В этом чате нет активных игр в памяти бота.")
+        # Сброс только игр этого фронтмена
+        for cid, game in list(active_hg.items()):
+            if game.get('host_id') == user_id:
+                del active_hg[cid]
+                chats_to_reset.append(cid)
+        
+        if not chats_to_reset:
+            return await callback.answer("У тебя нет активных игр для сброса.", show_alert=True)
+        
+        text = f"🧹 <b>Твои игры сброшены!</b> Очищено чатов: <b>{len(chats_to_reset)}</b>.\nТеперь ты можешь создавать новые."
+
+    await callback.message.edit_text(text)
 
 async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     game = active_hg.get(chat_id)
