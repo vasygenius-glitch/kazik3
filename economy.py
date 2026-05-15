@@ -462,9 +462,15 @@ async def cmd_work(message: types.Message):
     for b_doc in active_lobbies:
         b_data = b_doc.to_dict()
         if user_id not in b_data.get('lobby_blacklist', []):
-            lobby_boost = 1.2
-            lobby_msg = "\n📢 Благодаря лоббированию банкиров ваша зарплата выросла на 20%!"
-            break
+            l_type = b_data.get('lobby_type', 'golden')
+            if l_type == 'golden':
+                lobby_boost = 1.2
+                lobby_msg = "\n🌟 Золотой век: +20% к зарплате!"
+                break
+            elif l_type == 'work':
+                lobby_boost = 1.4
+                lobby_msg = "\n🏭 Индустриализация: +40% к зарплате!"
+                break
             
     final_earnings = int(base_earnings * lobby_boost)
 
@@ -613,7 +619,20 @@ async def cmd_crime(message: types.Message):
 
     dragon_bonus = 0.1 if pet_id == 'dragon' else 0
 
-    success_chance = 0.4 + (stealth_level * 0.05) + dragon_bonus
+    # --- ЛОББИРОВАНИЕ (ШАНС УСПЕХА) ---
+    from db import get_db
+    current_time = time.time()
+    banks_ref = get_db().collection('chats').document(str(chat_id)).collection('banks')
+    active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
+    
+    lobby_type = 'none'
+    for b_doc in active_lobbies:
+        b_data = b_doc.to_dict()
+        if user_id not in b_data.get('lobby_blacklist', []):
+            lobby_type = b_data.get('lobby_type', 'golden')
+            if lobby_type == 'crime':
+                success_chance += 0.20 # +20% к шансу успеха
+            break
 
     if 'syphilis' in active_diseases:
         success_chance /= 2.0
@@ -622,19 +641,15 @@ async def cmd_crime(message: types.Message):
     if rand.random() < success_chance:
         base_earnings = rand.randint(200, 500)
         
-        # --- ЛОББИРОВАНИЕ БАНКИРОВ ---
-        from db import get_db
-        banks_ref = get_db().collection('chats').document(str(chat_id)).collection('banks')
-        active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
-        
+        # --- ЛОББИРОВАНИЕ (БУСТ КУША) ---
         lobby_msg = ""
         lobby_boost = 1.0
-        for b_doc in active_lobbies:
-            b_data = b_doc.to_dict()
-            if user_id not in b_data.get('lobby_blacklist', []):
-                lobby_boost = 1.2
-                lobby_msg = "\n📢 Лоббирование банкиров увеличило ваш куш на 20%!"
-                break
+        if lobby_type == 'golden':
+            lobby_boost = 1.2
+            lobby_msg = "\n🌟 Золотой век: +20% к кушу!"
+        elif lobby_type == 'crime':
+            lobby_boost = 1.2 # Амнистия тоже дает буст
+            lobby_msg = "\n🥷 Амнистия: Куш увеличен!"
 
         final_earnings = int(base_earnings * lobby_boost)
 
@@ -724,8 +739,14 @@ async def cmd_crime(message: types.Message):
         await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
     else:
         fine = rand.randint(500, 1500)
+        if lobby_type == 'crime':
+            fine = int(fine * 0.2) # -80% штраф
+            msg = f"🚔 Тебя почти поймали, но благодаря <b>Амнистии</b> ты отделался легким штрафом: <b>{fine}</b> сыр."
+        else:
+            msg = f"🚔 Тебя поймали! Суд выписал штраф в <b>{fine}</b> сыроежек."
+        
         await update_user_balance(chat_id, user_id, -fine, min_balance=0, is_debt_repayment=True)
-        await message.answer(f"🚔 Тебя поймали! Суд выписал штраф в <b>{fine}</b> сыроежек.")
+        await message.answer(msg)
 @router.message(F.text.lower().startswith("ограбить банк"))
 async def cmd_rob_bank(message: types.Message):
     chat_id = message.chat.id
