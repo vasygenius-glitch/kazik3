@@ -899,17 +899,7 @@ async def cmd_execute(message: types.Message, bot: Bot):
         f"⚖️ <b>СУД ЛИНЧА СОСТОЯЛСЯ!</b>\n\n"
         f"Пользователь <b>{target_name}</b> (<code>{target_user.id}</code>) был признан виновным в ереси и приговорен к <b>высшей мере наказания</b>!\n\n"
         f"⚔️ <i>Приговор приведен в исполнение немедленно по приказу Создателя.</i>\n"
-        f"💀 Покойся с миром (в муте на 1 минуту)."
+        f"💀 Да смилуются боги над его душой!"
     )
 
-    try:
-        from datetime import timedelta
-        await bot.restrict_chat_member(
-            chat_id=message.chat.id,
-            user_id=target_user.id,
-            permissions=types.ChatPermissions(can_send_messages=False),
-            until_date=timedelta(minutes=1)
-        )
-        await message.answer_photo(photo=image_url, caption=caption)
-    except Exception:
-        await message.answer_photo(photo=image_url, caption=caption + "\n\n<i>(P.S. У меня нет прав на мут, но казнь засчитана!)</i>")
+    await message.answer_photo(photo=image_url, caption=caption)
