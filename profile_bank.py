@@ -985,32 +985,90 @@ async def show_bank_schemes(callback: types.CallbackQuery, chat_id: int, banker_
     audit_until = bank_data.get('audit_risk_until', 0)
     audit_status = "🟢 Чист" if current_time > audit_until else "🔴 ПРОВЕРКА ЦБ (Риск штрафа!)"
     
+    lobby_until = bank_data.get('lobby_until', 0)
+    lobby_type = bank_data.get('lobby_type', 'none')
+    lobby_status = "⚪️ Нет активных программ"
+    if current_time < lobby_until:
+        types_map = {
+            'golden': "🌟 Золотой Век (+20% ко всему)",
+            'tax': "📉 Налоговый Рай (-50% налог)",
+            'work': "🏭 Индустриализация (+40% к работе)",
+            'crime': "🥷 Амнистия (Крайм-буст)"
+        }
+        lobby_status = f"✅ Активно: {types_map.get(lobby_type, 'Неизвестно')}"
+    
     capital = bank_data.get('capital', 0)
     
     text = (
-        f"💼 <b>Теневые схемы банка {escape_html(bank_data.get('name'))}</b>\n\n"
+        f"💼 <b>Теневые и политические схемы: {escape_html(bank_data.get('name'))}</b>\n\n"
         f"💰 Капитал: <b>{capital}</b> сыр.\n"
-        f"🕵️ Статус аудита: {audit_status}\n\n"
-        f"📉 <b>Теневые инвестиции</b>\n"
-        f"<i>Вложить 30% капитала в сомнительные акции. 45% шанс на огромную прибыль, иначе — потеря вложений.</i>\n\n"
+        f"🕵️ Статус аудита: {audit_status}\n"
+        f"📢 Статус лобби: {lobby_status}\n\n"
+        f"📈 <b>Управление Инвестициями</b>\n"
+        f"<i>Разместите капитал в фондах разной степени риска для получения пассивного дохода.</i>\n\n"
         f"🖨 <b>Печатный станок</b>\n"
-        f"<i>Мгновенно напечатать 7.000.000 сыр. Это привлечет внимание ЦБ. Если во время действия 'риска аудита' произойдет проверка — штраф 15.000.000!</i>\n\n"
+        f"<i>Мгновенная эмиссия 7.000.000 сыр. Это гарантированно вызовет интерес регуляторов (ЦБ).</i>\n\n"
         f"🕵️ <b>Теневой аудит</b>\n"
-        f"<i>Найдите 'грязные' деньги у игрока. 25% шанс конфисковать 10% баланса цели в капитал банка. Используйте команду: аудит [ID/реплай].</i>\n\n"
-        f"📢 <b>Лоббирование (10М сыр)</b>\n"
-        f"<i>Снизить налоги для всего чата на 4 часа. Повышает репутацию банка и увеличивает доход всех игроков в /bonus на 20%.</i>\n"
-        f"🚫 <b>Черный список лобби</b>: {len(bank_data.get('lobby_blacklist', []))} чел.\n"
-        f"<i>Используйте: <code>лобби бан [ID]</code> или <code>лобби разбан [ID]</code></i>"
+        f"<i>Используйте команду: <code>аудит [ID/реплай]</code> для поиска 'грязных' денег у игроков.</i>\n\n"
+        f"📢 <b>Политическое Лоббирование</b>\n"
+        f"<i>Продвигайте законы, выгодные вашему банку или всему чату.</i>\n"
     )
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="📉 Инвестировать", callback_data=f"bstat_invest_{banker_id}")
+    builder.button(text="📈 Инвестиции", callback_data=f"bstat_invmenu_{banker_id}")
     builder.button(text="🖨 Включить станок", callback_data=f"bstat_forge_{banker_id}")
-    builder.button(text="🕵️ Аудит (инфо)", callback_data=f"bstat_audit_{banker_id}")
-    builder.button(text="📢 Лоббировать", callback_data=f"bstat_lobby_{banker_id}")
+    builder.button(text="📢 Лоббирование", callback_data=f"bstat_lobbymenu_{banker_id}")
     builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 1, 1)
     
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+async def show_lobbying_menu(callback: types.CallbackQuery, banker_id: int):
+    text = (
+        "📢 <b>Центр Политического Лоббирования</b>\n\n"
+        "Выберите программу для продвижения в правительстве:\n\n"
+        "1️⃣ <b>Золотой Век</b>\n"
+        "<i>+20% прибыли ко всем действиям (/bonus, /work, /crime) для всего чата.</i>\n"
+        "💰 Цена: <b>15.000.000</b> | ⏱ 4 часа\n\n"
+        "2️⃣ <b>Налоговый Рай</b>\n"
+        "<i>Снижает глобальный налог на переводы и бонусы на 50%.</i>\n"
+        "💰 Цена: <b>10.000.000</b> | ⏱ 6 часов\n\n"
+        "3️⃣ <b>План Индустриализации</b>\n"
+        "<i>+40% прибыли только от работы (/work). Идеально для поднятия экономики.</i>\n"
+        "💰 Цена: <b>12.000.000</b> | ⏱ 4 часа\n\n"
+        "4️⃣ <b>Криминальная Амнистия</b>\n"
+        "<i>+20% шанс успеха крайма и -80% штрафы при поимке.</i>\n"
+        "💰 Цена: <b>20.000.000</b> | ⏱ 3 часа"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="1️⃣ Золотой Век", callback_data=f"bstat_actlobby_golden_{banker_id}")
+    builder.button(text="2️⃣ Налоговый Рай", callback_data=f"bstat_actlobby_tax_{banker_id}")
+    builder.button(text="3️⃣ Индустрия", callback_data=f"bstat_actlobby_work_{banker_id}")
+    builder.button(text="4️⃣ Амнистия", callback_data=f"bstat_actlobby_crime_{banker_id}")
+    builder.button(text="⬅️ К схемам", callback_data=f"bstat_schemes_{banker_id}")
+    builder.adjust(2, 2, 1)
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+async def show_investment_menu(callback: types.CallbackQuery, banker_id: int):
+    text = (
+        "📈 <b>Инвестиционный Портфель Банка</b>\n\n"
+        "Разместите свободный капитал (30% от текущего):\n\n"
+        "🏛 <b>Гос. Облигации</b>\n"
+        "<i>Минимальный риск, стабильный доход.</i>\n"
+        "💰 Профит: <b>+7%</b> | 🎯 Шанс: <b>95%</b>\n\n"
+        "🚀 <b>Венчурный Фонд</b>\n"
+        "<i>Инвестиции в технологические стартапы.</i>\n"
+        "💰 Профит: <b>+35%</b> | 🎯 Шанс: <b>55%</b>\n\n"
+        "💎 <b>Крипто-Арбитраж</b>\n"
+        "<i>Высокорисковые операции на бирже.</i>\n"
+        "💰 Профит: <b>+110%</b> | 🎯 Шанс: <b>22%</b>"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🏛 Облигации", callback_data=f"bstat_doinv_safe_{banker_id}")
+    builder.button(text="🚀 Венчур", callback_data=f"bstat_doinv_mid_{banker_id}")
+    builder.button(text="💎 Крипто", callback_data=f"bstat_doinv_risk_{banker_id}")
+    builder.button(text="⬅️ К схемам", callback_data=f"bstat_schemes_{banker_id}")
+    builder.adjust(1)
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
 
 import random

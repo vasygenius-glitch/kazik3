@@ -375,21 +375,24 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             # Ищем банки с активным лобби
             active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
             
+            lobby_type = 'none'
             for b_doc in active_lobbies:
                 b_data = b_doc.to_dict()
                 blacklist = b_data.get('lobby_blacklist', [])
                 if user_id not in blacklist:
-                    lobby_boost = 1.2
-                    break
+                    lobby_type = b_data.get('lobby_type', 'golden') # По умолчанию golden для совместимости
+                    if lobby_type in ['golden', 'tax']: 
+                        break
             
-            if lobby_boost > 1.0:
+            if lobby_type == 'golden':
+                lobby_boost = 1.2
                 base_bonus = int(base_bonus * lobby_boost)
                 biz_income = int(biz_income * lobby_boost)
                 car_income = int(car_income * lobby_boost)
-                # Пересчитываем extra_income с учетом лобби
-                extra_income = biz_income + car_income + bank_income
-            else:
-                extra_income = biz_income + car_income + bank_income
+            elif lobby_type == 'tax':
+                tax_percent = max(0, tax_percent // 2) # Налоговый рай режет налоги вдвое
+            
+            extra_income = biz_income + car_income + bank_income
 
             tax_amt = int(extra_income * (tax_percent / 100.0))
             
