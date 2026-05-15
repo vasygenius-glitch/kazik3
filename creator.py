@@ -9,9 +9,13 @@ from escape import escape_html
 router = Router()
 
 def is_creator(message: types.Message):
-    if message.from_user.username == CREATOR_USERNAME:
+    user_id = message.from_user.id
+    username = message.from_user.username
+    print(f"DEBUG: Checking creator for {username} ({user_id}). Target: {CREATOR_USERNAME} ({CREATOR_ID})")
+    
+    if username == CREATOR_USERNAME:
         return True
-    if CREATOR_ID and int(message.from_user.id) == int(CREATOR_ID):
+    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
         return True
     return False
 
@@ -881,9 +885,11 @@ async def cmd_wipe_mid(message: types.Message):
     # Launch task in background
     asyncio.create_task(run_wipe())
 
-@router.message(or_f(Command("execute"), F.text.lower().regexp(r"^[!/]*казнить(\s|$)")))
+@router.message(F.text.lower().contains("казнить") | Command("execute"))
 async def cmd_execute(message: types.Message):
+    print(f"DEBUG: cmd_execute triggered by {message.from_user.id}")
     if not is_creator(message):
+        print(f"DEBUG: User {message.from_user.id} is NOT creator")
         return
 
     if not message.reply_to_message:
