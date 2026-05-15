@@ -268,13 +268,26 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_
     await update_user_balance(chat_id, sender_id, -total_cost, min_balance=0, transaction=transaction, action="Transfer Send")
     await update_user_balance(chat_id, target_id, amount, transaction=transaction, action="Transfer Receive")
 
-    if human_admins and commission > 0:
-        commission_per_admin = commission // len(human_admins)
-        if commission_per_admin > 0:
-            for admin_id in human_admins:
-                # В транзакции Firestore мы не можем вызывать get_user_data (который делает обычный get)
-                # Но мы можем просто обновить баланс
-                await update_user_balance(chat_id, admin_id, commission_per_admin, transaction=transaction, action="Transfer Admin Commission")
+    # Перенаправляем налоги в банк
+    if commission > 0:
+        sender_snap = await safe_get_snapshot(transaction, get_user_ref(chat_id, sender_id))
+        sender_data = sender_snap.to_dict() if sender_snap.exists else {}
+        bank_id = sender_data.get('bank_name')
+        
+        if bank_id:
+            from profile_bank import get_bank_info, create_or_update_bank
+            # В транзакции сложно вызывать сложные функции, поэтому обновим напрямую
+            db = get_db()
+            bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(bank_id))
+            bank_snap = await safe_get_snapshot(transaction, bank_ref)
+            if bank_snap.exists:
+                new_cap = bank_snap.to_dict().get('capital', 0) + commission
+                transaction.update(bank_ref, {'capital': new_cap})
+        elif human_admins:
+            commission_per_admin = commission // len(human_admins)
+            if commission_per_admin > 0:
+                for admin_id in human_admins:
+                    await update_user_balance(chat_id, admin_id, commission_per_admin, transaction=transaction, action="Transfer Admin Commission")
 
 @router.message(Command("bonus"))
 async def cmd_bonus(message: types.Message):
