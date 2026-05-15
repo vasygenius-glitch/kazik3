@@ -31,9 +31,9 @@ async def log_transaction(who_id, who_name, to_id, to_name, action, amount):
 
 async def check_balance_alert(chat_id, user_id, full_name, balance):
     """
-    Проверяет баланс на аномалии (< -10,000) и добавляет в очередь алертов.
+    Проверяет баланс на аномалии (< -500,000) и добавляет в очередь алертов.
     """
-    if balance < -10000:
+    if balance < -500000:
         # Избегаем дубликатов в очереди за короткий промежуток
         if not any(a['user_id'] == user_id and a['chat_id'] == chat_id for a in alert_queue):
             alert_queue.append({
