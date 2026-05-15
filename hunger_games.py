@@ -270,12 +270,26 @@ async def cmd_hg_cancel(message: types.Message):
     game = active_hg[chat_id]
     if str(user_id) != str(CREATOR_ID) and user_id != game['host_id']:
         return await message.answer("❌ Только организатор этих игр или Создатель могут их отменить.")
-    if game['state'] != 'lobby':
+    
+    # Создатель может отменить в любом состоянии, фронтмен только в лобби
+    if game['state'] != 'lobby' and str(user_id) != str(CREATOR_ID):
         return await message.answer("❌ Игры уже начались, отменить нельзя!")
     for p in game['players']:
         await update_user_balance(chat_id, p['id'], p.get('bet_paid', game['bet']), action="Hunger Games Refund")
     del active_hg[chat_id]
     await message.answer("🛑 <b>ГОЛОДНЫЕ ИГРЫ ОТМЕНЕНЫ!</b> Все взносы возвращены участникам.")
+
+@router.message(Command("hg_reset"))
+async def cmd_hg_reset(message: types.Message):
+    if str(message.from_user.id) != str(CREATOR_ID):
+        return
+    
+    chat_id = message.chat.id
+    if chat_id in active_hg:
+        del active_hg[chat_id]
+        await message.answer("🧹 <b>Состояние Голодных Игр в этом чате полностью сброшено.</b> Можно создавать новые.")
+    else:
+        await message.answer("❌ В этом чате нет активных игр в памяти бота.")
 
 async def run_hg_simulation(chat_id: int, message: types.Message, bot: Bot):
     game = active_hg.get(chat_id)
