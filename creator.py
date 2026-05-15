@@ -1,5 +1,5 @@
 from aiogram import Router, types, Bot, F
-from aiogram.filters import Command
+from aiogram.filters import Command, or_f
 
 from db import get_db
 from user_manager import get_user_data, update_user_balance
