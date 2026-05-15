@@ -591,10 +591,22 @@ def get_bank_stats_kb(banker_id: int):
     builder.button(text="🤝 Должники", callback_data=f"bstat_loans_{banker_id}")
     builder.button(text="⚙️ Настройки", callback_data=f"bstat_settings_{banker_id}")
     builder.button(text="⬆️ Улучшения", callback_data=f"bstat_upgrades_{banker_id}")
-    builder.adjust(2, 2, 1)
+    builder.button(text="💼 Схемы", callback_data=f"bstat_schemes_{banker_id}")
+    builder.adjust(2, 2, 2)
     return builder.as_markup()
 
 async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
+    current_time = int(time.time())
+    audit_risk = bank_data.get('audit_risk_until', 0)
+    audit_warning = ""
+    if current_time < audit_risk:
+        audit_warning = "\n⚠️ <b>ВНИМАНИЕ: ЦБ ведет проверку ваших счетов!</b>"
+        if random.random() < 0.10: # 10% шанс штрафа при просмотре статистики во время риска
+            fine = 15000000
+            new_capital = max(0, bank_data.get('capital', 0) - fine)
+            await create_or_update_bank(chat_id, user_id, {'capital': new_capital, 'audit_risk_until': 0})
+            audit_warning = f"\n🚨 <b>АУДИТ ПРОВАЛЕН!</b> ЦБ обнаружил нарушения и выписал штраф <b>{fine}</b> сыр.!"
+
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
 
@@ -614,9 +626,7 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
 
     total_loans_given = 0
     overdue_loans = 0
-    import time
-    current_time = time.time()
-
+    
     # Оптимизированный запрос должников
     debt_docs = await users_ref.where('debts', '!=', {}).get()
 
@@ -663,6 +673,7 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
         f"🏦 <b>Сумма на вкладах:</b> {total_deposits} сыр.\n\n"
         f"🤝 <b>Раздано кредитов:</b> {total_loans_given} сыр.\n"
         f"🚨 <b>Просроченных долгов:</b> {overdue_loans} сыр.\n"
+        f"{audit_warning}"
     )
     return text
 
@@ -782,6 +793,70 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             f"Выдавать кредиты можно реплаем: <code>кредит [сумма] [%] [срок]</code>"
         )
         await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
+    
+    elif action == "schemes":
+        await show_bank_schemes(callback, chat_id, banker_id)
+
+    elif action == "invest":
+        # Теневые инвестиции
+        capital = bank_data.get('capital', 0)
+        if capital < 5000000:
+            return await callback.answer("❌ Для инвестиций нужно минимум 5.000.000 капитала!", show_alert=True)
+        
+        invest_amt = int(capital * 0.3) # Инвестируем 30% капитала
+        if random.random() < 0.45: # 45% шанс успеха
+            profit = int(invest_amt * (random.uniform(0.5, 1.5)))
+            new_capital = capital + profit
+            await create_or_update_bank(chat_id, banker_id, {'capital': new_capital})
+            await callback.answer(f"📈 УСПЕХ! Сделка выгорела, банк получил +{profit} сыр.!", show_alert=True)
+        else:
+            loss = int(invest_amt * 0.7)
+            new_capital = max(0, capital - loss)
+            await create_or_update_bank(chat_id, banker_id, {'capital': new_capital})
+            await callback.answer(f"📉 ПРОВАЛ! Рынок обвалился, банк потерял -{loss} сыр.!", show_alert=True)
+        await show_bank_schemes(callback, chat_id, banker_id)
+
+    elif action == "forge":
+        # Печатный станок
+        current_time = int(time.time())
+        last_forge = bank_data.get('last_forge_time', 0)
+        if current_time - last_forge < 36000: # Кулдаун 10 часов
+            rem = (36000 - (current_time - last_forge)) // 60
+            return await callback.answer(f"⏳ Станок перегрет! Остынет через {rem} мин.", show_alert=True)
+        
+        forge_amt = 7000000
+        new_capital = bank_data.get('capital', 0) + forge_amt
+        # Устанавливаем риск аудита на 2 часа
+        audit_time = current_time + 7200
+        await create_or_update_bank(chat_id, banker_id, {
+            'capital': new_capital,
+            'last_forge_time': current_time,
+            'audit_risk_until': audit_time
+        })
+        await callback.answer(f"🖨 Тр-р-р... Напечатано {forge_amt} сыр.! \n⚠️ ОСТОРОЖНО: Риск аудита ЦБ на 2 часа!", show_alert=True)
+        await show_bank_schemes(callback, chat_id, banker_id)
+
+    elif action == "audit":
+        # Теневой аудит (требует реплая или ID)
+        await callback.answer("Чтобы провести аудит, используйте команду:\nаудит [ID/реплай]", show_alert=True)
+
+    elif action == "lobby":
+        # Лоббирование
+        capital = bank_data.get('capital', 0)
+        if capital < 10000000:
+            return await callback.answer("❌ Для лоббирования нужно минимум 10.000.000 капитала!", show_alert=True)
+        
+        current_time = int(time.time())
+        if current_time < bank_data.get('lobby_until', 0):
+            return await callback.answer("⏳ Лобби уже активно!", show_alert=True)
+
+        await create_or_update_bank(chat_id, banker_id, {
+            'capital': capital - 10000000,
+            'lobby_until': current_time + 14400 # 4 часа
+        })
+        await callback.message.answer(f"📢 <b>ЛОББИРОВАНИЕ!</b> Банкир <b>{escape_html(callback.from_user.full_name)}</b> пролоббировал налоговые льготы! \n🚀 В ближайшие 4 часа все игроки получают <b>+20%</b> к прибыли из /bonus!")
+        await callback.answer("✅ Лобби успешно активировано!", show_alert=True)
+        await show_bank_schemes(callback, chat_id, banker_id)
 
     elif action == "upgrades":
         await show_bank_upgrades(callback, chat_id, banker_id)
@@ -900,6 +975,43 @@ async def show_bank_upgrades(callback: types.CallbackQuery, chat_id: int, banker
         await callback.message.edit_text(text, reply_markup=builder.as_markup())
     except Exception:
         pass
+
+async def show_bank_schemes(callback: types.CallbackQuery, chat_id: int, banker_id: int):
+    bank_data = await get_bank_info(chat_id, banker_id)
+    if not bank_data:
+        return await callback.answer("❌ Банк не найден.", show_alert=True)
+        
+    current_time = int(time.time())
+    audit_until = bank_data.get('audit_risk_until', 0)
+    audit_status = "🟢 Чист" if current_time > audit_until else "🔴 ПРОВЕРКА ЦБ (Риск штрафа!)"
+    
+    capital = bank_data.get('capital', 0)
+    
+    text = (
+        f"💼 <b>Теневые схемы банка {escape_html(bank_data.get('name'))}</b>\n\n"
+        f"💰 Капитал: <b>{capital}</b> сыр.\n"
+        f"🕵️ Статус аудита: {audit_status}\n\n"
+        f"📉 <b>Теневые инвестиции</b>\n"
+        f"<i>Вложить 30% капитала в сомнительные акции. 45% шанс на огромную прибыль, иначе — потеря вложений.</i>\n\n"
+        f"🖨 <b>Печатный станок</b>\n"
+        f"<i>Мгновенно напечатать 7.000.000 сыр. Это привлечет внимание ЦБ. Если во время действия 'риска аудита' произойдет проверка — штраф 15.000.000!</i>\n\n"
+        f"🕵️ <b>Теневой аудит</b>\n"
+        f"<i>Найдите 'грязные' деньги у игрока. 25% шанс конфисковать 10% баланса цели в капитал банка. Используйте команду: аудит [ID/реплай].</i>\n\n"
+        f"📢 <b>Лоббирование (10М сыр)</b>\n"
+        f"<i>Снизить налоги для всего чата на 4 часа. Повышает репутацию банка и увеличивает доход всех игроков в /bonus на 20%.</i>\n"
+        f"🚫 <b>Черный список лобби</b>: {len(bank_data.get('lobby_blacklist', []))} чел.\n"
+        f"<i>Используйте: <code>лобби бан [ID]</code> или <code>лобби разбан [ID]</code></i>"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📉 Инвестировать", callback_data=f"bstat_invest_{banker_id}")
+    builder.button(text="🖨 Включить станок", callback_data=f"bstat_forge_{banker_id}")
+    builder.button(text="🕵️ Аудит (инфо)", callback_data=f"bstat_audit_{banker_id}")
+    builder.button(text="📢 Лоббировать", callback_data=f"bstat_lobby_{banker_id}")
+    builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
+    builder.adjust(2, 2, 1)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
 
 import random
 import time
@@ -1066,3 +1178,106 @@ async def cb_incass(callback: types.CallbackQuery):
                 f"Рискуем дальше?",
                 reply_markup=builder.as_markup()
             )
+
+        )
+
+@router.message(F.text.lower().startswith("аудит"))
+async def cmd_shadow_audit(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+        
+    target_id = None
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+    else:
+        args = message.text.split()
+        if len(args) < 2:
+            return await message.answer("Использование: <code>аудит [ID/реплай]</code>")
+        try:
+            target_id = int(args[1])
+        except ValueError:
+            return await message.answer("Неверный ID пользователя.")
+            
+    if target_id == user_id:
+        return await message.answer("Вы не можете провести аудит самого себя.")
+        
+    from user_manager import get_user_data, update_user_balance
+    target_data = await get_user_data(chat_id, target_id)
+    if not target_data:
+        return await message.answer("Пользователь не найден.")
+        
+    target_balance = target_data.get('balance', 0)
+    if target_balance < 1000:
+        return await message.answer("У цели слишком мало денег для аудита.")
+        
+    current_time = int(time.time())
+    last_audit = bank_data.get('last_audit_time', 0)
+    if current_time - last_audit < 3600:
+        return await message.answer(f"⏳ Ваши аудиторы еще заняты прошлым делом. Попробуйте через { (3600 - (current_time - last_audit)) // 60 } мин.")
+        
+    await create_or_update_bank(chat_id, user_id, {'last_audit_time': current_time})
+    
+    if random.random() < 0.25: # 25% успех
+        confiscate_amt = int(target_balance * 0.10)
+        confiscate_amt = min(confiscate_amt, 1000000) # Макс 1 млн за раз
+        
+        await update_user_balance(chat_id, target_id, -confiscate_amt)
+        await create_or_update_bank(chat_id, user_id, {'capital': bank_data.get('capital', 0) + confiscate_amt})
+        
+        await message.answer(
+            f"🕵️ <b>ТЕНЕВОЙ АУДИТ ЗАВЕРШЕН!</b>\n\n"
+            f"Ваши люди нашли неучтенные средства у <b>{escape_html(target_data.get('full_name'))}</b>.\n"
+            f"💼 В капитал банка конфисковано: <b>{confiscate_amt}</b> сыр.!"
+        )
+    else:
+        penalty = 200000
+        await create_or_update_bank(chat_id, user_id, {'capital': max(0, bank_data.get('capital', 0) - penalty)})
+        await message.answer(
+            f"🕵️ <b>АУДИТ ПРОВАЛЕН!</b>\n\n"
+            f"Игрок <b>{escape_html(target_data.get('full_name'))}</b> оказался чист, а ваши действия сочли давлением.\n"
+            f"💸 Банк выплатил компенсацию и штрафы: <b>{penalty}</b> сыр."
+        )
+
+@router.message(F.text.lower().startswith("лобби бан") | F.text.lower().startswith("лобби разбан"))
+async def cmd_lobby_blacklist_mgmt(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data:
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+        
+    action = "ban" if " бан" in message.text.lower() else "unban"
+    
+    target_id = None
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+    else:
+        args = message.text.split()
+        if len(args) < 3:
+            return await message.answer(f"Использование: <code>лобби {action} [ID/реплай]</code>")
+        try:
+            target_id = int(args[2])
+        except ValueError:
+            return await message.answer("Неверный ID пользователя.")
+            
+    blacklist = bank_data.get('lobby_blacklist', [])
+    
+    if action == "ban":
+        if target_id not in blacklist:
+            blacklist.append(target_id)
+            await create_or_update_bank(chat_id, user_id, {'lobby_blacklist': blacklist})
+            await message.answer(f"🚫 Пользователь <b>{target_id}</b> добавлен в черный список лоббирования. Он не будет получать бонус +20%.")
+        else:
+            await message.answer("Пользователь уже в списке.")
+    else:
+        if target_id in blacklist:
+            blacklist.remove(target_id)
+            await create_or_update_bank(chat_id, user_id, {'lobby_blacklist': blacklist})
+            await message.answer(f"✅ Пользователь <b>{target_id}</b> удален из черного списка лоббирования.")
+        else:
+            await message.answer("Пользователь не найден в черном списке.")
