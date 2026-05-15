@@ -895,19 +895,9 @@ async def cmd_execute(message: types.Message, bot: Bot):
 
     target_user = message.reply_to_message.from_user
     target_id = target_user.id
-    chat_id = message.chat.id
     target_name = escape_html(target_user.full_name)
     
-    from user_manager import update_user_field, invalidate_user_cache
-    # 1. Бан в боте
-    await update_user_field(chat_id, target_id, 'is_banned', True)
-    # 2. Обнуление баланса
-    await update_user_field(chat_id, target_id, 'balance', 0)
-    await update_user_field(chat_id, target_id, 'bank_deposit', 0)
-    invalidate_user_cache(chat_id, target_id)
-    
     # Ссылка на эпичную картинку (сгенерирована специально для вас)
-    # Используем путь к сгенерированному файлу
     from aiogram.types import FSInputFile
     import os
     
@@ -916,11 +906,8 @@ async def cmd_execute(message: types.Message, bot: Bot):
     caption = (
         f"⚖️ <b>ВЫСШАЯ МЕРА НАКАЗАНИЯ!</b>\n\n"
         f"Пользователь <b>{target_name}</b> (<code>{target_id}</code>) был признан виновным в предательстве и приговорен к <b>казни</b>!\n\n"
-        f"🚫 <b>Последствия:</b>\n"
-        f"• Вечный бан в системе Kazik\n"
-        f"• Полная конфискация имущества и денег\n\n"
         f"⚔️ <i>Приговор приведен в исполнение немедленно по воле Создателя.</i>\n"
-        f"💀 Прощай, {target_name}."
+        f"💀 Да смилуются боги над его душой!"
     )
 
     try:
@@ -928,17 +915,10 @@ async def cmd_execute(message: types.Message, bot: Bot):
             photo = FSInputFile(image_path)
             await message.answer_photo(photo=photo, caption=caption)
         else:
-            # Фолбэк на внешнюю ссылку если локальный файл пропал
             await message.answer_photo(
-                photo="https://i.imgur.com/8Qp4S3q.png", # Запасная ссылка на эпичную казнь
+                photo="https://i.imgur.com/8Qp4S3q.png",
                 caption=caption
             )
     except Exception as e:
         print(f"Ошибка отправки фото казни: {e}")
         await message.answer(caption)
-    
-    # Попытка кикнуть из чата
-    try:
-        await bot.ban_chat_member(chat_id, target_id)
-    except Exception:
-        pass
