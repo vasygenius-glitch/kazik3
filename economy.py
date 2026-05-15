@@ -452,6 +452,22 @@ async def cmd_work(message: types.Message):
     elif pet_id == 'dragon' and (debts or balance < 0):
          pet_msg += "\n🐉 Ваш дракон отпугнул поджидавших вас коллекторов!"
 
+    # --- ЛОББИРОВАНИЕ БАНКИРОВ ---
+    from db import get_db
+    banks_ref = get_db().collection('chats').document(str(chat_id)).collection('banks')
+    active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
+    
+    lobby_msg = ""
+    lobby_boost = 1.0
+    for b_doc in active_lobbies:
+        b_data = b_doc.to_dict()
+        if user_id not in b_data.get('lobby_blacklist', []):
+            lobby_boost = 1.2
+            lobby_msg = "\n📢 Благодаря лоббированию банкиров ваша зарплата выросла на 20%!"
+            break
+            
+    final_earnings = int(base_earnings * lobby_boost)
+
     final_earnings, season_msg = await apply_season_logic(chat_id, user_id, final_earnings)
     if final_earnings > 0:
         await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
@@ -475,7 +491,7 @@ async def cmd_work(message: types.Message):
             jobs = ["поработал с документами", "провел встречу с инвесторами", "свел дебет с кредитом", "продал акции банка"]
         job = rand.choice(jobs)
 
-    afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{final_earnings}</b> сыроежек!{pet_msg}{collector_msg}{bank_profit_msg}{season_msg}"
+    afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{final_earnings}</b> сыроежек!{pet_msg}{lobby_msg}{collector_msg}{bank_profit_msg}{season_msg}"
     afk_text = await get_glitch_text(afk_text)
     
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -516,7 +532,7 @@ async def cmd_work(message: types.Message):
     _cleanup_expired_games()
     active_work_games[game_id] = {
         'user_id': user_id,
-        'bonus': bonus,
+        'bonus': int(bonus * lobby_boost),
         'expires': time.time() + 60
     }
     
@@ -605,7 +621,22 @@ async def cmd_crime(message: types.Message):
 
     if rand.random() < success_chance:
         base_earnings = rand.randint(200, 500)
-        final_earnings = base_earnings
+        
+        # --- ЛОББИРОВАНИЕ БАНКИРОВ ---
+        from db import get_db
+        banks_ref = get_db().collection('chats').document(str(chat_id)).collection('banks')
+        active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
+        
+        lobby_msg = ""
+        lobby_boost = 1.0
+        for b_doc in active_lobbies:
+            b_data = b_doc.to_dict()
+            if user_id not in b_data.get('lobby_blacklist', []):
+                lobby_boost = 1.2
+                lobby_msg = "\n📢 Лоббирование банкиров увеличило ваш куш на 20%!"
+                break
+
+        final_earnings = int(base_earnings * lobby_boost)
 
         # --- ЛОГИКА КОЛЛЕКТОРОВ ---
         collector_msg = ""
@@ -659,7 +690,7 @@ async def cmd_crime(message: types.Message):
         
         from seasons import get_glitch_text
         season_msg = await get_glitch_text(season_msg)
-        afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{base_earnings}</b> сыр. на столе.{pet_msg}{collector_msg}{season_msg}"
+        afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{final_earnings}</b> сыр. на столе.{pet_msg}{lobby_msg}{collector_msg}{season_msg}"
         afk_text = await get_glitch_text(afk_text)
         
         from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -686,7 +717,7 @@ async def cmd_crime(message: types.Message):
         _cleanup_expired_games()
         active_crime_games[game_id] = {
             'user_id': user_id,
-            'bonus': bonus,
+            'bonus': int(bonus * lobby_boost),
             'expires': time.time() + 60
         }
         
