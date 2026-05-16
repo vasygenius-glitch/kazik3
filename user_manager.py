@@ -1,8 +1,23 @@
+"""
+user_manager.py — управление данными пользователей с кэшированием.
+
+Архитектура:
+- LRU-кэш в памяти (OrderedDict) с TTL.
+- Грязные записи (_dirty_cache) периодически сбрасываются в Firestore пачками.
+- Per-user asyncio.Lock защищает от гонок при модификации одной записи.
+- Транзакционные операции НЕ трогают кэш: инвалидация должна происходить
+  ТОЛЬКО после успешного коммита транзакции (на стороне вызывающего кода),
+  иначе можно поймать гонку: пока транзакция ещё не закомитилась в Firestore,
+  параллельный запрос вычитает старые данные и положит их обратно в кэш.
+"""
+from __future__ import annotations
+
 import os
-import time
 import copy
+import time
 import asyncio
 import logging
+from typing import Any, Dict, Optional, Set, Tuple
 from collections import OrderedDict
 
 from db import get_db
@@ -11,101 +26,145 @@ from admin_logs import log_transaction, check_balance_alert
 
 logger = logging.getLogger(__name__)
 
+# ============================================================
+# КОНСТАНТЫ
+# ============================================================
+CACHE_TTL: float = 60.0
+MAX_CACHE_SIZE: int = 1000
+FLUSH_BATCH_SIZE: int = 100
+FLUSH_INTERVAL: float = 15.0
+LOCK_CLEANUP_THRESHOLD: int = 2000     # чистим словарь локов, когда вырос
+
+# Денежные пороги
+LARGE_TX_THRESHOLD: int = 500_000      # логировать транзакции от этой суммы
+DEFAULT_START_BALANCE: int = 500
+BASE_BONUS: int = 1000
+
+# Кулдауны (сек)
+BONUS_COOLDOWN: int = 14400            # 4 часа
+DAILY_COOLDOWN: int = 79200            # 22 часа
+
+# Бизнес-параметры
+BIZ_COUNT_CAP: int = 10                # максимум одинаковых бизнесов, дающих доход
+BIZ_LEVEL_BONUS: float = 0.5           # +50% на каждый уровень
+
+UserKey = Tuple[Any, Any]              # (chat_id, user_id)
+
+# ============================================================
+# СТРУКТУРЫ КЭША
+# ============================================================
+_user_cache: "OrderedDict[UserKey, dict]" = OrderedDict()
+_username_to_id_cache: Dict[Tuple[Any, str], Any] = {}
+_dirty_cache: Set[UserKey] = set()
+_user_locks: Dict[UserKey, asyncio.Lock] = {}
+_flush_lock = asyncio.Lock()
+
 
 def get_user_ref(chat_id, user_id):
     db = get_db()
-    return db.collection('chats').document(str(chat_id)).collection('users').document(str(user_id))
+    return (
+        db.collection('chats')
+        .document(str(chat_id))
+        .collection('users')
+        .document(str(user_id))
+    )
 
 
-# ---------------- КЭШ ----------------
-# OrderedDict для корректного LRU
-_user_cache: "OrderedDict[tuple, dict]" = OrderedDict()
-_username_to_id_cache = {}        # (chat_id, username_lower) -> user_id
-_dirty_cache = set()
-_user_locks = {}                  # (chat_id, user_id) -> asyncio.Lock
-_flush_lock = asyncio.Lock()      # Защита от одновременных flush
-
-CACHE_TTL = 60.0
-MAX_CACHE_SIZE = 1000
-FLUSH_BATCH_SIZE = 100            # Конкурентные записи в gather
+# ============================================================
+# ЛОКИ
+# ============================================================
+def get_user_lock(chat_id, user_id) -> asyncio.Lock:
+    """
+    Возвращает per-user lock. В однопоточном asyncio чтение-и-вставка
+    в dict атомарны между await, поэтому отдельной защиты не нужно.
+    """
+    return _user_locks.setdefault((chat_id, user_id), asyncio.Lock())
 
 
-def get_user_lock(chat_id, user_id):
-    """В asyncio (однопоточно) check-and-set атомарен между await,
-    поэтому отдельный creation-lock не нужен."""
-    key = (chat_id, user_id)
-    lock = _user_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _user_locks[key] = lock
-    return lock
-
-
-def get_from_cache(chat_id, user_id):
-    key = (chat_id, user_id)
-    entry = _user_cache.get(key)
-    if entry is None:
-        return None
-    if time.time() - entry["timestamp"] >= CACHE_TTL:
-        return None
-    # LRU: помечаем как недавно использованный
-    _user_cache.move_to_end(key)
-    # deepcopy чтобы изменения caller-а не порушили кэш
-    return copy.deepcopy(entry["data"])
-
-
-def _remove_username_from_index(chat_id, data):
+# ============================================================
+# КЭШ: чтение/запись/инвалидация
+# ============================================================
+def _remove_username_from_index(chat_id, data: Optional[dict]) -> None:
     if not isinstance(data, dict):
         return
     uname = data.get("username")
     if uname:
-        _username_to_id_cache.pop((chat_id, uname.lower()), None)
+        _username_to_id_cache.pop((chat_id, str(uname).lower()), None)
 
 
-def set_in_cache(chat_id, user_id, data):
+def _drop_cache_entry(key: UserKey) -> None:
+    """Удаляет ключ из кэша + чистит username-индекс + dirty-флаг.
+
+    ВНИМАНИЕ: НИКОГДА не вызывайте эту функцию внутри открытой транзакции
+    Firestore! Транзакция ещё не закомитилась, а параллельный запрос вычитает
+    старые данные из БД и положит их обратно в кэш — получим рассинхрон.
+    Инвалидация должна происходить ПОСЛЕ успешного коммита транзакции
+    (см. invalidate_user_cache, вызываемую на стороне вызывающего кода).
+    """
+    entry = _user_cache.pop(key, None)
+    if entry:
+        _remove_username_from_index(key[0], entry["data"])
+    _dirty_cache.discard(key)
+
+
+def get_from_cache(chat_id, user_id) -> Optional[dict]:
+    key = (chat_id, user_id)
+    entry = _user_cache.get(key)
+    if entry is None:
+        return None
+
+    if time.time() - entry["timestamp"] >= CACHE_TTL:
+        # Если запись грязная — НЕ удаляем (теряем несохранённые изменения),
+        # просто считаем устаревшей для чтения.
+        if key not in _dirty_cache:
+            _drop_cache_entry(key)
+        return None
+
+    _user_cache.move_to_end(key)  # LRU
+    return copy.deepcopy(entry["data"])
+
+
+def set_in_cache(chat_id, user_id, data: dict) -> None:
     key = (chat_id, user_id)
 
-    # Удаляем старый юзернейм из индекса, если был
-    old_entry = _user_cache.get(key)
-    if old_entry:
-        _remove_username_from_index(chat_id, old_entry["data"])
+    # Сняли старый username из индекса
+    old = _user_cache.get(key)
+    if old:
+        _remove_username_from_index(chat_id, old["data"])
 
-    # Eviction (только если ключа ещё нет и кэш переполнен)
+    # Eviction: только если ключа ещё нет и кэш переполнен
     if key not in _user_cache and len(_user_cache) >= MAX_CACHE_SIZE:
-        evict_key = None
-        for k in _user_cache:  # порядок = LRU
+        for k in list(_user_cache.keys()):  # порядок = LRU
             if k not in _dirty_cache:
-                evict_key = k
+                _drop_cache_entry(k)
                 break
-        if evict_key is not None:
-            evicted = _user_cache.pop(evict_key)
-            _remove_username_from_index(evict_key[0], evicted["data"])
+        # Если все грязные — позволим временно вырасти, переполнение лучше потери данных.
 
-    # Записываем глубокую копию, чтобы дальнейшие мутации caller-а не задели кэш
     _user_cache[key] = {"data": copy.deepcopy(data), "timestamp": time.time()}
     _user_cache.move_to_end(key)
 
     new_uname = data.get("username")
     if new_uname:
-        _username_to_id_cache[(chat_id, new_uname.lower())] = user_id
+        _username_to_id_cache[(chat_id, str(new_uname).lower())] = user_id
 
 
-def invalidate_user_cache(chat_id, user_id):
-    """Удаляет пользователя из кэша и FSM."""
-    key = (chat_id, user_id)
-    entry = _user_cache.pop(key, None)
-    if entry:
-        _remove_username_from_index(chat_id, entry["data"])
-    _dirty_cache.discard(key)
+def invalidate_user_cache(chat_id, user_id) -> None:
+    """Полная инвалидация: кэш + dirty + FSM-состояния в Redis.
+
+    Вызывайте ЭТУ функцию ПОСЛЕ успешного коммита транзакции Firestore,
+    чтобы гарантировать, что следующее чтение пойдёт в БД и подтянет
+    актуальные данные.
+    """
+    _drop_cache_entry((chat_id, user_id))
 
     redis_url = os.environ.get("REDIS_URL")
     if not redis_url:
         return
 
-    def _cleanup():
+    def _cleanup() -> None:
         try:
             import redis as _redis
-            r = _redis.from_url(redis_url)
+            r = _redis.from_url(redis_url, socket_timeout=5)
             try:
                 r.delete(
                     f"fsm:{chat_id}:{user_id}:state",
@@ -117,44 +176,53 @@ def invalidate_user_cache(chat_id, user_id):
                 except Exception:
                     pass
         except Exception as e:
-            logger.error(f"Redis cleanup error: {e}")
+            logger.error("Redis cleanup error for %s:%s — %s", chat_id, user_id, e)
 
-    # Не блокируем event loop
     try:
         fire_and_forget(asyncio.to_thread(_cleanup))
     except Exception as e:
-        logger.error(f"Failed to schedule redis cleanup: {e}")
+        logger.error("Failed to schedule redis cleanup: %s", e)
 
 
-def mark_dirty(chat_id, user_id):
+def mark_dirty(chat_id, user_id) -> None:
     _dirty_cache.add((chat_id, user_id))
 
 
-async def flush_user_data():
-    """Синхронизирует грязный кэш с БД пачками."""
+# ============================================================
+# FLUSH В БД
+# ============================================================
+async def flush_user_data() -> None:
+    """Сбрасывает _dirty_cache в Firestore пачками. Безопасен к конкурентному вызову."""
     if not _dirty_cache:
         return
 
-    # Защита от параллельных flush
+    # Если flush уже идёт — другой вызов сбросит наши изменения вместе со своими.
     if _flush_lock.locked():
         return
+
     async with _flush_lock:
         to_flush = list(_dirty_cache)
         for i in range(0, len(to_flush), FLUSH_BATCH_SIZE):
-            batch_keys = to_flush[i:i + FLUSH_BATCH_SIZE]
-            tasks = []
-            task_keys = []
+            batch = to_flush[i:i + FLUSH_BATCH_SIZE]
+            tasks, task_keys = [], []
 
-            for key in batch_keys:
-                # Снимаем "грязный" флаг ДО записи; если запись упадёт — вернём.
-                # Если кэш изменится во время записи, mark_dirty снова поставит флаг.
+            for key in batch:
+                # Снимаем dirty-флаг ДО записи. Если кто-то модифицирует данные
+                # во время gather — mark_dirty снова поставит флаг.
                 _dirty_cache.discard(key)
-                cached_entry = _user_cache.get(key)
-                if not cached_entry:
+                entry = _user_cache.get(key)
+                if not entry:
                     continue
-                ref = get_user_ref(key[0], key[1])
-                # Передаём ссылку на dict — на момент await будут актуальные данные
-                tasks.append(ref.set(cached_entry["data"], merge=True))
+                try:
+                    ref = get_user_ref(key[0], key[1])
+                except Exception as e:
+                    logger.error("get_user_ref failed for %s: %s", key, e)
+                    _dirty_cache.add(key)
+                    continue
+
+                # Передаём актуальную ссылку из кэша (set_in_cache всегда копирует —
+                # значит наш снимок никем не мутируется).
+                tasks.append(ref.set(entry["data"], merge=True))
                 task_keys.append(key)
 
             if not tasks:
@@ -163,66 +231,103 @@ async def flush_user_data():
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for key, result in zip(task_keys, results):
                 if isinstance(result, Exception):
-                    logger.error(f"⚠️ Ошибка записи пользователя {key}: {result}")
-                    _dirty_cache.add(key)  # повторим позже
+                    logger.error("⚠️ Ошибка записи пользователя %s: %s", key, result)
+                    _dirty_cache.add(key)  # повторим в следующем тике
 
 
-async def flush_user_data_task():
-    """Фоновая задача: синхронизация раз в 15с + чистка локов."""
+def _cleanup_unused_locks() -> None:
+    """Удаляет локи пользователей, которых нет в кэше и которые никем не удерживаются."""
+    if len(_user_locks) < LOCK_CLEANUP_THRESHOLD:
+        return
+    current = set(_user_cache.keys())
+    removed = 0
+    for key in list(_user_locks.keys()):
+        if key in current:
+            continue
+        lock = _user_locks.get(key)
+        if lock is None or lock.locked():
+            continue
+        # Безопасная проверка ожидающих корутин (если есть атрибут _waiters).
+        waiters = getattr(lock, "_waiters", None)
+        if waiters:
+            continue
+        _user_locks.pop(key, None)
+        removed += 1
+    if removed:
+        logger.debug("Cleaned %s unused user locks (now=%s)", removed, len(_user_locks))
+
+
+async def flush_user_data_task() -> None:
+    """Фоновая периодическая синхронизация + чистка локов."""
     while True:
         try:
-            await asyncio.sleep(15)
+            await asyncio.sleep(FLUSH_INTERVAL)
             await flush_user_data()
+            _cleanup_unused_locks()
         except asyncio.CancelledError:
+            # Финальный flush при остановке
+            try:
+                await flush_user_data()
+            except Exception as e:
+                logger.error("Final flush failed: %s", e)
             raise
         except Exception as e:
-            logger.error(f"⚠️ Ошибка при синхронизации кэша: {e}")
+            logger.exception("⚠️ Ошибка фоновой задачи синхронизации: %s", e)
 
-        # Очистка локов — только тех, что точно никем не используются
+
+# ============================================================
+# CRUD
+# ============================================================
+async def get_user_data(chat_id, user_id, full_name: Optional[str] = None) -> dict:
+    """
+    Возвращает данные пользователя (создаёт дефолт, если нет).
+    Защищено от гонок — конкурентные вызовы для одного юзера сериализуются.
+    """
+    # 1. Быстрая проверка кэша без лока
+    cached = get_from_cache(chat_id, user_id)
+    if cached is not None:
+        if full_name and cached.get('full_name') != full_name:
+            cached['full_name'] = full_name
+            set_in_cache(chat_id, user_id, cached)
+            mark_dirty(chat_id, user_id)
+        return cached
+
+    # 2. Под локом — чтение из БД / создание дефолта
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        # double-check после захвата лока
+        cached = get_from_cache(chat_id, user_id)
+        if cached is not None:
+            if full_name and cached.get('full_name') != full_name:
+                cached['full_name'] = full_name
+                set_in_cache(chat_id, user_id, cached)
+                mark_dirty(chat_id, user_id)
+            return cached
+
+        ref = get_user_ref(chat_id, user_id)
         try:
-            current_keys = set(_user_cache.keys())
-            for key in list(_user_locks.keys()):
-                if key in current_keys:
-                    continue
-                lock = _user_locks.get(key)
-                if lock is None:
-                    continue
-                if lock.locked():
-                    continue
-                # Проверка приватного _waiters — на случай ожидающих корутин
-                waiters = getattr(lock, "_waiters", None)
-                if waiters:
-                    continue
-                _user_locks.pop(key, None)
+            doc = await ref.get()
         except Exception as e:
-            logger.error(f"Lock cleanup error: {e}")
+            logger.error("Firestore read failed for %s:%s — %s", chat_id, user_id, e)
+            raise
+
+        if doc.exists:
+            data = doc.to_dict() or {}
+            if full_name and data.get('full_name') != full_name:
+                data['full_name'] = full_name
+                fire_and_forget(ref.update({'full_name': full_name}))
+            set_in_cache(chat_id, user_id, data)
+            return copy.deepcopy(data)
+
+        default_data = _default_user_data(full_name or "Игрок")
+        set_in_cache(chat_id, user_id, default_data)
+        mark_dirty(chat_id, user_id)
+        return copy.deepcopy(default_data)
 
 
-async def get_user_data(chat_id, user_id, full_name=None):
-    cached_data = get_from_cache(chat_id, user_id)
-    if cached_data is not None:
-        if full_name and cached_data.get('full_name') != full_name:
-            cached_data['full_name'] = full_name
-            set_in_cache(chat_id, user_id, cached_data)
-            ref = get_user_ref(chat_id, user_id)
-            fire_and_forget(ref.update({'full_name': full_name}))
-        return cached_data
-
-    ref = get_user_ref(chat_id, user_id)
-    doc = await ref.get()
-
-    if doc.exists:
-        data = doc.to_dict() or {}
-        if full_name and data.get('full_name') != full_name:
-            data['full_name'] = full_name
-            fire_and_forget(ref.update({'full_name': full_name}))
-        set_in_cache(chat_id, user_id, data)
-        # Возвращаем независимую копию
-        return copy.deepcopy(data)
-
-    default_name = full_name if full_name else "Игрок"
-    default_data = {
-        'balance': 500,
+def _default_user_data(full_name: str) -> dict:
+    return {
+        'balance': DEFAULT_START_BALANCE,
         'bank_deposit': 0,
         'bank_name': None,
         'last_bonus_time': 0,
@@ -234,294 +339,310 @@ async def get_user_data(chat_id, user_id, full_name=None):
         'warns': [],
         'is_banned': False,
         'hide_in_top': False,
-        'full_name': default_name,
+        'full_name': full_name,
         'is_vip': False,
         'is_banker': False,
         'debts': {},
         'escort_count': 0,
     }
-    set_in_cache(chat_id, user_id, default_data)
-    mark_dirty(chat_id, user_id)
-    return copy.deepcopy(default_data)
 
 
 async def safe_get_snapshot(transaction, ref):
     """
-    Безопасно получает snapshot документа внутри транзакции.
-    Обрабатывает баги версий firestore_async (async_generator error).
+    Получает snapshot документа внутри транзакции, обходя различия
+    версий google-cloud-firestore (sync/async, генератор и т.д.).
     """
     if not transaction:
         return await ref.get()
 
+    # Вариант 1: transaction.get(ref) — стандартный путь.
     try:
         res = transaction.get(ref)
         if hasattr(res, '__aiter__'):
             async for s in res:
                 return s
-        return await res
-    except (TypeError, AttributeError):
-        try:
-            res = ref.get(transaction=transaction)
-            if hasattr(res, '__aiter__'):
-                async for s in res:
-                    return s
+        if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
             return await res
-        except (TypeError, AttributeError):
-            from google.cloud.firestore_v1.base_client import _parse_batch_get
-            request, kwargs = ref._prep_batch_get(None, transaction, None, None, None)
-            gen = ref._client._firestore_api.batch_get_documents(
-                request=request,
-                metadata=ref._client._rpc_metadata,
-                **kwargs,
-            )
-            async for resp in gen:
-                return _parse_batch_get(resp, {ref._document_path: ref}, ref._client)
+        return res
+    except (TypeError, AttributeError):
+        pass
+
+    # Вариант 2: ref.get(transaction=transaction)
+    try:
+        res = ref.get(transaction=transaction)
+        if hasattr(res, '__aiter__'):
+            async for s in res:
+                return s
+        if asyncio.iscoroutine(res) or hasattr(res, '__await__'):
+            return await res
+        return res
+    except (TypeError, AttributeError):
+        pass
+
+    # Вариант 3: низкоуровневый batch_get (fallback для багов библиотеки).
+    from google.cloud.firestore_v1.base_client import _parse_batch_get
+    request, kwargs = ref._prep_batch_get(None, transaction, None, None, None)
+    gen = ref._client._firestore_api.batch_get_documents(
+        request=request,
+        metadata=ref._client._rpc_metadata,
+        **kwargs,
+    )
+    async for resp in gen:
+        return _parse_batch_get(resp, {ref._document_path: ref}, ref._client)
 
     raise RuntimeError(f"Не удалось получить snapshot документа {ref.path}")
 
 
+# ============================================================
+# БАЛАНС
+# ============================================================
 async def update_user_balance(
-    chat_id, user_id, amount,
-    min_balance=None,
-    is_debt_repayment=False,
-    action="Balance Update",
+    chat_id,
+    user_id,
+    amount: int,
+    min_balance: Optional[int] = None,
+    is_debt_repayment: bool = False,    # сохранено для обратной совместимости
+    action: str = "Balance Update",
     transaction=None,
-):
+) -> Optional[int]:
     """
-    Универсальная функция обновления баланса.
-    - При min_balance нарушении: возвращает None (единообразно для обоих путей).
-    - В transaction-пути НЕ обновляет кэш оптимистично (инвалидирует),
-      чтобы избежать рассинхрона при откате транзакции.
-    """
-    new_balance = None
-    full_name = "Unknown"
+    Универсальное обновление баланса.
+    Возвращает новый баланс или None, если min_balance нарушен / юзера нет.
 
+    ВАЖНО про транзакционный путь:
+      - Кэш НЕ трогаем здесь. Транзакция ещё не закомичена, и любая
+        инвалидация в этот момент может привести к тому, что параллельный
+        запрос подтянет старые данные из БД и положит их в кэш.
+      - Инвалидацию (invalidate_user_cache) ОБЯЗАТЕЛЬНО выполняйте на
+        стороне вызывающего кода ПОСЛЕ успешного коммита транзакции.
+      - Логирование/алерты в транзакционном пути также не выполняются
+        (вызывайте их после commit).
+    """
+    # ----- Транзакционный путь -----
     if transaction:
         ref = get_user_ref(chat_id, user_id)
         snapshot = await safe_get_snapshot(transaction, ref)
         if not snapshot.exists:
             return None
+
         data = snapshot.to_dict() or {}
-        full_name = data.get('full_name', 'Unknown')
+        current = int(data.get('balance', 0) or 0)
+        if min_balance is not None and current + amount < min_balance:
+            return None
 
-        current_balance = data.get('balance', 0)
-        if min_balance is not None and current_balance + amount < min_balance:
-            return None  # унифицировано с не-транзакционным путём
-
-        new_balance = current_balance + amount
+        new_balance = current + amount
         transaction.update(ref, {'balance': new_balance})
-
-        # Инвалидируем кэш: следующее чтение возьмёт свежие данные из БД (после commit)
-        _user_cache.pop((chat_id, user_id), None)
-        _dirty_cache.discard((chat_id, user_id))
-
-        # В транзакционном пути НЕ логируем — транзакция может откатиться/повторяться.
-        # Логирование должно выполнять caller после успешного commit.
+        # NB: НЕ инвалидируем кэш внутри транзакции — см. docstring.
         return new_balance
 
-    # Не-транзакционный путь
+    # ----- Обычный путь -----
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        current_balance = data.get('balance', 0)
-
-        if min_balance is not None and current_balance + amount < min_balance:
+        current = int(data.get('balance', 0) or 0)
+        if min_balance is not None and current + amount < min_balance:
             return None
 
-        new_balance = current_balance + amount
+        new_balance = current + amount
         data['balance'] = new_balance
         full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
-    if abs(amount) >= 500_000:
+    if abs(amount) >= LARGE_TX_THRESHOLD:
         fire_and_forget(log_transaction(user_id, full_name, None, action, "Change", amount))
     fire_and_forget(check_balance_alert(chat_id, user_id, full_name, new_balance))
-
     return new_balance
 
 
-async def update_user_balance_tr(transaction, chat_id, user_id, amount, min_balance=None, action="Transaction Update"):
-    """
-    DEPRECATED: используйте update_user_balance(transaction=...).
-    Оставлено для совместимости.
-    """
+async def update_user_balance_tr(transaction, chat_id, user_id, amount,
+                                 min_balance=None, action="Transaction Update"):
+    """DEPRECATED. Используйте update_user_balance(transaction=...)."""
     return await update_user_balance(
         chat_id, user_id, amount,
-        min_balance=min_balance,
-        transaction=transaction,
-        action=action,
+        min_balance=min_balance, transaction=transaction, action=action,
     )
 
 
-async def update_user_field(chat_id, user_id, field, value):
+async def update_user_field(chat_id, user_id, field: str, value: Any) -> None:
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
 
         if field == 'balance':
-            old_balance = data.get('balance', 0)
-            amount_changed = value - old_balance
-            if abs(amount_changed) >= 500_000:
+            old_balance = int(data.get('balance', 0) or 0)
+            diff = int(value) - old_balance
+            full_name = data.get('full_name', 'Unknown')
+            if abs(diff) >= LARGE_TX_THRESHOLD:
                 fire_and_forget(log_transaction(
-                    user_id, data.get('full_name', 'Unknown'),
-                    None, "Balance Set", "Set", amount_changed,
+                    user_id, full_name, None, "Balance Set", "Set", diff,
                 ))
-            fire_and_forget(check_balance_alert(
-                chat_id, user_id, data.get('full_name', 'Player'), value
-            ))
+            fire_and_forget(check_balance_alert(chat_id, user_id, full_name, value))
 
         data[field] = value
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
 
+# ============================================================
+# БОНУС
+# ============================================================
+async def _fetch_active_lobby_type(chat_id, user_id, current_time: float) -> str:
+    """Возвращает тип активного лобби банкиров (golden / tax / none)."""
+    db = get_db()
+    banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
+    try:
+        active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
+    except Exception as e:
+        logger.error("Lobby query error: %s", e)
+        return 'none'
+
+    for b_doc in active_lobbies:
+        b_data = b_doc.to_dict() or {}
+        if user_id in (b_data.get('lobby_blacklist') or []):
+            continue
+        ltype = b_data.get('lobby_type', 'golden')
+        if ltype in ('golden', 'tax'):
+            return ltype
+    return 'none'
+
+
 async def check_and_give_bonus(chat_id, user_id, full_name=None):
+    """
+    Начисляет бонус (с учётом бизнесов, машин, банка, болезней, лобби, налогов).
+    Возвращает (True, info) при успехе, (False, {}) при кулдауне/бане.
+    """
+    # Быстрая проверка без лока: кулдаун + бан
+    pre = await get_user_data(chat_id, user_id, full_name)
+    if pre.get('is_banned', False):
+        return False, {}
+    current_time = time.time()
+    if current_time - pre.get('last_bonus_time', 0) < BONUS_COOLDOWN:
+        return False, {}
+
+    # Тяжёлые операции — ДО лока, чтобы не блокировать запись
+    from shop import ITEMS
+    from economy_utils import get_global_tax, calculate_progressive_tax
+    from diseases import get_active_diseases
+
+    base_tax = await get_global_tax()
+    active_diseases = await get_active_diseases(chat_id, user_id)
+    lobby_type = await _fetch_active_lobby_type(chat_id, user_id, current_time)
+
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id, full_name)
         if data.get('is_banned', False):
             return False, {}
 
-        current_time = time.time()
-        last_bonus = data.get('last_bonus_time', 0)
-
-        if current_time - last_bonus < 14400:
+        # Double-check кулдауна после захвата лока
+        if current_time - data.get('last_bonus_time', 0) < BONUS_COOLDOWN:
             return False, {}
 
-        bank_deposit = data.get('bank_deposit', 0)
+        bank_deposit = int(data.get('bank_deposit', 0) or 0)
         bank_income = 0
-        is_daily = False
+        is_daily = current_time - data.get('last_daily_time', 0) >= DAILY_COOLDOWN
 
-        base_bonus = 1000  # фиксированный бонус для всех
+        # Проценты по старым системным вкладам (когда юзер не в кастомном банке)
+        if is_daily and bank_deposit > 0 and not data.get('bank_name'):
+            if bank_deposit <= 100_000_000:
+                bank_income = int(bank_deposit * 0.01)
+            elif bank_deposit <= 1_000_000_000:
+                bank_income = int(bank_deposit * 0.005)
+            else:
+                bank_income = int(bank_deposit * 0.002)
 
-        # Ежедневные проценты по старым системным вкладам (без банка)
-        if current_time - data.get('last_daily_time', 0) >= 79200:
-            is_daily = True
-            if bank_deposit > 0 and not data.get('bank_name'):
-                if bank_deposit <= 100_000_000:
-                    bank_income = int(bank_deposit * 0.01)
-                elif bank_deposit <= 1_000_000_000:
-                    bank_income = int(bank_deposit * 0.005)
-                else:
-                    bank_income = int(bank_deposit * 0.002)
+        base_bonus = BASE_BONUS
 
-        from shop import ITEMS
-        from economy_utils import get_global_tax, calculate_progressive_tax
-        from diseases import get_active_diseases
-
-        base_tax = await get_global_tax()
-        neg_lvl = data.get('skills', {}).get('negotiation', 0)
-        pet_data = data.get('pet', {})
+        neg_lvl = (data.get('skills') or {}).get('negotiation', 0)
+        pet_data = data.get('pet') or {}
         pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
         tax_percent = calculate_progressive_tax(
-            data.get('balance', 0), base_tax, neg_lvl, pet_id
+            data.get('balance', 0) or 0, base_tax, neg_lvl, pet_id
         )
 
-        active_diseases = await get_active_diseases(chat_id, user_id)
-
+        # Доход с бизнесов / машин
         biz_income = 0
         car_income = 0
-        inventory = data.get('inventory', {}) or {}
-        biz_levels = data.get('biz_levels', {}) or {}
+        inventory = data.get('inventory') or {}
+        biz_levels = data.get('biz_levels') or {}
 
         for item_id, count in inventory.items():
             item = ITEMS.get(item_id)
             if not item:
                 continue
-            action_type = item.get('action')
-            if action_type == 'business':
+            atype = item.get('action')
+            if atype == 'business':
                 level = biz_levels.get(item_id, 1)
-                level_multiplier = 1.0 + 0.5 * (level - 1)
-                inc = int(item.get('income', 0) * level_multiplier) * min(count, 10)
-                biz_income += inc
-            elif action_type == 'car':
-                car_income += item.get('income', 0) * count
+                mult = 1.0 + BIZ_LEVEL_BONUS * (level - 1)
+                biz_income += int(item.get('income', 0) * mult) * min(count, BIZ_COUNT_CAP)
+            elif atype == 'car':
+                car_income += int(item.get('income', 0)) * count
 
+        # Банкиры платят 10% от пассивного дохода
         if data.get('is_banker', False):
             biz_income = int(biz_income * 0.1)
             car_income = int(car_income * 0.1)
 
+        # Болезни
         if 'candidiasis' in active_diseases:
-            base_bonus = base_bonus // 2
+            base_bonus //= 2
+        # (зарезервировано) hpv может в будущем влиять на питомца
 
-        pet = data.get('pet')
-        if 'hpv' in active_diseases:
-            pet = None  # noqa: F841 (на будущее)
-
-        # --- ЛОББИРОВАНИЕ БАНКИРОВ ---
-        db = get_db()
-        banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
-        try:
-            active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
-        except Exception as e:
-            logger.error(f"Lobby query error: {e}")
-            active_lobbies = []
-
-        lobby_type = 'none'
-        for b_doc in active_lobbies:
-            b_data = b_doc.to_dict() or {}
-            blacklist = b_data.get('lobby_blacklist', []) or []
-            if user_id not in blacklist:
-                lobby_type = b_data.get('lobby_type', 'golden')
-                if lobby_type in ('golden', 'tax'):
-                    break
-
+        # Эффекты лобби
         if lobby_type == 'golden':
-            lobby_boost = 1.2
-            base_bonus = int(base_bonus * lobby_boost)
-            biz_income = int(biz_income * lobby_boost)
-            car_income = int(car_income * lobby_boost)
+            base_bonus = int(base_bonus * 1.2)
+            biz_income = int(biz_income * 1.2)
+            car_income = int(car_income * 1.2)
         elif lobby_type == 'tax':
             tax_percent = max(0, tax_percent // 2)
 
         extra_income = biz_income + car_income + bank_income
         tax_amt = int(extra_income * (tax_percent / 100.0))
 
-        # --- ПЕРЕНАПРАВЛЕНИЕ НАЛОГОВ В БАНК ---
-        if tax_amt > 0:
-            bank_id = data.get('bank_name')
-            if bank_id:
-                try:
-                    from profile_bank import get_bank_info, create_or_update_bank
-                    b_info = await get_bank_info(chat_id, bank_id)
-                    if b_info:
-                        await create_or_update_bank(
-                            chat_id, bank_id,
-                            {'capital': b_info.get('capital', 0) + tax_amt},
-                        )
-                except Exception as e:
-                    logger.error(f"Tax redirect to bank error: {e}")
+        # Перенаправление налогов в кастомный банк юзера
+        bank_id = data.get('bank_name')
+        if tax_amt > 0 and bank_id:
+            try:
+                from profile_bank import get_bank_info, create_or_update_bank
+                b_info = await get_bank_info(chat_id, bank_id)
+                if b_info:
+                    await create_or_update_bank(
+                        chat_id, bank_id,
+                        {'capital': int(b_info.get('capital', 0) or 0) + tax_amt},
+                    )
+            except Exception as e:
+                logger.error("Tax redirect to bank error: %s", e)
 
-        total_to_hand = base_bonus + extra_income - tax_amt
-        if total_to_hand <= 0:
+        total = base_bonus + extra_income - tax_amt
+        if total <= 0:
             return False, {}
 
-        upd = {
-            'balance': data.get('balance', 0) + total_to_hand,
-            'last_bonus_time': current_time,
-        }
+        data['balance'] = int(data.get('balance', 0) or 0) + total
+        data['last_bonus_time'] = current_time
         if is_daily:
-            upd['last_daily_time'] = current_time
+            data['last_daily_time'] = current_time
             if bank_deposit > 0 and not data.get('bank_name'):
-                upd['bank_deposit'] = bank_deposit + bank_income
+                data['bank_deposit'] = bank_deposit + bank_income
 
-        data.update(upd)
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
-        return True, {
-            'base': base_bonus,
-            'business': biz_income,
-            'car': car_income,
-            'tax_percent': tax_percent,
-            'tax_amount': tax_amt,
-            'total': total_to_hand,
-            'is_banker_bonus': False,
-        }
+    return True, {
+        'base': base_bonus,
+        'business': biz_income,
+        'car': car_income,
+        'tax_percent': tax_percent,
+        'tax_amount': tax_amt,
+        'total': total,
+        'is_banker_bonus': False,
+    }
 
 
-async def add_item_to_inventory(chat_id, user_id, item_name):
+# ============================================================
+# ИНВЕНТАРЬ
+# ============================================================
+async def add_item_to_inventory(chat_id, user_id, item_name: str) -> bool:
     from shop import ITEMS
     if item_name not in ITEMS:
         return False
@@ -529,108 +650,122 @@ async def add_item_to_inventory(chat_id, user_id, item_name):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        inv = dict(data.get('inventory', {}) or {})
+        inv = dict(data.get('inventory') or {})
         inv[item_name] = inv.get(item_name, 0) + 1
-
         data['inventory'] = inv
+        full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
-        item_info = ITEMS.get(item_name)
-        if item_info and item_info.get('price', 0) >= 500_000:
-            fire_and_forget(log_transaction(
-                user_id, data.get('full_name', 'Unknown'),
-                None, f"Added {item_name}", "Inventory +", item_info['price'],
-            ))
-
+    item_info = ITEMS.get(item_name) or {}
+    if int(item_info.get('price', 0) or 0) >= LARGE_TX_THRESHOLD:
+        fire_and_forget(log_transaction(
+            user_id, full_name, None,
+            f"Added {item_name}", "Inventory +", item_info['price'],
+        ))
     return True
 
 
-async def remove_item_from_inventory(chat_id, user_id, item_name):
+async def remove_item_from_inventory(chat_id, user_id, item_name: str) -> bool:
     from shop import ITEMS
 
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
-        inv = dict(data.get('inventory', {}) or {})
-        biz_levels = dict(data.get('biz_levels', {}) or {})
-
+        inv = dict(data.get('inventory') or {})
+        biz_levels = dict(data.get('biz_levels') or {})
         if inv.get(item_name, 0) <= 0:
             return False
 
         inv[item_name] -= 1
         if inv[item_name] <= 0:
-            del inv[item_name]
+            inv.pop(item_name, None)
             biz_levels.pop(item_name, None)
 
         data['inventory'] = inv
         data['biz_levels'] = biz_levels
+        full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
-        item_info = ITEMS.get(item_name)
-        if item_info and item_info.get('price', 0) >= 500_000:
-            fire_and_forget(log_transaction(
-                user_id, data.get('full_name', 'Unknown'),
-                None, f"Removed {item_name}", "Inventory -", item_info['price'],
-            ))
-
+    item_info = ITEMS.get(item_name) or {}
+    if int(item_info.get('price', 0) or 0) >= LARGE_TX_THRESHOLD:
+        fire_and_forget(log_transaction(
+            user_id, full_name, None,
+            f"Removed {item_name}", "Inventory -", item_info['price'],
+        ))
     return True
 
 
-async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price):
-    """Атомарная продажа предмета внутри транзакции."""
+# ============================================================
+# ТРАНЗАКЦИОННЫЕ ОПЕРАЦИИ
+# ============================================================
+# ВАЖНО (общее для всех *_tr функций):
+#   - Внутри транзакции мы НИКОГДА не трогаем кэш (_drop_cache_entry /
+#     invalidate_user_cache / set_in_cache / mark_dirty).
+#   - Транзакция Firestore может быть ещё не закоммичена в момент возврата
+#     из этой функции — её коммитит обёртка (@firestore.async_transactional
+#     или ручной .commit()). Если сбросить кэш сейчас, параллельный запрос
+#     успеет вычитать СТАРЫЕ данные из БД и положить их обратно в кэш.
+#   - Поэтому инвалидация ОБЯЗАТЕЛЬНА на стороне вызывающего кода ПОСЛЕ
+#     успешного коммита транзакции, например:
+#
+#         @firestore.async_transactional
+#         async def _txn(tr):
+#             return await buy_item_tr(tr, chat_id, user_id, ...)
+#         ok, err = await _txn(transaction)
+#         if ok:
+#             invalidate_user_cache(chat_id, user_id)   # <-- здесь
+# ============================================================
+async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price: int) -> bool:
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
         return False
 
     data = snapshot.to_dict() or {}
-    inv = dict(data.get('inventory', {}) or {})
-    biz_levels = dict(data.get('biz_levels', {}) or {})
-
+    inv = dict(data.get('inventory') or {})
+    biz_levels = dict(data.get('biz_levels') or {})
     if inv.get(item_id, 0) <= 0:
         return False
 
     inv[item_id] -= 1
     if inv[item_id] <= 0:
-        del inv[item_id]
+        inv.pop(item_id, None)
         if item_cat == 'biz':
             biz_levels.pop(item_id, None)
 
-    new_balance = data.get('balance', 0) + sell_price
-    updates = {'inventory': inv, 'biz_levels': biz_levels, 'balance': new_balance}
-
+    updates = {
+        'inventory': inv,
+        'biz_levels': biz_levels,
+        'balance': int(data.get('balance', 0) or 0) + int(sell_price),
+    }
     if transaction:
         transaction.update(ref, updates)
     else:
         await ref.update(updates)
 
-    # Инвалидируем кэш — пусть следующее чтение возьмёт актуальное из БД
-    _user_cache.pop((chat_id, user_id), None)
-    _dirty_cache.discard((chat_id, user_id))
+    # NB: кэш НЕ инвалидируем здесь — это сделает вызывающий код после commit.
     return True
 
 
-async def buy_item_tr(transaction, chat_id, user_id, item_id, price_to_deduct, is_vip=False):
-    """Атомарная покупка предмета внутри транзакции."""
+async def buy_item_tr(transaction, chat_id, user_id, item_id,
+                      price_to_deduct: int, is_vip: bool = False):
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
         return False, "Пользователь не найден"
 
     data = snapshot.to_dict() or {}
-    balance = data.get('balance', 0)
+    balance = int(data.get('balance', 0) or 0)
     if balance < price_to_deduct:
         return False, "Недостаточно денег"
 
-    new_balance = balance - price_to_deduct
-    updates = {'balance': new_balance}
-
+    updates = {'balance': balance - int(price_to_deduct)}
     if is_vip:
         updates['is_vip'] = True
     else:
-        inv = dict(data.get('inventory', {}) or {})
+        inv = dict(data.get('inventory') or {})
         inv[item_id] = inv.get(item_id, 0) + 1
         updates['inventory'] = inv
 
@@ -639,13 +774,11 @@ async def buy_item_tr(transaction, chat_id, user_id, item_id, price_to_deduct, i
     else:
         await ref.update(updates)
 
-    _user_cache.pop((chat_id, user_id), None)
-    _dirty_cache.discard((chat_id, user_id))
+    # NB: кэш НЕ инвалидируем здесь — это сделает вызывающий код после commit.
     return True, None
 
 
-async def sell_vip_tr(transaction, chat_id, user_id, sell_price):
-    """Атомарная продажа VIP статуса."""
+async def sell_vip_tr(transaction, chat_id, user_id, sell_price: int) -> bool:
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
@@ -655,30 +788,30 @@ async def sell_vip_tr(transaction, chat_id, user_id, sell_price):
     if not data.get('is_vip'):
         return False
 
-    new_balance = data.get('balance', 0) + sell_price
-    updates = {'is_vip': False, 'balance': new_balance}
-
+    updates = {
+        'is_vip': False,
+        'balance': int(data.get('balance', 0) or 0) + int(sell_price),
+    }
     if transaction:
         transaction.update(ref, updates)
     else:
         await ref.update(updates)
 
-    _user_cache.pop((chat_id, user_id), None)
-    _dirty_cache.discard((chat_id, user_id))
+    # NB: кэш НЕ инвалидируем здесь — это сделает вызывающий код после commit.
     return True
 
 
-async def upgrade_business_tr(transaction, chat_id, user_id, item_id, upgrade_cost, max_level):
-    """Атомарное улучшение бизнеса."""
+async def upgrade_business_tr(transaction, chat_id, user_id, item_id,
+                              upgrade_cost: int, max_level: int):
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
         return False, "Пользователь не найден"
 
     data = snapshot.to_dict() or {}
-    balance = data.get('balance', 0)
-    biz_levels = dict(data.get('biz_levels', {}) or {})
-    inventory = data.get('inventory', {}) or {}
+    balance = int(data.get('balance', 0) or 0)
+    biz_levels = dict(data.get('biz_levels') or {})
+    inventory = data.get('inventory') or {}
 
     if inventory.get(item_id, 0) <= 0:
         return False, "У вас нет этого бизнеса"
@@ -686,48 +819,63 @@ async def upgrade_business_tr(transaction, chat_id, user_id, item_id, upgrade_co
     current_level = biz_levels.get(item_id, 1)
     if current_level >= max_level:
         return False, "Максимальный уровень уже достигнут"
-
     if balance < upgrade_cost:
         return False, "Недостаточно сыроежек"
 
-    new_balance = balance - upgrade_cost
     biz_levels[item_id] = current_level + 1
-    updates = {'balance': new_balance, 'biz_levels': biz_levels}
+    updates = {'balance': balance - int(upgrade_cost), 'biz_levels': biz_levels}
 
     if transaction:
         transaction.update(ref, updates)
     else:
         await ref.update(updates)
 
-    _user_cache.pop((chat_id, user_id), None)
-    _dirty_cache.discard((chat_id, user_id))
+    # NB: кэш НЕ инвалидируем здесь — это сделает вызывающий код после commit.
     return True, None
 
 
-async def get_top_users(chat_id, limit=10):
+# ============================================================
+# ВЫБОРКИ / ПОИСК
+# ============================================================
+async def get_top_users(chat_id, limit: int = 10):
+    """Топ по балансу, фильтрует hidden/banned/banker.
+    Если после фильтра набралось мало — добирает следующей страницей."""
     db = get_db()
     ref = db.collection('chats').document(str(chat_id)).collection('users')
-    # Адаптивный буфер: запас, чтобы пропустить hidden/banned/banker
-    fetch_limit = max(limit * 3, limit + 30)
-    docs = await ref.order_by('balance', direction='DESCENDING').limit(fetch_limit).get()
 
-    users = []
-    for doc in docs:
-        data = doc.to_dict() or {}
-        if (
-            not data.get('hide_in_top', False)
-            and not data.get('is_banned', False)
-            and not data.get('is_banker', False)
-        ):
-            users.append({'user_id': doc.id, **data})
-        if len(users) >= limit:
+    fetch_limit = max(limit * 3, limit + 30)
+    users: list = []
+    last_doc = None
+    rounds = 0
+
+    while len(users) < limit and rounds < 3:
+        rounds += 1
+        q = ref.order_by('balance', direction='DESCENDING').limit(fetch_limit)
+        if last_doc is not None:
+            q = q.start_after(last_doc)
+        try:
+            docs = await q.get()
+        except Exception as e:
+            logger.error("get_top_users query failed: %s", e)
             break
+        if not docs:
+            break
+        for doc in docs:
+            data = doc.to_dict() or {}
+            last_doc = doc
+            if (data.get('hide_in_top') or data.get('is_banned')
+                    or data.get('is_banker')):
+                continue
+            users.append({'user_id': doc.id, **data})
+            if len(users) >= limit:
+                break
+
     return users
 
 
-async def is_user_banker(chat_id, user_id):
+async def is_user_banker(chat_id, user_id) -> bool:
     data = await get_user_data(chat_id, user_id)
-    return data.get('is_banker', False)
+    return bool(data.get('is_banker', False))
 
 
 async def get_all_users_in_chat(chat_id):
@@ -737,93 +885,100 @@ async def get_all_users_in_chat(chat_id):
 
 
 async def get_user_by_username_or_id(chat_id, identifier):
-    """
-    Поиск пользователя в чате по ID или @username.
-    """
+    """Поиск пользователя по ID или @username. Возвращает (user_id, data) или (None, None)."""
     if not identifier:
         return None, None
 
-    identifier = identifier.strip()
+    identifier = str(identifier).strip()
+    if not identifier:
+        return None, None
 
-    # Пытаемся как ID
-    target_id = None
+    # 1) Пытаемся как числовой ID
+    raw = identifier.lstrip("@")
+    target_id: Optional[int] = None
     try:
-        target_id = int(identifier.lstrip("@"))
-    except (ValueError, AttributeError):
+        target_id = int(raw)
+    except (ValueError, TypeError):
         pass
 
     if target_id is not None:
         db = get_db()
-        users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-        doc = await users_ref.document(str(target_id)).get()
+        doc = await (
+            db.collection('chats').document(str(chat_id))
+              .collection('users').document(str(target_id)).get()
+        )
         if doc.exists:
-            return target_id, doc.to_dict() or {}
+            return target_id, (doc.to_dict() or {})
 
-    # Поиск по юзернейму
-    username = identifier.lstrip("@").lower()
+    # 2) Поиск по username
+    username = raw.lower()
     if not username:
         return None, None
 
-    # O(1) через индекс кэша
-    cached_user_id = _username_to_id_cache.get((chat_id, username))
-    if cached_user_id is not None:
-        entry = _user_cache.get((chat_id, cached_user_id))
+    cached_uid = _username_to_id_cache.get((chat_id, username))
+    if cached_uid is not None:
+        entry = _user_cache.get((chat_id, cached_uid))
         if entry:
-            return cached_user_id, copy.deepcopy(entry['data'])
+            return cached_uid, copy.deepcopy(entry['data'])
 
-    # Запрос к БД
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-    query = users_ref.where('username', '==', username).limit(1)
-    docs = await query.get()
+    try:
+        docs = await users_ref.where('username', '==', username).limit(1).get()
+    except Exception as e:
+        logger.error("Username search failed for %s: %s", username, e)
+        return None, None
 
-    if hasattr(docs, '__aiter__'):
-        async for doc in docs:
-            try:
-                return int(doc.id), doc.to_dict() or {}
-            except ValueError:
-                return doc.id, doc.to_dict() or {}
-    else:
-        for doc in docs:
-            try:
-                return int(doc.id), doc.to_dict() or {}
-            except ValueError:
-                return doc.id, doc.to_dict() or {}
+    async def _yield(docs):
+        if hasattr(docs, '__aiter__'):
+            async for d in docs:
+                yield d
+        else:
+            for d in docs:
+                yield d
+
+    async for doc in _yield(docs):
+        data = doc.to_dict() or {}
+        try:
+            uid = int(doc.id)
+        except (ValueError, TypeError):
+            uid = doc.id
+        # Освежим индекс
+        _username_to_id_cache[(chat_id, username)] = uid
+        return uid, data
 
     return None, None
 
 
-async def wipe_user_data(chat_id, user_id):
+# ============================================================
+# СБРОС
+# ============================================================
+async def wipe_user_data(chat_id, user_id) -> bool:
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         ref = get_user_ref(chat_id, user_id)
         data = await get_user_data(chat_id, user_id)
         full_name = data.get('full_name', 'Player')
-        default_data = {
-            'balance': 500,
-            'bank_deposit': 0,
-            'bank_name': None,
-            'last_bonus_time': 0,
-            'last_daily_time': 0,
-            'last_work_time': 0,
-            'last_crime_time': 0,
-            'inventory': {},
-            'biz_levels': {},
+        was_banned = bool(data.get('is_banned', False))
+
+        default_data = _default_user_data(full_name)
+        # расширяем дефолт дополнительными полями, нужными при wipe
+        default_data.update({
             'crypto_portfolio': {},
             'stocks_portfolio': {},
             'pet': {},
             'skills': {},
             'diseases': [],
-            'warns': [],
-            'is_banned': data.get('is_banned', False),
-            'hide_in_top': False,
-            'full_name': full_name,
-            'is_vip': False,
-            'is_banker': False,
-            'debts': {},
-            'escort_count': 0,
             'crypto_banned': False,
-        }
-        await ref.set(default_data)
+            'is_banned': was_banned,   # сохраняем бан
+        })
+
+        try:
+            await ref.set(default_data)
+        except Exception as e:
+            logger.error("wipe_user_data write failed for %s:%s — %s",
+                         chat_id, user_id, e)
+            return False
+
         invalidate_user_cache(chat_id, user_id)
         return True

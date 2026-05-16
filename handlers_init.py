@@ -31,6 +31,7 @@ from inventory import router as inventory_router
 from hunger_games import router as hunger_games_router
 from admin_pm import router as admin_pm_router
 from casino_utils import router as casino_utils_router
+from poker import router as poker_router
 
 import asyncio
 from user_manager import get_user_data, update_user_balance
@@ -114,6 +115,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(diseases_router)
     dp.include_router(inventory_router)
     dp.include_router(casino_utils_router)
+    dp.include_router(poker_router)
     dp.include_router(admin_pm_router)
     dp.include_router(hunger_games_router)
     dp.include_router(catch_all_router)
