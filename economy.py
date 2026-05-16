@@ -1,26 +1,93 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from firebase_admin import firestore_async
+from datetime import timedelta
 import secrets
 import time
-from economy_utils import get_global_tax
-from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users, get_user_ref, safe_get_snapshot
-from seasons import apply_season_logic
+import uuid
+import logging
+
+from economy_utils import get_global_tax, calculate_progressive_tax, format_time_left
+from user_manager import (
+    get_user_data, update_user_balance, check_and_give_bonus,
+    update_user_field, get_user_ref, safe_get_snapshot,
+)
+from seasons import apply_season_logic, get_season_config, get_glitch_text
+from diseases import get_active_diseases
 from escape import escape_html
 
+logger = logging.getLogger(__name__)
 router = Router()
 
-active_work_games = {}
-active_crime_games = {}
+# ============================================================
+#  ХРАНИЛИЩА АКТИВНЫХ МИНИ-ИГР
+# ============================================================
+active_work_games: dict = {}
+active_crime_games: dict = {}
 
-def _cleanup_expired_games():
-    """Очистка просроченных мини-игр для предотвращения утечки памяти."""
+# Кулдауны
+WORK_COOLDOWN = 1800        # 30 мин
+CRIME_COOLDOWN = 3600       # 1 ч
+BONUS_COOLDOWN = 14400      # 4 ч
+ROB_BANK_COOLDOWN = 43200   # 12 ч
+GAME_TTL = 60               # сек на мини-игру
+
+
+def _cleanup_expired_games() -> None:
+    """Удаляет просроченные мини-игры из памяти."""
     now = time.time()
     for store in (active_work_games, active_crime_games):
         expired = [k for k, v in store.items() if now > v.get('expires', 0)]
         for k in expired:
-            del store[k]
+            store.pop(k, None)
 
+
+# ============================================================
+#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ============================================================
+async def _calc_transfer_tax(chat_id: int, user_id: int, sender_data: dict) -> int:
+    """Считает итоговый процент налога для перевода с учётом болезней."""
+    base_tax = await get_global_tax()
+    active_diseases = await get_active_diseases(chat_id, user_id)
+
+    neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
+    pet_data = sender_data.get('pet') or {}
+    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
+
+    tax_percent = calculate_progressive_tax(
+        sender_data.get('balance', 0), base_tax, neg_lvl, pet_id
+    )
+    if 'herpes' in active_diseases:
+        # Герпес — минимум 30%
+        tax_percent = max(tax_percent, 30)
+    return max(0, int(tax_percent))
+
+
+def _calc_commission(amount: int, tax_percent: int) -> int:
+    """Считает комиссию. Если налог > 0, минимум 1 сыроежка."""
+    if tax_percent <= 0 or amount <= 0:
+        return 0
+    commission = int(amount * tax_percent / 100.0)
+    return commission if commission > 0 else 1
+
+
+def _max_amount_for_balance(balance: int, tax_percent: int) -> int:
+    """Максимальная сумма перевода, чтобы amount + commission <= balance."""
+    if balance <= 0:
+        return 0
+    if tax_percent <= 0:
+        return balance
+    # Учитываем, что комиссия минимум 1 при ненулевом налоге
+    amount = int(balance / (1 + tax_percent / 100.0))
+    while amount > 0 and amount + _calc_commission(amount, tax_percent) > balance:
+        amount -= 1
+    return max(amount, 0)
+
+
+# ============================================================
+#  /start /help /balance
+# ============================================================
 @router.message(Command("start"))
 async def cmd_start(message: types.Message):
     chat_id = message.chat.id
@@ -28,84 +95,61 @@ async def cmd_start(message: types.Message):
     full_name = escape_html(message.from_user.full_name)
 
     await get_user_data(chat_id, user_id, full_name)
-
-    text = (
+    await message.answer(
         f"👋 <b>Привет, {full_name}!</b>\n\n"
-        "Я бот для экономики и мини-игр! Твой стартовый баланс составляет <b>500</b> сыроежек.\n\n"
+        "Я бот для экономики и мини-игр! Твой стартовый баланс — <b>500</b> сыроежек.\n\n"
         "Пиши <code>/help</code> чтобы увидеть список всех команд."
     )
-    await message.answer(text)
+
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
-    text = "📜 <b>ПОЛНЫЙ СПИСОК КОМАНД БОТА</b> 📜\n\n"
+    text = (
+        "📜 <b>ПОЛНЫЙ СПИСОК КОМАНД БОТА</b> 📜\n\n"
+        "🚀 <b>ПОСЛЕДНИЕ ОБНОВЛЕНИЯ:</b>\n"
+        "• <b>Фондовая Биржа:</b> <code>/stocks</code> — ГазСыр и SpaceMilk!\n"
+        "• <b>Сезоны:</b> <code>/season</code> — тематические события с бонусами!\n"
+        "• <b>Налог на богатство:</b> чем больше денег, тем выше комиссия.\n"
+        "• <b>Мини-игры:</b> в <code>/work</code> и <code>/crime</code> нужна реакция.\n"
+        "• <b>Оптимизация:</b> исправлены баги в /pay, /work, /crime.\n\n"
 
-    text += "🚀 <b>ПОСЛЕДНИЕ ОБНОВЛЕНИЯ:</b>\n"
-    text += "• <b>Фондовая Биржа:</b> Команда <code>/stocks</code> — инвестируй в ГазСыр и SpaceMilk!\n"
-    text += "• <b>Сезоны:</b> Команда <code>/season</code> — тематические события с бонусами!\n"
-    text += "• <b>Налог на богатство:</b> Чем больше у тебя сыроежек, тем выше комиссия в <code>/pay</code> и цены в <code>/shop</code>.\n"
-    text += "• <b>Мини-игры:</b> В <code>/work</code> и <code>/crime</code> теперь нужно играть, чтобы получить бонус.\n"
-    text += "• <b>Реактивный инвентарь:</b> <code>/inv</code> и операции с балансом стали работать мгновенно.\n"
-    text += "• <b>Оптимизация:</b> Бот стал работать в 5 раз быстрее благодаря новой системе кэширования.\n\n"
-    
-    text += "💰 <b>ЭКОНОМИКА И БАНК:</b>\n"
-    text += "<code>/profile</code> - Профиль (деньги, клан, брак, варны).\n"
-    text += "<code>/bank</code> - Главное меню банков (вклады, листы, инфо).\n"
-    text += "<code>/bank_offshore</code> - Скрыть счет в банке за комиссию.\n"
-    text += "<code>ограбить банк [Имя]</code> - Попытка кражи из банка.\n"
-    text += "<code>/bonus</code> - Собрать прибыль (учитывает налог на богатство).\n"
-    text += "<code>/work</code>, <code>/crime</code> - Работа и криминал с мини-играми.\n"
-    text += "<code>/pay [сумма][реплай]</code> - Перевод (комиссия зависит от баланса).\n"
-    text += "<code>долг [сумма] [%][реплай]</code> - Дать в долг (P2P).\n"
-    text += "<code>выплатить[сумма] [реплай]</code> - Вернуть долг.\n"
-    text += "<code>украсть</code> [реплай] - Кража (учитывает Stealth, отмычки и маски).\n\n"
+        "💰 <b>ЭКОНОМИКА И БАНК:</b>\n"
+        "<code>/profile</code> — Профиль.\n"
+        "<code>/bank</code> — Меню банков.\n"
+        "<code>/bank_offshore</code> — Скрыть счёт.\n"
+        "<code>ограбить банк [Имя]</code> — Кража из банка.\n"
+        "<code>/bonus</code> — Доход с бизнесов.\n"
+        "<code>/work</code>, <code>/crime</code> — Работа и криминал.\n"
+        "<code>/pay [сумма|all]</code> — Перевод (реплай).\n"
+        "<code>долг [сумма] [%]</code> — Дать в долг.\n"
+        "<code>выплатить [сумма]</code> — Вернуть долг.\n"
+        "<code>украсть</code> — Кража у игрока.\n\n"
 
-    text += "📈 <b>БИРЖА (АКЦИИ И КРИПТА):</b>\n"
-    text += "<code>/stocks</code> - <b>НОВОЕ!</b> Фондовая биржа с графиками компаний.\n"
-    text += "<code>/криптосыроежка</code> - Главное меню крипторынка.\n"
-    text += "<code>/createcoin [ТИКЕР] [Название]</code> - Создать свою монету.\n"
-    text += "<code>/cr_send [ТИКЕР] [Кол-во]</code> - Перевод крипты.\n\n"
+        "📈 <b>БИРЖА:</b>\n"
+        "<code>/stocks</code>, <code>/криптосыроежка</code>, "
+        "<code>/createcoin</code>, <code>/cr_send</code>.\n\n"
 
-    text += "🏦 <b>ДЛЯ БАНКИРОВ:</b>\n"
-    text += "<code>создать банк [Имя]</code> - Открыть свой банк.\n"
-    text += "<code>/bankrate [3-13]</code> - Установить % по вкладам.\n"
-    text += "<code>/bank_stats</code> - Панель управления (вклады, кредиты).\n"
-    text += "<code>кредит [сумма] [%] [дни] [поручитель] [реплай]</code> - Выдать кредит игроку.\n\n"
+        "🏦 <b>БАНКИРАМ:</b>\n"
+        "<code>создать банк [Имя]</code>, <code>/bankrate</code>, "
+        "<code>/bank_stats</code>, <code>кредит ...</code>.\n\n"
 
-    text += "🤝 <b>СДЕЛКИ И ДОГОВОРЫ:</b>\n"
-    text += "<code>договор [текст]</code> - Заключить словесный контракт.\n"
-    text += "<code>сделка [цена] [предмет] [условие]</code> - Купля-продажа вещей.\n"
-    text += "<code>наследство</code> - Передать всё имущество (реплай).\n\n"
+        "🛒 <b>МАГАЗИН:</b> <code>/shop</code>, <code>/inv</code>, "
+        "<code>/skills</code>, <code>/pets</code>, <code>/feed</code>.\n\n"
 
-    text += "🔞 <b>ЭСКОРТ:</b>\n"
-    text += "<code>нанять/заказать [сумма] [реплай]</code> - Снять путану.\n"
-    text += "<code>эскорт/проститут [сумма] [реплай]</code> - Предложить услуги.\n\n"
+        "🛡 <b>КЛАНЫ:</b> <code>/clan</code>, "
+        "<code>Брак</code>, <code>Развод</code>, <code>Подарок</code>.\n\n"
 
-    text += "🛒 <b>МАГАЗИН И ПРОКАЧКА:</b>\n"
-    text += "<code>/shop</code> - Покупка бизнесов и VIP (цены динамические!).\n"
-    text += "<code>/inv</code> - Ваш инвентарь (Улучшение и продажа).\n"
-    text += "<code>/skills</code> - Прокачка (Переговоры снижают налоги!).\n"
-    text += "<code>/pets</code>, <code>/feed</code> - Питомцы.\n\n"
+        "🎰 <b>ИГРЫ:</b> <code>/bj</code>, <code>/slots</code>, "
+        "<code>/roulette</code>, <code>Вызвать на дуэль</code>, <code>/lottery</code>.\n\n"
 
-    text += "🛡 <b>КЛАНЫ И СЕМЬИ:</b>\n"
-    text += "<code>/clan</code> - Меню кланов.\n"
-    text += "<code>Брак</code>, <code>Развод</code>, <code>Подарок [сумма]</code>.\n\n"
+        "👮 <b>АДМИНКА:</b> <code>мут</code>, <code>бан</code>, "
+        "<code>варн</code>, <code>повысить</code>, <code>+правила</code>.\n\n"
 
-    text += "🎰 <b>ИГРЫ:</b>\n"
-    text += "<code>/bj</code>, <code>/slots</code>, <code>/roulette [ставка] [число/цвет]</code>.\n"
-    text += "<code>Вызвать на дуэль [ставка]</code> - Тактическая дуэль!\n<code>/lottery</code> - розыгрыш.\n\n"
-
-    text += "👮‍♂️ <b>АДМИНИСТРАЦИЯ:</b>\n"
-    text += "<code>мут</code>, <code>бан</code>, <code>варн</code>, <code>повысить</code>, <code>снять</code>.\n"
-    text += "<code>кто админ</code>, <code>+правила</code>, <code>антивойс</code>, <code>антилинк</code>.\n"
-    text += "<code>/cr_wipe</code>, <code>/cr_crash</code>, <code>бан/разбан крипты</code>.\n\n"
-
-    text += "🎭 <b>РП И ИНТЕРАКТИВ:</b>\n"
-    text += "<code>Обнять</code>, <code>Поцеловать</code>, <code>Ударить</code>, <code>Кусь</code>.\n"
-    text += "<code>Диктор [вопрос]</code>, <code>/bio [текст]</code>.\n"
-    text += "Репутация: <code>+</code>, <code>спасибо</code>, <code>реп</code>."
-    
+        "🎭 <b>РП:</b> <code>Обнять</code>, <code>Поцеловать</code>, "
+        "<code>Ударить</code>, <code>/bio</code>, репутация — <code>+</code>."
+    )
     await message.answer(text)
+
 
 @router.message(Command("balance"))
 async def cmd_balance(message: types.Message):
@@ -116,179 +160,188 @@ async def cmd_balance(message: types.Message):
     data = await get_user_data(chat_id, user_id, full_name)
     balance = data.get('balance', 0)
     is_vip = data.get('is_vip', False)
-
     vip_icon = " 👑 VIP" if is_vip else ""
     await message.answer(f"💰 Твой баланс: <b>{balance}</b> сыроежек.{vip_icon}")
 
+
+# ============================================================
+#  /pay — ПЕРЕВОД С НАЛОГОМ
+# ============================================================
 @router.message(Command("pay"))
 async def cmd_pay(message: types.Message):
     chat_id = message.chat.id
     sender_id = message.from_user.id
     sender_name = escape_html(message.from_user.full_name)
 
+    # --- Базовые проверки ---
     sender_data = await get_user_data(chat_id, sender_id, sender_name)
     if sender_data.get('is_banned', False):
-        await message.answer("Ты в бане и не можешь переводить деньги.")
-        return
+        return await message.answer("Ты в бане и не можешь переводить деньги.")
 
     if not message.reply_to_message:
-        await message.answer("Ответь на сообщение человека, которому хочешь перевести сыроежки.")
-        return
+        return await message.answer(
+            "Ответь на сообщение человека, которому хочешь перевести сыроежки.\n"
+            "Использование: <code>/pay 100</code> или <code>/pay all</code>"
+        )
 
     target_user = message.reply_to_message.from_user
+    if target_user is None:
+        return await message.answer("Не удалось определить получателя.")
     target_name = escape_html(target_user.full_name)
+
     if target_user.is_bot:
-        await message.answer("Ботам деньги не нужны.")
-        return
+        return await message.answer("🤖 Ботам деньги не нужны.")
+    if target_user.id == sender_id:
+        return await message.answer("🚫 Нельзя перевести деньги самому себе.")
 
-    if target_user.id == message.from_user.id:
-        await message.answer("Нельзя перевести деньги самому себе.")
-        return
-
-    args = message.text.split()
+    # --- Парсинг аргументов ---
+    args = (message.text or "").split()
     if len(args) < 2:
-        await message.answer("Укажи сумму: <code>/pay 100</code> или <code>/pay all</code>")
-        return
+        return await message.answer(
+            "Укажи сумму: <code>/pay 100</code> или <code>/pay all</code>"
+        )
 
-    amount_str = args[1].lower()
-    if amount_str in ["all", "всё", "все"]:
-        # If user wants to pay all, we need to calculate how much they can send after tax
-        from economy_utils import get_global_tax, calculate_progressive_tax
-        base_tax = await get_global_tax()
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(chat_id, sender_id)
+    balance = int(sender_data.get('balance', 0))
+    if balance <= 0:
+        return await message.answer("💸 У тебя нет денег для перевода.")
 
-        neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
-        pet_data = sender_data.get('pet', {})
-        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl, pet_id)
+    # Считаем налог ОДИН раз
+    tax_percent = await _calc_transfer_tax(chat_id, sender_id, sender_data)
 
-        if 'herpes' in active_diseases:
-            tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
-        
-        balance = sender_data.get('balance', 0)
-        if balance <= 0:
-            return await message.answer("У вас нет денег.")
-
-        # math: amount + (amount * tax / 100) = balance => amount = balance / (1 + tax/100)
-        if tax_percent > 0:
-            amount = int(balance / (1 + (tax_percent / 100.0)))
-            if amount == balance and tax_percent > 0: # Ensure minimum 1 tax logic if any
-                amount -= 1
-        else:
-            amount = balance
-
+    amount_str = args[1].lower().strip()
+    if amount_str in {"all", "всё", "все", "max"}:
+        amount = _max_amount_for_balance(balance, tax_percent)
         if amount <= 0:
-            return await message.answer("После уплаты налога отправлять нечего.")
+            return await message.answer(
+                "После уплаты налога отправлять нечего."
+            )
     else:
         try:
             amount = int(amount_str)
-            if amount <= 0:
-                await message.answer("Сумма должна быть больше нуля.")
-                return
         except ValueError:
-            await message.answer("Сумма должна быть числом или 'all'.")
-            return
+            return await message.answer("Сумма должна быть числом или <code>all</code>.")
+        if amount <= 0:
+            return await message.answer("Сумма должна быть больше нуля.")
+        if amount > 10_000_000_000:
+            return await message.answer("Слишком большая сумма.")
 
-        from economy_utils import get_global_tax, calculate_progressive_tax
-        base_tax = await get_global_tax()
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(chat_id, sender_id)
-        neg_lvl = sender_data.get('skills', {}).get('negotiation', 0)
-        pet_data = sender_data.get('pet', {})
-        pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-        tax_percent = calculate_progressive_tax(sender_data.get('balance', 0), base_tax, neg_lvl, pet_id)
-
-        if 'herpes' in active_diseases:
-            tax_percent = max(tax_percent, 30) # Герпес: налог минимум 30% на все переводы
-
-    if tax_percent > 0:
-        commission = int(amount * (tax_percent / 100.0))
-        if commission == 0: commission = 1 
-    else:
-        commission = 0
-        
+    commission = _calc_commission(amount, tax_percent)
     total_cost = amount + commission
 
-    if sender_data.get('balance', 0) < total_cost:
-        await message.answer(f"Мало денег. Для перевода {amount} нужно {total_cost} сыроежек (налог {tax_percent}% - минимум 1 сыр.).")
-        return
+    if balance < total_cost:
+        return await message.answer(
+            f"💸 Недостаточно средств.\n"
+            f"Требуется: <b>{total_cost}</b> (перевод {amount} + налог {commission}).\n"
+            f"На балансе: <b>{balance}</b>.\n"
+            f"Налог: <b>{tax_percent}%</b>."
+        )
 
+    # --- Гарантируем существование получателя ---
+    await get_user_data(chat_id, target_user.id, target_name)
+
+    # --- Получаем список админов для распределения комиссии ---
     try:
         admins = await message.chat.get_administrators()
-        human_admins =[admin.user.id for admin in admins if not admin.user.is_bot]
-    except Exception:
-        human_admins =[]
+        human_admins = [a.user.id for a in admins if not a.user.is_bot]
+    except Exception as e:
+        logger.warning(f"Не удалось получить администраторов чата {chat_id}: {e}")
+        human_admins = []
 
+    # --- Выполняем перевод транзакционно ---
     from db import get_db
     db = get_db()
-    # Предварительно убеждаемся, что получатель существует в базе
-    await get_user_data(chat_id, target_user.id, target_name)
 
     try:
         if hasattr(db, "transaction"):
-            # Мы используем @firestore_async.transactional для автоматического управления попытками и фиксацией.
-            res = process_transfer_tx(db.transaction(), chat_id, sender_id, target_user.id, total_cost, amount, human_admins, commission)
-            if hasattr(res, "__aiter__"):
-                async for _ in res: pass
-            else:
-                await res
+            await process_transfer_tx(
+                db.transaction(),
+                chat_id, sender_id, target_user.id,
+                total_cost, amount, human_admins, commission,
+            )
         else:
-            # Fallback для локального мока если db вообще не имеет transaction
-            await update_user_balance(chat_id, sender_id, -total_cost)
+            # Fallback (локальный мок)
+            await update_user_balance(chat_id, sender_id, -total_cost, min_balance=0)
             await update_user_balance(chat_id, target_user.id, amount)
-            if human_admins and commission > 0:
-                commission_per_admin = commission // len(human_admins)
-                if commission_per_admin > 0:
-                    for admin_id in human_admins:
-                        await update_user_balance(chat_id, admin_id, commission_per_admin)
+            if commission > 0 and human_admins:
+                per = commission // len(human_admins)
+                if per > 0:
+                    for aid in human_admins:
+                        await update_user_balance(chat_id, aid, per)
     except Exception as e:
-        await message.answer(f"❌ Ошибка перевода: {e}")
-        return
+        logger.exception(f"Ошибка перевода {sender_id}->{target_user.id}: {e}")
+        return await message.answer(f"❌ Ошибка перевода. Попробуй позже.")
 
-    phrases = [
-        f"Налоговая откусила кусок в {commission} сыроежек.",
-        f"Гоблины-сборщики забрали {commission} сыроежек в казну.",
-        f"Крыша требует свою долю. Удержано {commission} сыроежек.",
-        f"Банкирский дом забирает свои скромные {commission} сыроежек за услуги.",
-        f"Местные рэкетиры взыскали налог: {commission} сыроежек.",
-        f"Комиссия в {commission} сыроежек ушла на развитие экономики."
-    ]
-    phrase = secrets.choice(phrases) if commission > 0 else "Налог отменен! Деньги дошли без потерь."
+    # --- Сообщение об успехе ---
+    if commission > 0:
+        phrase = secrets.choice([
+            f"Налоговая откусила кусок в {commission} сыроежек.",
+            f"Гоблины-сборщики забрали {commission} сыроежек в казну.",
+            f"Крыша требует свою долю. Удержано {commission} сыроежек.",
+            f"Банкирский дом взял {commission} сыроежек за услуги.",
+            f"Местные рэкетиры взыскали налог: {commission} сыроежек.",
+            f"Комиссия в {commission} сыроежек ушла на развитие экономики.",
+        ])
+        tax_note = f"<i>{phrase}</i> (Налог {tax_percent}%)."
+    else:
+        tax_note = "Налог отменён — перевод дошёл без потерь."
 
     await message.answer(
         f"💸 <b>Успешный перевод!</b>\n\n"
-        f"Отправлено: {amount} сыроежек пользователю {target_name}.\n"
-        f"<i>{phrase}</i> (Налог {tax_percent}% ушел админам)."
+        f"Отправлено: <b>{amount}</b> сыроежек пользователю {target_name}.\n"
+        f"{tax_note}"
     )
 
+
 @firestore_async.transactional
-async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_cost, amount, human_admins, commission):
-    # Используем специальную транзакционную версию с защитой от отрицательного баланса
-    await update_user_balance(chat_id, sender_id, -total_cost, min_balance=0, transaction=transaction, action="Transfer Send")
-    await update_user_balance(chat_id, target_id, amount, transaction=transaction, action="Transfer Receive")
+async def process_transfer_tx(transaction, chat_id, sender_id, target_id,
+                              total_cost, amount, human_admins, commission):
+    """Атомарный перевод с защитой от отрицательного баланса."""
+    # 1. Снимаем у отправителя (с проверкой баланса)
+    await update_user_balance(
+        chat_id, sender_id, -total_cost,
+        min_balance=0, transaction=transaction, action="Transfer Send"
+    )
+    # 2. Зачисляем получателю
+    await update_user_balance(
+        chat_id, target_id, amount,
+        transaction=transaction, action="Transfer Receive"
+    )
 
-    # Перенаправляем налоги в банк
-    if commission > 0:
-        sender_snap = await safe_get_snapshot(transaction, get_user_ref(chat_id, sender_id))
-        sender_data = sender_snap.to_dict() if sender_snap.exists else {}
-        bank_id = sender_data.get('bank_name')
-        
-        if bank_id:
-            from profile_bank import get_bank_info, create_or_update_bank
-            # В транзакции сложно вызывать сложные функции, поэтому обновим напрямую
-            db = get_db()
-            bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(bank_id))
-            bank_snap = await safe_get_snapshot(transaction, bank_ref)
-            if bank_snap.exists:
-                new_cap = bank_snap.to_dict().get('capital', 0) + commission
-                transaction.update(bank_ref, {'capital': new_cap})
-        elif human_admins:
-            commission_per_admin = commission // len(human_admins)
-            if commission_per_admin > 0:
-                for admin_id in human_admins:
-                    await update_user_balance(chat_id, admin_id, commission_per_admin, transaction=transaction, action="Transfer Admin Commission")
+    if commission <= 0:
+        return
 
+    # 3. Налог идёт в банк отправителя, либо админам
+    from db import get_db
+    db = get_db()
+
+    sender_ref = get_user_ref(chat_id, sender_id)
+    sender_snap = await safe_get_snapshot(transaction, sender_ref)
+    sender_data = sender_snap.to_dict() if sender_snap and sender_snap.exists else {}
+    bank_id = sender_data.get('bank_name')
+
+    if bank_id:
+        bank_ref = (db.collection('chats').document(str(chat_id))
+                      .collection('banks').document(str(bank_id)))
+        bank_snap = await safe_get_snapshot(transaction, bank_ref)
+        if bank_snap and bank_snap.exists:
+            new_cap = bank_snap.to_dict().get('capital', 0) + commission
+            transaction.update(bank_ref, {'capital': new_cap})
+            return
+        # если банк исчез — отдаём админам
+
+    if human_admins:
+        per = commission // len(human_admins)
+        if per > 0:
+            for aid in human_admins:
+                await update_user_balance(
+                    chat_id, aid, per,
+                    transaction=transaction, action="Transfer Admin Commission"
+                )
+
+
+# ============================================================
+#  /bonus
+# ============================================================
 @router.message(Command("bonus"))
 async def cmd_bonus(message: types.Message):
     chat_id = message.chat.id
@@ -296,35 +349,39 @@ async def cmd_bonus(message: types.Message):
     full_name = escape_html(message.from_user.full_name)
 
     data = await get_user_data(chat_id, user_id, full_name)
-    if data.get('is_banned', False): return
+    if data.get('is_banned', False):
+        return
 
-    from diseases import get_active_diseases
     if 'gonorrhea' in await get_active_diseases(chat_id, user_id):
         return await message.answer("🦠 Из-за болезни тебе отказано в бонусе.")
 
     last_bonus = data.get('last_bonus_time', 0)
     current_time = time.time()
-
-    if current_time - last_bonus < 14400:
-        from economy_utils import format_time_left
-        time_left = format_time_left(14400 - (current_time - last_bonus))
+    if current_time - last_bonus < BONUS_COOLDOWN:
+        time_left = format_time_left(BONUS_COOLDOWN - (current_time - last_bonus))
         return await message.answer(f"⏳ Бонус пока недоступен.\nОсталось {time_left}")
 
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    builder = InlineKeyboardBuilder()
-
-    # Generate random string to prevent replay attacks and ensure only this message is valid
     secret = secrets.token_hex(8)
-    builder.button(text="🎁 Забрать бонус", callback_data=f"claim_bonus_{user_id}_{secret}")
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🎁 Забрать бонус",
+                   callback_data=f"claim_bonus_{user_id}_{secret}")
+    await message.answer(
+        "Нажмите кнопку ниже, чтобы забрать свой доход и бонус:",
+        reply_markup=builder.as_markup()
+    )
 
-    await message.answer("Нажмите кнопку ниже, чтобы забрать свой доход и бонус:", reply_markup=builder.as_markup())
 
 @router.callback_query(F.data.startswith("claim_bonus_"))
 async def process_claim_bonus(callback: types.CallbackQuery):
     parts = callback.data.split("_")
-    if len(parts) < 4: return await callback.answer()
+    if len(parts) < 4:
+        return await callback.answer()
 
-    target_user_id = int(parts[2])
+    try:
+        target_user_id = int(parts[2])
+    except ValueError:
+        return await callback.answer()
+
     if callback.from_user.id != target_user_id:
         return await callback.answer("Это не ваш бонус!", show_alert=True)
 
@@ -332,23 +389,135 @@ async def process_claim_bonus(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     full_name = escape_html(callback.from_user.full_name)
 
-    # Use existing atomic logic
     success, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
-
     if success:
-        text = f"🧾 <b>Квитанция о доходах</b>\n\n"
+        text = "🧾 <b>Квитанция о доходах</b>\n\n"
         if receipt.get('base', 0) > 0:
             text += f"🎁 Ежедневный бонус: <b>{receipt['base']}</b>\n"
-        text += f"🏢 Доход с бизнесов: <b>{receipt['business']}</b>\n"
-        text += f"🚗 Доход с машин: <b>{receipt['car']}</b>\n"
-        text += f"➖ Налог ({receipt['tax_percent']}%): <b>-{receipt['tax_amount']}</b>\n"
-        text += f"-----------------------\n"
-        text += f"💰 Итого на руки: <b>{receipt['total']}</b> сыроежек"
-
-        await callback.message.edit_text(text)
+        text += (
+            f"🏢 Доход с бизнесов: <b>{receipt['business']}</b>\n"
+            f"🚗 Доход с машин: <b>{receipt['car']}</b>\n"
+            f"➖ Налог ({receipt['tax_percent']}%): <b>-{receipt['tax_amount']}</b>\n"
+            f"-----------------------\n"
+            f"💰 Итого на руки: <b>{receipt['total']}</b> сыроежек"
+        )
+        try:
+            await callback.message.edit_text(text)
+        except Exception:
+            await callback.message.answer(text)
     else:
-        await callback.message.edit_text("❌ Ты уже собирал доход недавно. Попробуй позже!")
+        try:
+            await callback.message.edit_text("❌ Ты уже собирал доход недавно.")
+        except Exception:
+            pass
+    await callback.answer()
 
+
+# ============================================================
+#  ОБЩАЯ ЛОГИКА КОЛЛЕКТОРОВ (для /work и /crime)
+# ============================================================
+async def _process_collectors(chat_id: int, user_id: int, data: dict,
+                              base_earnings: int, pet_id: str,
+                              trigger_chance: int):
+    """
+    Обрабатывает коллекторов: списывает с дохода в счёт долга
+    или штрафует, если долгов нет, но баланс отрицательный.
+
+    Возвращает: (final_earnings, collector_msg, dragon_blocked)
+    """
+    rand = secrets.SystemRandom()
+    debts = data.get('debts', {}) or {}
+    balance = data.get('balance', 0)
+
+    has_target = bool(debts) or balance < 0
+    if not has_target:
+        return base_earnings, "", False
+
+    # Дракон отпугивает
+    if pet_id == 'dragon':
+        return base_earnings, "", True
+
+    if rand.randint(1, 100) > trigger_chance:
+        return base_earnings, "", False
+
+    if debts:
+        lender_id_str = secrets.choice(list(debts.keys()))
+        debt_amount = int(debts[lender_id_str])
+        is_bank = lender_id_str.startswith("bank_")
+
+        collector_cut = max(int(base_earnings * 0.5), 1)
+        pay_amount = min(collector_cut, debt_amount)
+
+        if pay_amount <= 0:
+            return base_earnings, "", False
+
+        final_earnings = max(0, base_earnings - pay_amount)
+        debts[lender_id_str] -= pay_amount
+        if debts[lender_id_str] <= 0:
+            debts.pop(lender_id_str, None)
+        await update_user_field(chat_id, user_id, 'debts', debts)
+
+        if is_bank:
+            try:
+                banker_id = int(lender_id_str.split("_")[1])
+            except (IndexError, ValueError):
+                return final_earnings, "", False
+            from profile_bank import get_bank_info, create_or_update_bank
+            bank_data = await get_bank_info(chat_id, banker_id)
+            if bank_data:
+                lender_name = bank_data.get('name', 'Неизвестный Банк')
+                await create_or_update_bank(
+                    chat_id, banker_id,
+                    {'capital': bank_data.get('capital', 0) + pay_amount}
+                )
+            else:
+                lender_name = 'Банк'
+            msg = (f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Забрали "
+                   f"<b>{pay_amount}</b> сыр. в счёт долга "
+                   f"для <b>{escape_html(lender_name)}</b>.")
+        else:
+            try:
+                lender_id = int(lender_id_str)
+            except ValueError:
+                return final_earnings, "", False
+            lender_data = await get_user_data(chat_id, lender_id)
+            lender_name = lender_data.get('full_name', 'Кредитор')
+            await update_user_balance(chat_id, lender_id, pay_amount,
+                                       is_debt_repayment=True)
+            msg = (f"\n\n🦹‍♂️ <b>ЧАСТНЫЕ КОЛЛЕКТОРЫ!</b> Забрали "
+                   f"<b>{pay_amount}</b> сыр. в счёт долга "
+                   f"для <b>{escape_html(lender_name)}</b>.")
+        return final_earnings, msg, False
+
+    # Долгов нет, но баланс < 0 — штраф
+    penalty = rand.randint(100, 300)
+    await update_user_balance(chat_id, user_id, -penalty,
+                               min_balance=0, is_debt_repayment=True)
+    msg = (f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Отобрали весь заработок "
+           f"и выбили ещё <b>{penalty}</b> сыр. сверху.")
+    return 0, msg, False
+
+
+async def _get_active_lobby(chat_id: int, user_id: int):
+    """Возвращает тип активного лобби для игрока или 'none'."""
+    try:
+        from db import get_db
+        banks_ref = (get_db().collection('chats').document(str(chat_id))
+                              .collection('banks'))
+        active = await banks_ref.where('lobby_until', '>', time.time()).get()
+        for doc in active:
+            b = doc.to_dict() or {}
+            if user_id in (b.get('lobby_blacklist') or []):
+                continue
+            return b.get('lobby_type', 'golden')
+    except Exception as e:
+        logger.warning(f"Ошибка получения лобби: {e}")
+    return 'none'
+
+
+# ============================================================
+#  /work
+# ============================================================
 @router.message(Command("work"))
 async def cmd_work(message: types.Message):
     chat_id = message.chat.id
@@ -359,166 +528,125 @@ async def cmd_work(message: types.Message):
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь работать.")
 
-    from diseases import get_active_diseases
     active_diseases = await get_active_diseases(chat_id, user_id)
     if 'hiv' in active_diseases:
-        return await message.answer("🦠 <b>ВИЧ</b>: У тебя совершенно нет сил работать. Зарплата обнулена, работодатель отправил тебя домой лечиться.")
+        return await message.answer(
+            "🦠 <b>ВИЧ</b>: У тебя нет сил работать. Зарплата обнулена."
+        )
 
     last_work = data.get('last_work_time', 0)
     current_time = time.time()
-
-    if current_time - last_work < 1800:
-        remain = int(1800 - (current_time - last_work))
+    if current_time - last_work < WORK_COOLDOWN:
+        remain = int(WORK_COOLDOWN - (current_time - last_work))
         mins, secs = divmod(remain, 60)
-        return await message.answer(f"⏳ Ты устал. Отдохни еще {mins} минут и {secs} секунд.")
+        return await message.answer(
+            f"⏳ Ты устал. Отдохни ещё {mins} мин. {secs} сек."
+        )
 
     await update_user_field(chat_id, user_id, 'last_work_time', current_time)
 
     rand = secrets.SystemRandom()
     is_banker = data.get('is_banker', False)
-    base_earnings = rand.randint(50, 350) if is_banker else rand.randint(100, 700)
-    
+    base_earnings = (rand.randint(50, 350) if is_banker
+                     else rand.randint(100, 700))
+
+    # --- Бонус банкира ---
     bank_profit_msg = ""
     if is_banker:
+        contribution = rand.randint(1000, 5000)
+        try:
+            from profile_bank import get_bank_info, create_or_update_bank
+            bank_data = await get_bank_info(chat_id, user_id)
+            if bank_data:
+                await create_or_update_bank(
+                    chat_id, user_id,
+                    {'capital': bank_data.get('capital', 0) + contribution}
+                )
+                bank_profit_msg = (f"\n🏢 Ваша работа принесла банку "
+                                   f"<b>{contribution}</b> сыр.!")
+        except Exception as e:
+            logger.warning(f"Bank profit error: {e}")
 
-        # Банкир также приносит пользу своему банку
-        bank_contribution = rand.randint(1000, 5000)
-        from profile_bank import get_bank_info, create_or_update_bank
-        bank_data = await get_bank_info(chat_id, user_id)
-        if bank_data:
-            await create_or_update_bank(chat_id, user_id, {'capital': bank_data.get('capital', 0) + bank_contribution})
-            bank_profit_msg = f"\n🏢 Ваша работа принесла банку <b>{bank_contribution}</b> сыр. в капитал!"
-
-    # --- БОНУС ПИТОМЦА ---
-    pet = data.get('pet')
+    # --- Питомец ---
+    pet = data.get('pet') or {}
     pet_id = pet.get('id') if isinstance(pet, dict) else None
     pet_msg = ""
-    
+
     if 'hpv' in active_diseases:
-        pet_id = None # Питомец отказывается помогать из-за ВПЧ
-        pet_msg = "\n🦠 <b>ВПЧ</b>: Твой питомец брезгует к тебе подходить и не дал бонусов."
+        pet_id = None
+        pet_msg = "\n🦠 <b>ВПЧ</b>: Питомец не подходит к тебе."
 
     if pet_id == 'cat':
         base_earnings = int(base_earnings * 1.2)
-        pet_msg = "\n🐱 Ваш верный кот помог заработать на 20% больше!"
+        pet_msg = "\n🐱 Кот помог заработать на 20% больше!"
 
-    final_earnings = base_earnings
+    # --- Коллекторы (срабатывают на base_earnings) ---
+    final_earnings, collector_msg, dragon_blocked = await _process_collectors(
+        chat_id, user_id, data, base_earnings, pet_id, trigger_chance=30
+    )
+    if dragon_blocked and (data.get('debts') or data.get('balance', 0) < 0):
+        pet_msg += "\n🐉 Дракон отпугнул коллекторов!"
 
-    # --- ЛОГИКА КОЛЛЕКТОРОВ ---
-    collector_msg = ""
-    debts = data.get('debts', {})
-    balance = data.get('balance', 0)
-
-    # Дракон защищает от коллекторов!
-    if pet_id != 'dragon' and (debts or balance < 0) and rand.randint(1, 100) <= 30:
-        if debts:
-            lender_id_str = secrets.choice(list(debts.keys()))
-            debt_amount = debts[lender_id_str]
-
-            is_bank = lender_id_str.startswith("bank_")
-
-            collector_cut = int(base_earnings * 0.5)
-            if collector_cut == 0: collector_cut = 1
-            pay_amount = min(collector_cut, debt_amount)
-
-            if pay_amount > 0:
-                final_earnings = base_earnings - pay_amount
-                debts[lender_id_str] -= pay_amount
-                if debts[lender_id_str] <= 0:
-                    del debts[lender_id_str]
-                
-                await update_user_field(chat_id, user_id, 'debts', debts)
-                
-                if is_bank:
-                    banker_id = int(lender_id_str.split("_")[1])
-                    from profile_bank import get_bank_info, create_or_update_bank
-                    bank_data = await get_bank_info(chat_id, banker_id)
-                    lender_name = bank_data.get('name', 'Неизвестный Банк') if bank_data else 'Банк'
-                    if bank_data:
-                        await create_or_update_bank(chat_id, banker_id, {'capital': bank_data.get('capital', 0) + pay_amount})
-                    collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Они поджидали тебя и забрали <b>{pay_amount}</b> сыроежек в качестве уплаты долга для <b>{escape_html(lender_name)}</b>."
-                else:
-                    lender_id = int(lender_id_str)
-                    lender_data = await get_user_data(chat_id, lender_id)
-                    lender_name = lender_data.get('full_name', 'Неизвестный кредитор')
-                    await update_user_balance(chat_id, lender_id, pay_amount, is_debt_repayment=True)
-                    collector_msg = f"\n\n🦹‍♂️ <b>ЧАСТНЫЕ КОЛЛЕКТОРЫ!</b> Они поджидали тебя и забрали <b>{pay_amount}</b> сыроежек в качестве уплаты долга для <b>{escape_html(lender_name)}</b>."
-        else:
-            penalty = rand.randint(100, 300)
-            final_earnings = 0
-            # Ограничиваем штраф текущим балансом, чтобы не уходить в минус на обычной работе
-            await update_user_balance(chat_id, user_id, -penalty, min_balance=0, is_debt_repayment=True)
-            collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Они отобрали весь заработок и выбили еще <b>{penalty}</b> сыроежек сверху в счет погашения кредита."
-    elif pet_id == 'dragon' and (debts or balance < 0):
-         pet_msg += "\n🐉 Ваш дракон отпугнул поджидавших вас коллекторов!"
-
-    # --- ЛОББИРОВАНИЕ БАНКИРОВ ---
-    from db import get_db
-    banks_ref = get_db().collection('chats').document(str(chat_id)).collection('banks')
-    active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
-    
+    # --- Лобби (применяется К ИТОГОВОЙ сумме, а не к base!) ---
+    lobby_type = await _get_active_lobby(chat_id, user_id)
     lobby_msg = ""
-    lobby_boost = 1.0
-    for b_doc in active_lobbies:
-        b_data = b_doc.to_dict()
-        if user_id not in b_data.get('lobby_blacklist', []):
-            l_type = b_data.get('lobby_type', 'golden')
-            if l_type == 'golden':
-                lobby_boost = 1.2
-                lobby_msg = "\n🌟 Золотой век: +20% к зарплате!"
-                break
-            elif l_type == 'work':
-                lobby_boost = 1.4
-                lobby_msg = "\n🏭 Индустриализация: +40% к зарплате!"
-                break
-            
-    final_earnings = int(base_earnings * lobby_boost)
+    if lobby_type == 'golden':
+        final_earnings = int(final_earnings * 1.2)
+        lobby_msg = "\n🌟 Золотой век: +20% к зарплате!"
+    elif lobby_type == 'work':
+        final_earnings = int(final_earnings * 1.4)
+        lobby_msg = "\n🏭 Индустриализация: +40% к зарплате!"
 
-    final_earnings, season_msg = await apply_season_logic(chat_id, user_id, final_earnings)
+    # --- Сезоны ---
+    final_earnings, season_msg = await apply_season_logic(
+        chat_id, user_id, final_earnings
+    )
     if final_earnings > 0:
-        await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
+        await update_user_balance(chat_id, user_id, final_earnings,
+                                   is_debt_repayment=True)
 
-
-    from seasons import get_season_config, get_glitch_text
+    # --- Название работы ---
     cfg = await get_season_config()
-    job_list = cfg.get('strings', {}).get('job_list') if cfg.get('active') else None
-    
+    job_list = (cfg.get('strings', {}) or {}).get('job_list') if cfg.get('active') else None
     if job_list:
         job = rand.choice(job_list)
     else:
-        jobs =[
-            "разгрузил вагоны",
-            "написал код за еду",
-            "доставил пиццу",
-            "отработал смену на заводе",
-            "собрал металлолом"
-        ]
-        if data.get('is_banker', False):
-            jobs = ["поработал с документами", "провел встречу с инвесторами", "свел дебет с кредитом", "продал акции банка"]
+        jobs = ([
+            "поработал с документами", "провёл встречу с инвесторами",
+            "свёл дебет с кредитом", "продал акции банка"
+        ] if is_banker else [
+            "разгрузил вагоны", "написал код за еду", "доставил пиццу",
+            "отработал смену на заводе", "собрал металлолом"
+        ])
         job = rand.choice(jobs)
 
-    afk_text = f"💼 Ты <b>{job}</b> и на автопилоте заработал <b>{final_earnings}</b> сыроежек!{pet_msg}{lobby_msg}{collector_msg}{bank_profit_msg}{season_msg}"
+    afk_text = (
+        f"💼 Ты <b>{job}</b> и заработал <b>{final_earnings}</b> сыроежек!"
+        f"{pet_msg}{lobby_msg}{collector_msg}{bank_profit_msg}{season_msg}"
+    )
     afk_text = await get_glitch_text(afk_text)
-    
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
-    import uuid
+
+    # --- Мини-игра ---
     builder = InlineKeyboardBuilder()
-    game_id = str(uuid.uuid4())[:8]
-    
-    bonus = rand.randint(500, 1250) if is_banker else rand.randint(1000, 2500)
-    
+    game_id = uuid.uuid4().hex[:8]
+    lobby_boost = 1.4 if lobby_type == 'work' else (1.2 if lobby_type == 'golden' else 1.0)
+    bonus = (rand.randint(500, 1250) if is_banker
+             else rand.randint(1000, 2500))
+    bonus = int(bonus * lobby_boost)
+
     if is_banker:
         a = rand.randint(100, 500)
         b = rand.randint(100, 500)
-        correct_ans = a + b
-        options = [correct_ans, correct_ans + rand.randint(10, 50), correct_ans - rand.randint(10, 50)]
+        correct = a + b
+        options = [correct,
+                   correct + rand.randint(10, 50),
+                   correct - rand.randint(10, 50)]
         rand.shuffle(options)
-        
         game_text = f"\n\n🎮 <b>ПРЕМИЯ:</b> Сведите баланс! <b>{a} + {b} = ?</b>"
-        
         for opt in options:
-            cb_data = f"work_btn_{game_id}_1" if opt == correct_ans else f"work_btn_{game_id}_0"
-            builder.button(text=str(opt), callback_data=cb_data)
+            flag = "1" if opt == correct else "0"
+            builder.button(text=str(opt),
+                           callback_data=f"work_btn_{game_id}_{flag}")
     else:
         fruits = ["🍏", "🍎", "🍐", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🫐"]
         target = rand.choice(fruits)
@@ -526,58 +654,74 @@ async def cmd_work(message: types.Message):
         if target not in options:
             options[0] = target
         rand.shuffle(options)
-        
-        game_text = f"\n\n🎮 <b>ПРЕМИЯ:</b> Собери нужный товар! Нажми на <b>{target}</b>"
-        
+        game_text = (f"\n\n🎮 <b>ПРЕМИЯ:</b> Собери нужный товар! "
+                     f"Нажми на <b>{target}</b>")
         for opt in options:
-            cb_data = f"work_btn_{game_id}_1" if opt == target else f"work_btn_{game_id}_0"
-            builder.button(text=opt, callback_data=cb_data)
-            
+            flag = "1" if opt == target else "0"
+            builder.button(text=opt,
+                           callback_data=f"work_btn_{game_id}_{flag}")
+
     builder.adjust(3)
-    
+
     _cleanup_expired_games()
     active_work_games[game_id] = {
         'user_id': user_id,
-        'bonus': int(bonus * lobby_boost),
-        'expires': time.time() + 60
+        'bonus': bonus,
+        'expires': time.time() + GAME_TTL,
     }
-    
     await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
+
 
 @router.callback_query(F.data.startswith("work_btn_"))
 async def process_work_btn(callback: types.CallbackQuery):
     parts = callback.data.split("_")
-    if len(parts) < 4: return
+    if len(parts) < 4:
+        return await callback.answer()
+
     game_id = parts[2]
     is_correct = parts[3] == "1"
-    
+
     game = active_work_games.get(game_id)
     if not game:
-        return await callback.answer("⏳ Время вышло или игра уже завершена!", show_alert=True)
-        
+        return await callback.answer(
+            "⏳ Время вышло или игра уже завершена!", show_alert=True
+        )
     if game['user_id'] != callback.from_user.id:
         return await callback.answer("Это не твоя работа!", show_alert=True)
-        
     if time.time() > game['expires']:
-        del active_work_games[game_id]
-        await callback.message.edit_reply_markup(reply_markup=None)
+        active_work_games.pop(game_id, None)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
         return await callback.answer("⏳ Время вышло!", show_alert=True)
-        
-    del active_work_games[game_id]
-    
-    # aiogram 3.x html_text
-    original_html = callback.message.html_text if hasattr(callback.message, 'html_text') else callback.message.text
-    if not original_html:
-        original_html = ""
-        
+
+    # Атомарно удаляем, чтобы кнопку нельзя было нажать дважды
+    if active_work_games.pop(game_id, None) is None:
+        return await callback.answer()
+
+    original = (callback.message.html_text
+                if hasattr(callback.message, 'html_text')
+                else callback.message.text) or ""
+
+    chat_id = callback.message.chat.id
     if is_correct:
-        chat_id = callback.message.chat.id
         await update_user_balance(chat_id, callback.from_user.id, game['bonus'])
-        new_text = original_html + f"\n\n✅ <b>Успех!</b> Ты получил премию <b>{game['bonus']}</b> сыр.!"
-        await callback.message.edit_text(new_text, reply_markup=None)
+        new_text = (original +
+                    f"\n\n✅ <b>Успех!</b> Премия <b>{game['bonus']}</b> сыр.!")
     else:
-        new_text = original_html + "\n\n❌ <b>Ошибка!</b> Ты запорол работу, премия сгорела."
+        new_text = original + "\n\n❌ <b>Ошибка!</b> Премия сгорела."
+
+    try:
         await callback.message.edit_text(new_text, reply_markup=None)
+    except Exception:
+        await callback.message.answer(new_text)
+    await callback.answer()
+
+
+# ============================================================
+#  /crime
+# ============================================================
 @router.message(Command("crime"))
 async def cmd_crime(message: types.Message):
     chat_id = message.chat.id
@@ -587,166 +731,187 @@ async def cmd_crime(message: types.Message):
     data = await get_user_data(chat_id, user_id, full_name)
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь совершать преступления.")
-        
-    from diseases import get_active_diseases
-    active_diseases = await get_active_diseases(chat_id, user_id)
-
     if data.get('is_banker', False):
-        return await message.answer("🏦 Вы — уважаемый Банкир. Воровать не по статусу. (Крайм отключен для банкиров)")
+        return await message.answer(
+            "🏦 Вы — уважаемый Банкир. Воровать не по статусу."
+        )
+
+    active_diseases = await get_active_diseases(chat_id, user_id)
 
     last_crime = data.get('last_crime_time', 0)
     current_time = time.time()
-
-    if current_time - last_crime < 3600:
-        remain = int(3600 - (current_time - last_crime))
+    if current_time - last_crime < CRIME_COOLDOWN:
+        remain = int(CRIME_COOLDOWN - (current_time - last_crime))
         mins, secs = divmod(remain, 60)
-        return await message.answer(f"⏳ Копы ищут тебя. Заляг на дно еще на {mins} мин. {secs} сек.")
+        return await message.answer(
+            f"⏳ Копы ищут тебя. Заляг на дно ещё {mins} мин. {secs} сек."
+        )
 
     await update_user_field(chat_id, user_id, 'last_crime_time', current_time)
 
     rand = secrets.SystemRandom()
     stealth_level = data.get('skills', {}).get('stealth', 0)
-    
-    # --- БОНУС ПИТОМЦА ---
-    pet = data.get('pet')
+
+    # --- ИНИЦИАЛИЗАЦИЯ success_chance (БЫЛО БАГОМ!) ---
+    success_chance = 0.5 + min(stealth_level, 20) * 0.02  # макс +40%
+
+    # --- Питомец ---
+    pet = data.get('pet') or {}
     pet_id = pet.get('id') if isinstance(pet, dict) else None
+    pet_msg = ""
 
     if 'hpv' in active_diseases:
         pet_id = None
         pet_msg = "\n🦠 <b>ВПЧ</b>: Питомец отказался помогать."
-    else:
-        pet_msg = "\n🐉 Дракон помог провернуть дело!" if pet_id == 'dragon' else ""
 
-    dragon_bonus = 0.1 if pet_id == 'dragon' else 0
+    if pet_id == 'dragon':
+        success_chance += 0.10
+        pet_msg = "\n🐉 Дракон помогает провернуть дело!"
 
-    # --- ЛОББИРОВАНИЕ (ШАНС УСПЕХА) ---
-    from db import get_db
-    current_time = time.time()
-    banks_ref = get_db().collection('chats').document(str(chat_id)).collection('banks')
-    active_lobbies = await banks_ref.where('lobby_until', '>', current_time).get()
-    
-    lobby_type = 'none'
-    for b_doc in active_lobbies:
-        b_data = b_doc.to_dict()
-        if user_id not in b_data.get('lobby_blacklist', []):
-            lobby_type = b_data.get('lobby_type', 'golden')
-            if lobby_type == 'crime':
-                success_chance += 0.20 # +20% к шансу успеха
-            break
+    # --- Лобби ---
+    lobby_type = await _get_active_lobby(chat_id, user_id)
+    if lobby_type == 'crime':
+        success_chance += 0.20
 
     if 'syphilis' in active_diseases:
         success_chance /= 2.0
-        pet_msg += "\n🦠 <b>Сифилис</b>: Шанс успеха порезан в 2 раза из-за ужасного самочувствия."
+        pet_msg += "\n🦠 <b>Сифилис</b>: шанс успеха урезан вдвое."
 
-    if rand.random() < success_chance:
-        base_earnings = rand.randint(200, 500)
-        
-        # --- ЛОББИРОВАНИЕ (БУСТ КУША) ---
-        lobby_msg = ""
-        lobby_boost = 1.0
-        if lobby_type == 'golden':
-            lobby_boost = 1.2
-            lobby_msg = "\n🌟 Золотой век: +20% к кушу!"
-        elif lobby_type == 'crime':
-            lobby_boost = 1.2 # Амнистия тоже дает буст
-            lobby_msg = "\n🥷 Амнистия: Куш увеличен!"
+    success_chance = max(0.05, min(success_chance, 0.95))
 
-        final_earnings = int(base_earnings * lobby_boost)
-
-        # --- ЛОГИКА КОЛЛЕКТОРОВ ---
-        collector_msg = ""
-        debts = data.get('debts', {})
-        balance = data.get('balance', 0)
-
-        if pet_id != 'dragon' and (debts or balance < 0) and rand.randint(1, 100) <= 40:
-            if debts:
-                lender_id_str = secrets.choice(list(debts.keys()))
-                debt_amount = debts[lender_id_str]
-
-                is_bank = lender_id_str.startswith("bank_")
-
-                collector_cut = int(base_earnings * 0.5)
-                if collector_cut == 0: collector_cut = 1
-                pay_amount = min(collector_cut, debt_amount)
-
-                if pay_amount > 0:
-                    final_earnings = base_earnings - pay_amount
-                    debts[lender_id_str] -= pay_amount
-                    if debts[lender_id_str] <= 0:
-                        del debts[lender_id_str]
-                    
-                    await update_user_field(chat_id, user_id, 'debts', debts)
-                    
-                    if is_bank:
-                        banker_id = int(lender_id_str.split("_")[1])
-                        from profile_bank import get_bank_info, create_or_update_bank
-                        bank_data = await get_bank_info(chat_id, banker_id)
-                        lender_name = bank_data.get('name', 'Неизвестный Банк') if bank_data else 'Банк'
-                        if bank_data:
-                            await create_or_update_bank(chat_id, banker_id, {'capital': bank_data.get('capital', 0) + pay_amount})
-                        collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ БАНКА!</b> Забрали <b>{pay_amount}</b> сыр. в счет долга."
-                    else:
-                        lender_id = int(lender_id_str)
-                        lender_data = await get_user_data(chat_id, lender_id)
-                        lender_name = lender_data.get('full_name', 'Кредитор')
-                        await update_user_balance(chat_id, lender_id, pay_amount, is_debt_repayment=True)
-                        collector_msg = f"\n\n🦹‍♂️ <b>ЧАСТНЫЕ КОЛЛЕКТОРЫ!</b> Забрали <b>{pay_amount}</b> сыр. в счет долга."
-            else:
-                penalty = rand.randint(100, 300)
-                final_earnings = 0
-                await update_user_balance(chat_id, user_id, -penalty, is_debt_repayment=True)
-                collector_msg = f"\n\n🦹‍♂️ <b>КОЛЛЕКТОРЫ!</b> Выбили <b>{penalty}</b> сыр. штрафа."
-        elif pet_id == 'dragon' and (debts or balance < 0):
-            pet_msg += " И отпугнул коллекторов!"
-
-        final_earnings, season_msg = await apply_season_logic(chat_id, user_id, final_earnings)
-        if final_earnings > 0:
-            await update_user_balance(chat_id, user_id, final_earnings, is_debt_repayment=True)
-        
-        from seasons import get_glitch_text
-        season_msg = await get_glitch_text(season_msg)
-        afk_text = f"🥷 <b>Успешное проникновение!</b> Ты нашел <b>{final_earnings}</b> сыр. на столе.{pet_msg}{lobby_msg}{collector_msg}{season_msg}"
-        afk_text = await get_glitch_text(afk_text)
-        
-        from aiogram.utils.keyboard import InlineKeyboardBuilder
-        import uuid
-        builder = InlineKeyboardBuilder()
-        game_id = str(uuid.uuid4())[:8]
-        bonus = rand.randint(1500, 4000)
-        
-        tools = ["🔧", "🪛", "🔑", "🔨", "🪚", "🧲"]
-        target = rand.choice(["🔑", "🧲", "🪛"])
-        options = rand.sample(tools, 3)
-        if target not in options:
-            options[0] = target
-        rand.shuffle(options)
-        
-        game_text = f"\n\n🔒 <b>ВЗЛОМ СЕЙФА:</b> Ты нашел огромный сейф! Выбери правильный инструмент (<b>{target}</b>), чтобы вскрыть его!"
-        
-        for opt in options:
-            cb_data = f"crime_btn_{game_id}_1" if opt == target else f"crime_btn_{game_id}_0"
-            builder.button(text=opt, callback_data=cb_data)
-            
-        builder.adjust(3)
-        
-        _cleanup_expired_games()
-        active_crime_games[game_id] = {
-            'user_id': user_id,
-            'bonus': int(bonus * lobby_boost),
-            'expires': time.time() + 60
-        }
-        
-        await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
-    else:
+    if rand.random() >= success_chance:
+        # ПРОВАЛ
         fine = rand.randint(500, 1500)
         if lobby_type == 'crime':
-            fine = int(fine * 0.2) # -80% штраф
-            msg = f"🚔 Тебя почти поймали, но благодаря <b>Амнистии</b> ты отделался легким штрафом: <b>{fine}</b> сыр."
+            fine = max(1, int(fine * 0.2))
+            msg = (f"🚔 Тебя почти поймали, но благодаря <b>Амнистии</b> "
+                   f"ты отделался штрафом: <b>{fine}</b> сыр.")
         else:
-            msg = f"🚔 Тебя поймали! Суд выписал штраф в <b>{fine}</b> сыроежек."
-        
-        await update_user_balance(chat_id, user_id, -fine, min_balance=0, is_debt_repayment=True)
-        await message.answer(msg)
+            msg = f"🚔 Тебя поймали! Суд выписал штраф в <b>{fine}</b> сыр."
+        await update_user_balance(chat_id, user_id, -fine,
+                                   min_balance=0, is_debt_repayment=True)
+        return await message.answer(msg)
+
+    # УСПЕХ
+    base_earnings = rand.randint(200, 500)
+
+    # Коллекторы
+    final_earnings, collector_msg, dragon_blocked = await _process_collectors(
+        chat_id, user_id, data, base_earnings, pet_id, trigger_chance=40
+    )
+    if dragon_blocked and (data.get('debts') or data.get('balance', 0) < 0):
+        pet_msg += " И отпугнул коллекторов!"
+
+    # Лобби-буст применяется к ИТОГУ
+    lobby_msg = ""
+    if lobby_type == 'golden':
+        final_earnings = int(final_earnings * 1.2)
+        lobby_msg = "\n🌟 Золотой век: +20% к кушу!"
+    elif lobby_type == 'crime':
+        final_earnings = int(final_earnings * 1.2)
+        lobby_msg = "\n🥷 Амнистия: куш увеличен!"
+
+    # Сезоны
+    final_earnings, season_msg = await apply_season_logic(
+        chat_id, user_id, final_earnings
+    )
+    if final_earnings > 0:
+        await update_user_balance(chat_id, user_id, final_earnings,
+                                   is_debt_repayment=True)
+
+    afk_text = (
+        f"🥷 <b>Успешное проникновение!</b> Ты нашёл "
+        f"<b>{final_earnings}</b> сыр.{pet_msg}{lobby_msg}"
+        f"{collector_msg}{season_msg}"
+    )
+    afk_text = await get_glitch_text(afk_text)
+
+    # Мини-игра «вскрытие сейфа»
+    builder = InlineKeyboardBuilder()
+    game_id = uuid.uuid4().hex[:8]
+    lobby_boost = 1.2 if lobby_type in ('golden', 'crime') else 1.0
+    bonus = int(rand.randint(1500, 4000) * lobby_boost)
+
+    tools = ["🔧", "🪛", "🔑", "🔨", "🪚", "🧲"]
+    target = rand.choice(["🔑", "🧲", "🪛"])
+    options = rand.sample(tools, 3)
+    if target not in options:
+        options[0] = target
+    rand.shuffle(options)
+
+    game_text = (f"\n\n🔒 <b>ВЗЛОМ СЕЙФА:</b> Выбери правильный "
+                 f"инструмент (<b>{target}</b>)!")
+    for opt in options:
+        flag = "1" if opt == target else "0"
+        builder.button(text=opt, callback_data=f"crime_btn_{game_id}_{flag}")
+    builder.adjust(3)
+
+    _cleanup_expired_games()
+    active_crime_games[game_id] = {
+        'user_id': user_id,
+        'bonus': bonus,
+        'expires': time.time() + GAME_TTL,
+    }
+    await message.answer(afk_text + game_text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("crime_btn_"))
+async def process_crime_btn(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) < 4:
+        return await callback.answer()
+
+    game_id = parts[2]
+    is_correct = parts[3] == "1"
+
+    game = active_crime_games.get(game_id)
+    if not game:
+        return await callback.answer(
+            "⏳ Слишком поздно! Сейф заблокировался.", show_alert=True
+        )
+    if game['user_id'] != callback.from_user.id:
+        return await callback.answer("Это не твой сейф!", show_alert=True)
+    if time.time() > game['expires']:
+        active_crime_games.pop(game_id, None)
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return await callback.answer("⏳ Время вышло, копы уже здесь!", show_alert=True)
+
+    if active_crime_games.pop(game_id, None) is None:
+        return await callback.answer()
+
+    original = (callback.message.html_text
+                if hasattr(callback.message, 'html_text')
+                else callback.message.text) or ""
+
+    chat_id = callback.message.chat.id
+    rand = secrets.SystemRandom()
+
+    if is_correct:
+        await update_user_balance(chat_id, callback.from_user.id, game['bonus'])
+        new_text = (original +
+                    f"\n\n💎 <b>ДЖЕКПОТ!</b> Ты вытащил "
+                    f"<b>{game['bonus']}</b> сыр.!")
+    else:
+        penalty = rand.randint(500, 1500)
+        await update_user_balance(chat_id, callback.from_user.id, -penalty,
+                                   is_debt_repayment=True)
+        new_text = (original +
+                    f"\n\n🚨 <b>ПРОВАЛ!</b> Сирена! Ты потерял "
+                    f"<b>{penalty}</b> сыр.")
+
+    try:
+        await callback.message.edit_text(new_text, reply_markup=None)
+    except Exception:
+        await callback.message.answer(new_text)
+    await callback.answer()
+
+
+# ============================================================
+#  ОГРАБЛЕНИЕ БАНКА
+# ============================================================
 @router.message(F.text.lower().startswith("ограбить банк"))
 async def cmd_rob_bank(message: types.Message):
     chat_id = message.chat.id
@@ -756,105 +921,75 @@ async def cmd_rob_bank(message: types.Message):
     data = await get_user_data(chat_id, user_id, full_name)
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь грабить банки.")
-
     if data.get('is_banker', False):
-        return await message.answer("🏦 Банкирам запрещено грабить банки коллег!")
+        return await message.answer("🏦 Банкирам запрещено грабить коллег!")
 
-    args = message.text.split(maxsplit=2)
+    args = (message.text or "").split(maxsplit=2)
     if len(args) < 3:
-        return await message.answer("Использование: <code>ограбить банк [Название или ID]</code>")
+        return await message.answer(
+            "Использование: <code>ограбить банк [Название]</code>"
+        )
 
-    # Cooldown (например, 12 часов)
     last_rob = data.get('last_bank_rob_time', 0)
     current_time = time.time()
-    if current_time - last_rob < 43200:
-        remain = int(43200 - (current_time - last_rob))
+    if current_time - last_rob < ROB_BANK_COOLDOWN:
+        remain = int(ROB_BANK_COOLDOWN - (current_time - last_rob))
         hours, rem = divmod(remain, 3600)
         mins, _ = divmod(rem, 60)
-        return await message.answer(f"⏳ Полиция патрулирует город после недавнего налета. Заляг на дно еще на {hours} ч. {mins} мин.")
+        return await message.answer(
+            f"⏳ Полиция патрулирует. Заляг на дно ещё на "
+            f"{hours} ч. {mins} мин."
+        )
 
-    identifier = args[2]
+    identifier = args[2].strip()
     from profile_bank import get_bank_info, create_or_update_bank
     bank_data = await get_bank_info(chat_id, identifier)
-
     if not bank_data:
-        return await message.answer("🏦 Банк не найден. Проверьте название.")
+        return await message.answer("🏦 Банк не найден. Проверь название.")
 
-    target_banker_id = bank_data['banker_id']
-    capital = bank_data.get('capital', 0)
-
+    target_banker_id = bank_data.get('banker_id')
+    capital = int(bank_data.get('capital', 0))
     if capital < 10000:
-        return await message.answer("В этом банке слишком мало денег, грабить нечего!")
+        return await message.answer(
+            "В этом банке слишком мало денег, грабить нечего!"
+        )
 
     await update_user_field(chat_id, user_id, 'last_bank_rob_time', current_time)
 
     rand = secrets.SystemRandom()
     stealth_level = data.get('skills', {}).get('stealth', 0)
-
-    # Базовый шанс успеха - 5% + 2% за каждый уровень стелса
-    success_chance = 0.05 + (stealth_level * 0.02)
+    success_chance = min(0.5, 0.05 + stealth_level * 0.02)
 
     if rand.random() < success_chance:
-        # Украли от 1% до 5% от капитала банка
         steal_percent = rand.uniform(0.01, 0.05)
-        stolen_amount = int(capital * steal_percent)
-
-        await create_or_update_bank(chat_id, target_banker_id, {'capital': capital - stolen_amount})
-        await update_user_balance(chat_id, user_id, stolen_amount)
-
-        await message.answer(f"🥷 <b>УСПЕШНОЕ ОГРАБЛЕНИЕ!</b>\n\nВы ворвались в банк <b>{escape_html(bank_data.get('name'))}</b>, вскрыли сейф и вынесли <b>{stolen_amount}</b> сыроежек!\n<i>Банк понес убытки.</i>")
+        stolen = int(capital * steal_percent)
+        await create_or_update_bank(
+            chat_id, target_banker_id,
+            {'capital': capital - stolen}
+        )
+        await update_user_balance(chat_id, user_id, stolen)
+        await message.answer(
+            f"🥷 <b>УСПЕШНОЕ ОГРАБЛЕНИЕ!</b>\n\n"
+            f"Вы вынесли из <b>{escape_html(bank_data.get('name', '?'))}</b> "
+            f"<b>{stolen}</b> сыроежек!"
+        )
     else:
-        # Провал
-        penalty = rand.randint(50000, 150000)
-        await update_user_balance(chat_id, user_id, -penalty)
-
-        # Выдаем временный мут через aiogram
-        from datetime import timedelta
+        penalty = rand.randint(50_000, 150_000)
+        await update_user_balance(chat_id, user_id, -penalty, min_balance=0)
         try:
             await message.bot.restrict_chat_member(
                 chat_id=chat_id,
                 user_id=user_id,
                 permissions=types.ChatPermissions(can_send_messages=False),
-                until_date=timedelta(minutes=30)
+                until_date=timedelta(minutes=30),
             )
             mute_text = "\nВас посадили в тюрьму (мут) на 30 минут."
-        except Exception:
-            mute_text = "\nСпецназ пытался вас арестовать, но вам удалось сбежать, потеряв деньги в спешке."
+        except Exception as e:
+            logger.warning(f"Не смог замутить {user_id}: {e}")
+            mute_text = "\nВам удалось сбежать, но деньги вы потеряли."
 
-        await message.answer(f"🚔 <b>ОБЛАВА! СРАБОТАЛА СИГНАЛИЗАЦИЯ!</b>\n\nОграбление банка <b>{escape_html(bank_data.get('name'))}</b> провалилось. Вы потеряли <b>{penalty}</b> сыроежек при побеге.{mute_text}")
-
-@router.callback_query(F.data.startswith("crime_btn_"))
-async def process_crime_btn(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    if len(parts) < 4: return
-    game_id = parts[2]
-    is_correct = parts[3] == "1"
-    
-    game = active_crime_games.get(game_id)
-    if not game:
-        return await callback.answer("⏳ Слишком поздно! Сейф заблокировался.", show_alert=True)
-        
-    if game['user_id'] != callback.from_user.id:
-        return await callback.answer("Это не твой сейф!", show_alert=True)
-        
-    if time.time() > game['expires']:
-        del active_crime_games[game_id]
-        await callback.message.edit_reply_markup(reply_markup=None)
-        return await callback.answer("⏳ Время вышло, копы уже здесь!", show_alert=True)
-        
-    del active_crime_games[game_id]
-    
-    original_html = callback.message.html_text if hasattr(callback.message, 'html_text') else callback.message.text
-    if not original_html: original_html = ""
-        
-    chat_id = callback.message.chat.id
-    if is_correct:
-        await update_user_balance(chat_id, callback.from_user.id, game['bonus'])
-        new_text = original_html + f"\n\n💎 <b>ДЖЕКПОТ!</b> Дверца поддалась, и ты вытащил <b>{game['bonus']}</b> сыр.!"
-        await callback.message.edit_text(new_text, reply_markup=None)
-    else:
-        import secrets
-        penalty = secrets.SystemRandom().randint(500, 1500)
-        await update_user_balance(chat_id, callback.from_user.id, -penalty, is_debt_repayment=True)
-        new_text = original_html + f"\n\n🚨 <b>ПРОВАЛ!</b> Инструмент сломался, взвыла сирена! В панике убегая от копов, ты потерял <b>{penalty}</b> сыр."
-        await callback.message.edit_text(new_text, reply_markup=None)
+        await message.answer(
+            f"🚔 <b>ОБЛАВА!</b>\n\n"
+            f"Ограбление <b>{escape_html(bank_data.get('name', '?'))}</b> "
+            f"провалилось. Потеряно <b>{penalty}</b> сыр.{mute_text}"
+        )
