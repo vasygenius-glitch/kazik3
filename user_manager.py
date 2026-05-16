@@ -38,7 +38,7 @@ LOCK_CLEANUP_THRESHOLD: int = 2000     # чистим словарь локов,
 # Денежные пороги
 LARGE_TX_THRESHOLD: int = 500_000      # логировать транзакции от этой суммы
 DEFAULT_START_BALANCE: int = 500
-BASE_BONUS: int = 1000
+BASE_BONUS: int = 150
 
 # Кулдауны (сек)
 BONUS_COOLDOWN: int = 14400            # 4 часа

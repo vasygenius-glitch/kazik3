@@ -605,22 +605,16 @@ async def cmd_cups(message: types.Message):
         # пропустим выбор сложности, если она указана прямо в команде
         return await _start_with_difficulty(message, bet, diff_code)
 
-    bonus_given, receipt = await check_and_give_bonus(chat_id, user_id, full_name)
-    bonus_text = ""
-    if bonus_given:
-        bonus_total = receipt.get("total", 0) if isinstance(receipt, dict) else 0
-        bonus_text = f"{GIFT_EMOJI} Ежедневный бонус: +{_format_money(bonus_total)} сыроежек!\n"
-
     data = await get_user_data(chat_id, user_id, full_name)
     balance = data.get("balance", 0)
 
     if balance - bet < CREDIT_LIMIT:
         await message.answer(
-            f"{bonus_text}💸 Ваш кредитный лимит ({_format_money(CREDIT_LIMIT)}) исчерпан. Пополните баланс."
+            f"💸 Ваш кредитный лимит ({_format_money(CREDIT_LIMIT)}) исчерпан. Пополните баланс."
         )
         return
 
-    await _offer_difficulty(message, bet, bonus_text=bonus_text)
+    await _offer_difficulty(message, bet)
 
 
 async def _offer_difficulty(message: types.Message, bet: int, bonus_text: str = "") -> None:
@@ -705,7 +699,7 @@ async def on_difficulty_chosen(callback: types.CallbackQuery):
         await callback.message.answer("Недостаточно средств для ставки.")
         return
     await invalidate_user_cache_safe(chat_id, user_id)
-    await _spawn_game(callback.message, bet, diff)
+    await _spawn_game(callback.message, bet, diff, override_user=callback.from_user)
 
 
 @router.callback_query(F.data.startswith("cups_cancel|"))
@@ -776,7 +770,7 @@ async def on_play_again(callback: types.CallbackQuery):
     with suppress(TelegramBadRequest):
         await callback.message.edit_reply_markup(reply_markup=None)
     await callback.answer()
-    await _spawn_game(callback.message, bet, diff, new_message=True)
+    await _spawn_game(callback.message, bet, diff, new_message=True, override_user=callback.from_user)
 
 
 @router.callback_query(F.data == "cups_noop")
