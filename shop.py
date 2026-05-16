@@ -1,367 +1,521 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
-import time
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from user_manager import get_user_data, update_user_balance, add_item_to_inventory, update_user_field
-from economy_utils import calculate_progressive_tax, get_global_tax
-from escape import escape_html
-from seasons import get_season_string
 
+import asyncio
+import logging
+import time
+from typing import Optional
+
+from firebase_admin import firestore_async
+
+from db import get_db
+from user_manager import (
+    get_user_data,
+    buy_item_tr,
+    sell_item_tr,
+    sell_vip_tr,
+)
+from economy_utils import (
+    calculate_progressive_tax,
+    calculate_biz_markup,
+    get_global_tax,
+)
+from seasons import get_season_string, get_glitch_text
+from diseases import get_active_diseases
+
+logger = logging.getLogger(__name__)
 router = Router()
 
-ITEMS = {
-    # БИЗНЕСЫ (Окупаемость - 10 сборов)
-    "шаурма": {"name": "🏪 Ларёк с шаурмой", "price": 25000, "cat": "biz", "action": "business", "income": 2500},
-    "мойка": {"name": "🚿 Автомойка", "price": 125000, "cat": "biz", "action": "business", "income": 12500},
-    "вендинг": {"name": "🍬 Вендинг", "price": 200000, "cat": "biz", "action": "business", "income": 20000},
-    "кофейня": {"name": "☕️ Кофейня", "price": 375000, "cat": "biz", "action": "business", "income": 37500},
-    "ресторан": {"name": "🍽 Ресторан", "price": 750000, "cat": "biz", "action": "business", "income": 75000},
-    "отель": {"name": "🏨 Отель", "price": 1750000, "cat": "biz", "action": "business", "income": 175000},
-    "ферма": {"name": "🌽 Ферма", "price": 3000000, "cat": "biz", "action": "business", "income": 300000},
-    "завод": {"name": "🏭 Завод", "price": 6250000, "cat": "biz", "action": "business", "income": 625000},
-    "салон": {"name": "🚙 Автосалон", "price": 12500000, "cat": "biz", "action": "business", "income": 1250000},
-    "нефть": {"name": "🛢 Вышка", "price": 25000000, "cat": "biz", "action": "business", "income": 2500000},
-    "банк": {"name": "🏦 Банк", "price": 62500000, "cat": "biz", "action": "business", "income": 6250000},
-    "айти": {"name": "💻 IT-компания", "price": 125000000, "cat": "biz", "action": "business", "income": 12500000},
-    "казино": {"name": "🎰 Казино", "price": 250000000, "cat": "biz", "action": "business", "income": 25000000},
-    "космодром": {"name": "🚀 Космодром", "price": 1250000000, "cat": "biz", "action": "business", "income": 125000000},
-    "планета": {"name": "🪐 Колония", "price": 2500000000, "cat": "biz", "action": "business", "income": 250000000},
-    
+# ─────────────────────────────────────────────────────────────
+#  КАТАЛОГ ТОВАРОВ
+# ─────────────────────────────────────────────────────────────
+ITEMS: dict[str, dict] = {
+    # БИЗНЕСЫ (Окупаемость — 10 сборов)
+    "шаурма":    {"name": "🏪 Ларёк с шаурмой", "price": 25_000,        "cat": "biz",   "action": "business", "income": 2_500},
+    "мойка":     {"name": "🚿 Автомойка",       "price": 125_000,       "cat": "biz",   "action": "business", "income": 12_500},
+    "вендинг":   {"name": "🍬 Вендинг",         "price": 200_000,       "cat": "biz",   "action": "business", "income": 20_000},
+    "кофейня":   {"name": "☕️ Кофейня",         "price": 375_000,       "cat": "biz",   "action": "business", "income": 37_500},
+    "ресторан":  {"name": "🍽 Ресторан",        "price": 750_000,       "cat": "biz",   "action": "business", "income": 75_000},
+    "отель":     {"name": "🏨 Отель",           "price": 1_750_000,     "cat": "biz",   "action": "business", "income": 175_000},
+    "ферма":     {"name": "🌽 Ферма",           "price": 3_000_000,     "cat": "biz",   "action": "business", "income": 300_000},
+    "завод":     {"name": "🏭 Завод",           "price": 6_250_000,     "cat": "biz",   "action": "business", "income": 625_000},
+    "салон":     {"name": "🚙 Автосалон",       "price": 12_500_000,    "cat": "biz",   "action": "business", "income": 1_250_000},
+    "нефть":     {"name": "🛢 Вышка",           "price": 25_000_000,    "cat": "biz",   "action": "business", "income": 2_500_000},
+    "банк":      {"name": "🏦 Банк",            "price": 62_500_000,    "cat": "biz",   "action": "business", "income": 6_250_000},
+    "айти":      {"name": "💻 IT-компания",     "price": 125_000_000,   "cat": "biz",   "action": "business", "income": 12_500_000},
+    "казино":    {"name": "🎰 Казино",          "price": 250_000_000,   "cat": "biz",   "action": "business", "income": 25_000_000},
+    "космодром": {"name": "🚀 Космодром",       "price": 1_250_000_000, "cat": "biz",   "action": "business", "income": 125_000_000},
+    "планета":   {"name": "🪐 Колония",         "price": 2_500_000_000, "cat": "biz",   "action": "business", "income": 250_000_000},
+
     # МАШИНЫ
-    "лада": {"name": "🚗 Lada Priora", "price": 12500, "cat": "cars", "action": "car", "income": 500},
-    "камри": {"name": "🚙 Toyota Camry", "price": 37500, "cat": "cars", "action": "car", "income": 1750},
-    "бмв": {"name": "🚕 BMW M5", "price": 125000, "cat": "cars", "action": "car", "income": 5000},
-    "гелик": {"name": "⬛️ Geländewagen", "price": 300000, "cat": "cars", "action": "car", "income": 12500},
-    "бугатти": {"name": "🏎 Bugatti Chiron", "price": 1250000, "cat": "cars", "action": "car", "income": 50000},
-    "самолет": {"name": "🛩 Частный Jet", "price": 12500000, "cat": "cars", "action": "car", "income": 625000},
-    
+    "лада":      {"name": "🚗 Lada Priora",     "price": 12_500,     "cat": "cars",  "action": "car", "income": 500},
+    "камри":     {"name": "🚙 Toyota Camry",    "price": 37_500,     "cat": "cars",  "action": "car", "income": 1_750},
+    "бмв":       {"name": "🚕 BMW M5",          "price": 125_000,    "cat": "cars",  "action": "car", "income": 5_000},
+    "гелик":     {"name": "⬛️ Geländewagen",    "price": 300_000,    "cat": "cars",  "action": "car", "income": 12_500},
+    "бугатти":   {"name": "🏎 Bugatti Chiron",  "price": 1_250_000,  "cat": "cars",  "action": "car", "income": 50_000},
+    "самолет":   {"name": "🛩 Частный Jet",     "price": 12_500_000, "cat": "cars",  "action": "car", "income": 625_000},
+
     # ПРОЧЕЕ
-    "вип": {"name": "💎 Статус VIP", "price": 1000000, "cat": "other", "action": "other"},
-    "антиварн": {"name": "💊 Снять варн", "price": 250000, "cat": "other", "action": "other"},
-    "condom": {"name": "🎈 Презерватив", "price": 340, "cat": "other", "action": "other"}
+    "вип":       {"name": "💎 Статус VIP",      "price": 1_000_000, "cat": "other", "action": "other"},
+    "антиварн":  {"name": "💊 Снять варн",      "price": 250_000,   "cat": "other", "action": "other"},
+    "condom":    {"name": "🎈 Презерватив",     "price": 340,       "cat": "other", "action": "other"},
 }
 
-# Кэш для кнопок магазина (чтобы не авейтить каждый раз сезонные строки)
-_shop_kb_cache = {"biz": "🏢 Бизнесы", "cars": "🚗 Машины", "ts": 0}
+CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}
+CONFIRM_THRESHOLD = 1_000_000  # цена, выше которой требуется подтверждение
+SELL_RATIO = 0.75
+CACHE_TTL = 60
 
+# ─────────────────────────────────────────────────────────────
+#  ВСПОМОГАТЕЛЬНЫЕ УТИЛИТЫ
+# ─────────────────────────────────────────────────────────────
+class _ShopKbCache:
+    """Потокобезопасный кэш сезонных строк клавиатуры."""
+    __slots__ = ("biz", "cars", "ts", "_lock")
+
+    def __init__(self):
+        self.biz = "🏢 Бизнесы"
+        self.cars = "🚗 Машины"
+        self.ts = 0.0
+        self._lock = asyncio.Lock()
+
+    async def refresh_if_needed(self):
+        if time.time() - self.ts <= CACHE_TTL:
+            return
+        async with self._lock:
+            if time.time() - self.ts <= CACHE_TTL:  # double-check
+                return
+            self.biz = await get_season_string("shop_biz", "🏢 Бизнесы")
+            self.cars = await get_season_string("shop_cars", "🚗 Машины")
+            self.ts = time.time()
+
+
+_shop_kb_cache = _ShopKbCache()
+
+
+def _has_overdue_debt(debts: Optional[dict]) -> bool:
+    """Проверяет, есть ли у пользователя просроченные банковские долги."""
+    if not debts:
+        return False
+    now = time.time()
+    for key, value in debts.items():
+        if not (isinstance(key, str) and key.startswith("bank_")):
+            continue
+        try:
+            if float(value) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        parts = key.split("_")
+        if len(parts) < 3:
+            continue
+        try:
+            due_date = int(parts[2])
+        except (TypeError, ValueError):
+            continue
+        if now > due_date:
+            return True
+    return False
+
+
+def _get_pet_id(data: dict) -> Optional[str]:
+    pet = data.get("pet")
+    if isinstance(pet, dict):
+        return pet.get("id")
+    return None
+
+
+def _calc_user_tax(data: dict, base_tax: float) -> float:
+    """Единая точка расчёта налога — гарантирует одинаковые цены везде."""
+    return calculate_progressive_tax(
+        data.get("balance", 0),
+        base_tax,
+        data.get("skills", {}).get("negotiation", 0),
+        _get_pet_id(data),
+    )
+
+
+def _calc_final_price(item: dict, balance: int, tax_rate: float) -> int:
+    """Итоговая цена покупки с учётом налога и наценки на роскошь для бизнесов."""
+    price = item["price"]
+    markup = int(price * (tax_rate / 100.0))
+    if item.get("cat") == "biz":
+        biz_markup_percent = calculate_biz_markup(balance)
+        markup += int(price * (biz_markup_percent / 100.0))
+    return price + markup
+
+
+async def _safe_edit(message: types.Message, text: str, reply_markup=None):
+    """edit_text без падений при отсутствии изменений / устаревшем сообщении."""
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            return
+        logger.debug("edit_text failed: %s", e)
+
+
+# ─────────────────────────────────────────────────────────────
+#  КЛАВИАТУРЫ
+# ─────────────────────────────────────────────────────────────
 async def get_main_shop_kb():
-    global _shop_kb_cache
-    if time.time() - _shop_kb_cache["ts"] > 60:
-        _shop_kb_cache["biz"] = await get_season_string("shop_biz", "🏢 Бизнесы")
-        _shop_kb_cache["cars"] = await get_season_string("shop_cars", "🚗 Машины")
-        _shop_kb_cache["ts"] = time.time()
-    
+    await _shop_kb_cache.refresh_if_needed()
     builder = InlineKeyboardBuilder()
-    builder.button(text=_shop_kb_cache["biz"], callback_data="shop_cat_biz")
-    builder.button(text=_shop_kb_cache["cars"], callback_data="shop_cat_cars")
+    builder.button(text=_shop_kb_cache.biz, callback_data="shop_cat_biz")
+    builder.button(text=_shop_kb_cache.cars, callback_data="shop_cat_cars")
     builder.button(text="💎 Прочее", callback_data="shop_cat_other")
     builder.button(text="🎒 Мой инвентарь", callback_data="shop_to_inv")
     builder.adjust(2, 2)
     return builder.as_markup()
 
-def get_sell_menu_kb(inventory, is_vip):
+
+def get_sell_menu_kb(inventory: dict, is_vip: bool):
     builder = InlineKeyboardBuilder()
     has_items = False
 
-    for item_id, count in inventory.items():
-        if count > 0 and item_id in ITEMS:
-            info = ITEMS[item_id]
-            sell_price = int(info['price'] * 0.75)
-            builder.button(text=f"Продать: {info['name']} ({count} шт) - {sell_price} сыр.", callback_data=f"sell_ask_{item_id}")
-            has_items = True
+    for item_id, count in (inventory or {}).items():
+        if item_id == "вип":          # VIP обрабатывается отдельно
+            continue
+        if item_id not in ITEMS:
+            continue
+        try:
+            cnt = int(count)
+        except (TypeError, ValueError):
+            continue
+        if cnt <= 0:
+            continue
+
+        info = ITEMS[item_id]
+        sell_price = int(info["price"] * SELL_RATIO)
+        qty_str = "" if info.get("cat") == "biz" else f" ({cnt} шт)"
+        builder.button(
+            text=f"Продать: {info['name']}{qty_str} — {sell_price} сыр.",
+            callback_data=f"sell_ask_{item_id}",
+        )
+        has_items = True
 
     if is_vip:
         info = ITEMS["вип"]
-        sell_price = int(info['price'] * 0.75)
-        builder.button(text=f"Продать: {info['name']} - {sell_price} сыр.", callback_data="sell_ask_вип")
+        sell_price = int(info["price"] * SELL_RATIO)
+        builder.button(
+            text=f"Продать: {info['name']} — {sell_price} сыр.",
+            callback_data="sell_ask_вип",
+        )
         has_items = True
 
     builder.button(text="⬅️ Назад", callback_data="shop_main")
     builder.adjust(1)
     return builder.as_markup(), has_items
 
-def get_sell_confirm_kb(item_id):
+
+def get_sell_confirm_kb(item_id: str):
     builder = InlineKeyboardBuilder()
     builder.button(text="✅ Да, продать", callback_data=f"sell_confirm_{item_id}")
     builder.button(text="❌ Отмена", callback_data="shop_sell_menu")
     builder.adjust(2)
     return builder.as_markup()
 
-def get_category_kb(category, balance, base_tax, negotiation_skill=0):
+
+def get_category_kb(category: str, data: dict, base_tax: float):
     builder = InlineKeyboardBuilder()
-    from economy_utils import calculate_biz_markup
-    tax_rate = calculate_progressive_tax(balance, base_tax, negotiation_skill)
-    
+    tax_rate = _calc_user_tax(data, base_tax)
+    balance = data.get("balance", 0)
+
     for item_id, info in ITEMS.items():
-        if info.get('cat') == category:
-            # Считаем обычный налог
-            markup = int(info['price'] * (tax_rate / 100.0))
-
-            # Налог на роскошь для бизнесов
-            if category == "biz":
-                biz_markup_percent = calculate_biz_markup(balance)
-                markup += int(info['price'] * (biz_markup_percent / 100.0))
-
-            final_price = info['price'] + markup
-            builder.button(text=f"{info['name']} - {final_price} сыр.", callback_data=f"buy_{item_id}")
+        if info.get("cat") != category:
+            continue
+        final_price = _calc_final_price(info, balance, tax_rate)
+        builder.button(
+            text=f"{info['name']} — {final_price} сыр.",
+            callback_data=f"buy_{item_id}",
+        )
     builder.button(text="⬅️ Назад", callback_data="shop_main")
     builder.adjust(1)
     return builder.as_markup()
 
+
+# ─────────────────────────────────────────────────────────────
+#  РЕНДЕРИНГ ЭКРАНОВ (переиспользуется из разных хендлеров)
+# ─────────────────────────────────────────────────────────────
+async def _render_main_shop(message: types.Message, data: dict, *, as_new: bool = False):
+    base_tax = await get_global_tax()
+    tax_rate = _calc_user_tax(data, base_tax)
+
+    debts_warning = ""
+    if _has_overdue_debt(data.get("debts")):
+        debts_warning = (
+            "\n\n⚠️ <b>ВНИМАНИЕ: На вас наложен арест за просроченный долг! "
+            "Вы не можете покупать новые вещи, но можете продать старые "
+            "для погашения долга.</b>"
+        )
+
+    shop_title = await get_season_string("shop", "🛒 Магазин Сыроежек")
+    shop_title = await get_glitch_text(shop_title)
+
+    text = (
+        f"<b>{shop_title}</b>\n\n"
+        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
+        f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{debts_warning}\n"
+        "Выберите категорию товаров:"
+    )
+    kb = await get_main_shop_kb()
+    if as_new:
+        await message.answer(text, reply_markup=kb)
+    else:
+        await _safe_edit(message, text, reply_markup=kb)
+
+
+async def _render_category(message: types.Message, data: dict, category: str):
+    base_tax = await get_global_tax()
+    cat_name = CATEGORY_NAMES.get(category, "?")
+    text = (
+        f"📂 <b>Категория: {cat_name}</b>\n\n"
+        "Выбери товар для покупки (цены указаны с учётом твоего налога):"
+    )
+    await _safe_edit(message, text, reply_markup=get_category_kb(category, data, base_tax))
+
+
+async def _render_sell_menu(message: types.Message, data: dict):
+    inventory = data.get("inventory") or {}
+    is_vip = bool(data.get("is_vip"))
+    kb, has_items = get_sell_menu_kb(inventory, is_vip)
+    if not has_items:
+        text = "🤷‍♂️ У вас нет имущества для продажи."
+    else:
+        text = (
+            "💰 <b>ПРОДАЖА ИМУЩЕСТВА</b>\n\n"
+            f"Выбери предмет, который хочешь продать "
+            f"(ты получишь {int(SELL_RATIO * 100)}% от стоимости):"
+        )
+    await _safe_edit(message, text, reply_markup=kb)
+
+
+# ─────────────────────────────────────────────────────────────
+#  ХЕНДЛЕРЫ
+# ─────────────────────────────────────────────────────────────
 @router.message(Command("shop"))
 async def cmd_shop(message: types.Message):
     data = await get_user_data(message.chat.id, message.from_user.id)
+    if data.get("is_banned"):
+        return
 
-    if data.get('is_banned'): return
-
-    from diseases import get_active_diseases
     active_diseases = await get_active_diseases(message.chat.id, message.from_user.id)
-    if 'ureaplasmosis' in active_diseases:
-        return await message.answer("🦠 <b>Уреаплазмоз</b>: Продавцы боятся заразиться и не пускают вас в магазин!")
+    if "ureaplasmosis" in active_diseases:
+        return await message.answer(
+            "🦠 <b>Уреаплазмоз</b>: Продавцы боятся заразиться и не пускают вас в магазин!"
+        )
 
-    debts = data.get('debts', {})
-    current_time = time.time()
-    has_overdue_debt = False
+    await _render_main_shop(message, data, as_new=True)
 
-    for k, v in debts.items():
-        if k.startswith("bank_") and v > 0:
-            parts = k.split("_")
-            if len(parts) >= 3:
-                due_date = int(parts[2])
-                if current_time > due_date:
-                    has_overdue_debt = True
-                    break
-
-    warning_text = ""
-    if has_overdue_debt:
-        warning_text = "\n\n⚠️ <b>ВНИМАНИЕ: На вас наложен арест за просроченный долг! Вы не можете покупать новые вещи, но можете продать старые для погашения долга.</b>"
-
-    base_tax = await get_global_tax()
-    pet_data = data.get('pet', {})
-    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
-
-    shop_title = await get_season_string("shop", "🛒 Магазин Сыроежек")
-    from seasons import get_glitch_text
-    shop_title = await get_glitch_text(shop_title)
-    
-    await message.answer(
-        f"<b>{shop_title}</b>\n\n"
-        f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
-        f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{warning_text}\n"
-        "Выберите категорию товаров:",
-        reply_markup=await get_main_shop_kb()
-    )
 
 @router.callback_query(F.data == "shop_main")
 async def shop_back(callback: types.CallbackQuery):
     await callback.answer()
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    base_tax = await get_global_tax()
-    pet_data = data.get('pet', {})
-    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-    tax_rate = calculate_progressive_tax(data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
-    
-    text = (f"🛒 <b>МАГАЗИН СЫРОЕДА</b>\n\n"
-            f"Твой баланс: <b>{data.get('balance', 0)}</b> сыр.\n"
-            f"📈 Твоя наценка: <b>{tax_rate}%</b>\n"
-            f"Выбери категорию:")
-    await callback.message.edit_text(text, reply_markup=await get_main_shop_kb())
+    await _render_main_shop(callback.message, data)
+
 
 @router.callback_query(F.data == "shop_to_inv")
 async def shop_to_inv(callback: types.CallbackQuery):
-    await callback.answer("🎒 Для управления имуществом, продажи и улучшения бизнесов введи команду /inv !", show_alert=True)
+    await callback.answer(
+        "🎒 Для управления имуществом, продажи и улучшения бизнесов введи команду /inv !",
+        show_alert=True,
+    )
+
 
 @router.callback_query(F.data.startswith("shop_cat_"))
 async def show_category(callback: types.CallbackQuery):
     await callback.answer()
+    category = callback.data.removeprefix("shop_cat_")
+    if category not in CATEGORY_NAMES:
+        return
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    base_tax = await get_global_tax()
-    
-    category = callback.data.replace("shop_cat_", "")
-    cats_names = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}
-    
-    text = f"📂 <b>Категория: {cats_names.get(category)}</b>\n\nВыбери товар для покупки (цены указаны с учетом твоего налога):"
-    await callback.message.edit_text(text, reply_markup=get_category_kb(category, data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0)))
+    await _render_category(callback.message, data, category)
+
+
+# Обработчик подтверждения покупки: ставим раньше общего, чтобы parse был чистый
+@router.callback_query(F.data.startswith("buy_conf_"))
+async def process_buy_confirmed(callback: types.CallbackQuery):
+    await _process_buy(callback, item_id=callback.data.removeprefix("buy_conf_"), confirmed=True)
+
 
 @router.callback_query(F.data.startswith("buy_"))
 async def process_buy(callback: types.CallbackQuery):
-    is_confirmed = callback.data.startswith("buy_conf_")
-    if is_confirmed:
-        item_id = callback.data.replace("buy_conf_", "")
-    else:
-        item_id = callback.data.replace("buy_", "")
+    # buy_conf_ уже обработан выше, а здесь оставшиеся "buy_xxx"
+    if callback.data.startswith("buy_conf_"):
+        return
+    await _process_buy(callback, item_id=callback.data.removeprefix("buy_"), confirmed=False)
 
+
+async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: bool):
     item = ITEMS.get(item_id)
-    if not item: return
+    if not item:
+        return await callback.answer("Товар не найден.", show_alert=True)
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
     data = await get_user_data(chat_id, user_id)
 
-    debts = data.get('debts', {})
-    current_time = time.time()
-    has_overdue_debt = False
+    if data.get("is_banned"):
+        return await callback.answer("Вы забанены.", show_alert=True)
 
-    for k, v in debts.items():
-        if k.startswith("bank_") and v > 0:
-            parts = k.split("_")
-            if len(parts) >= 3:
-                due_date = int(parts[2])
-                if current_time > due_date:
-                    has_overdue_debt = True
-                    break
-
-    if has_overdue_debt:
-        return await callback.answer("❌ У вас просроченный долг! Покупки запрещены.", show_alert=True)
-
-    base_tax = await get_global_tax()
-    pet_data = data.get('pet', {})
-    pet_id = pet_data.get('id') if isinstance(pet_data, dict) else None
-
-    balance = data.get('balance', 0)
-    tax_rate = calculate_progressive_tax(balance, base_tax, data.get('skills', {}).get('negotiation', 0), pet_id)
-
-    markup = int(item['price'] * (tax_rate / 100.0))
-    if item.get('cat') == "biz":
-        from economy_utils import calculate_biz_markup
-        biz_markup_percent = calculate_biz_markup(balance)
-        markup += int(item['price'] * (biz_markup_percent / 100.0))
-
-    final_price = item['price'] + markup
-
-    if data.get('balance', 0) < final_price:
-        return await callback.answer(f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True)
-
-    # Confirmation for expensive items
-    if final_price > 1000000 and not is_confirmed:
-        builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Да, купить", callback_data=f"buy_conf_{item_id}")
-        builder.button(text="❌ Отмена", callback_data=f"shop_cat_{item.get('cat', 'other')}")
-        builder.adjust(1)
-        return await callback.message.edit_text(
-            f"❓ Вы уверены, что хотите купить <b>{item['name']}</b> за <b>{final_price}</b> сыр.?",
-            reply_markup=builder.as_markup()
+    if _has_overdue_debt(data.get("debts")):
+        return await callback.answer(
+            "❌ У вас просроченный долг! Покупки запрещены.", show_alert=True
         )
 
-    if item.get('cat') == "biz":
-        limit = 4 if data.get('is_vip') else 2
-        inv = data.get('inventory', {})
-        biz_count = sum(1 for k in inv if ITEMS.get(k, {}).get('cat') == 'biz')
-        
+    base_tax = await get_global_tax()
+    tax_rate = _calc_user_tax(data, base_tax)
+    balance = data.get("balance", 0)
+    final_price = _calc_final_price(item, balance, tax_rate)
+
+    if balance < final_price:
+        return await callback.answer(
+            f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True
+        )
+
+    # Лимит и дубликаты для бизнесов — предварительная проверка (финальная — в транзакции)
+    if item.get("cat") == "biz":
+        limit = 4 if data.get("is_vip") else 2
+        inv = data.get("inventory") or {}
         if item_id in inv:
             return await callback.answer("У тебя уже есть этот бизнес!", show_alert=True)
+        biz_count = sum(1 for k in inv if ITEMS.get(k, {}).get("cat") == "biz")
         if biz_count >= limit:
-            return await callback.answer(f"Лимит бизнесов ({limit}) достигнут!", show_alert=True)
+            return await callback.answer(
+                f"Лимит бизнесов ({limit}) достигнут!", show_alert=True
+            )
 
-    from db import get_db
-    from user_manager import buy_item_tr
-    from firebase_admin import firestore_async
-    
+    # Подтверждение для дорогих покупок
+    if final_price > CONFIRM_THRESHOLD and not confirmed:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✅ Да, купить", callback_data=f"buy_conf_{item_id}")
+        builder.button(
+            text="❌ Отмена",
+            callback_data=f"shop_cat_{item.get('cat', 'other')}",
+        )
+        builder.adjust(1)
+        await callback.answer()
+        return await _safe_edit(
+            callback.message,
+            f"❓ Вы уверены, что хотите купить <b>{item['name']}</b> "
+            f"за <b>{final_price}</b> сыр.?",
+            reply_markup=builder.as_markup(),
+        )
+
+    # ─── Транзакция покупки ───
     db = get_db()
-    
+
     @firestore_async.transactional
-    async def run_buy_transaction(transaction, chat_id, user_id, item_id, price, is_vip):
-        return await buy_item_tr(transaction, chat_id, user_id, item_id, price, is_vip)
+    async def _buy_txn(transaction):
+        return await buy_item_tr(
+            transaction, chat_id, user_id, item_id, final_price, item_id == "вип"
+        )
 
     try:
-        is_vip_buy = (item_id == "вип")
-        res = run_buy_transaction(db.transaction(), chat_id, user_id, item_id, final_price, is_vip_buy)
-        if hasattr(res, "__aiter__"):
-            async for r in res: success, error_msg = r
-        else:
-            success, error_msg = await res
-            
-        if not success:
-            return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
-            
-    except Exception as e:
-        print(f"Buy error: {e}")
-        return await callback.answer("Ошибка при покупке.", show_alert=True)
+        success, error_msg = await _buy_txn(db.transaction())
+    except Exception:
+        logger.exception("Buy transaction failed (user=%s item=%s)", user_id, item_id)
+        return await callback.answer("Ошибка при покупке. Попробуйте ещё раз.", show_alert=True)
+
+    if not success:
+        return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
 
     await callback.answer(f"Куплено: {item['name']}!", show_alert=True)
-    await show_category(callback)
+
+    # Обновляем экран категории актуальными данными
+    fresh = await get_user_data(chat_id, user_id)
+    await _render_category(callback.message, fresh, item.get("cat", "other"))
+
 
 @router.callback_query(F.data == "shop_sell_menu")
 async def show_sell_menu(callback: types.CallbackQuery):
-    chat_id = callback.message.chat.id
-    user_id = callback.from_user.id
-    data = await get_user_data(chat_id, user_id)
+    await callback.answer()
+    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    await _render_sell_menu(callback.message, data)
 
-    inventory = data.get('inventory', {})
-    is_vip = data.get('is_vip', False)
-
-    kb, has_items = get_sell_menu_kb(inventory, is_vip)
-
-    if not has_items:
-        text = "🤷‍♂️ У вас нет имущества для продажи."
-    else:
-        text = "💰 <b>ПРОДАЖА ИМУЩЕСТВА</b>\n\nВыбери предмет, который хочешь продать (ты получишь 75% от его стоимости):"
-
-    await callback.message.edit_text(text, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("sell_ask_"))
 async def ask_sell_confirm(callback: types.CallbackQuery):
-    item_id = callback.data.replace("sell_ask_", "")
+    await callback.answer()
+    item_id = callback.data.removeprefix("sell_ask_")
     item = ITEMS.get(item_id)
-    if not item: return
+    if not item:
+        return
 
-    sell_price = int(item['price'] * 0.75)
-    text = f"❓ Вы уверены, что хотите продать <b>{item['name']}</b> за <b>{sell_price}</b> сыр.?"
+    # Доп. проверка владения
+    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    if item_id == "вип":
+        if not data.get("is_vip"):
+            return await callback.answer("У вас нет VIP-статуса.", show_alert=True)
+    else:
+        inv = data.get("inventory") or {}
+        if int(inv.get(item_id, 0) or 0) <= 0:
+            return await callback.answer("У вас нет этого предмета.", show_alert=True)
 
-    await callback.message.edit_text(text, reply_markup=get_sell_confirm_kb(item_id))
+    sell_price = int(item["price"] * SELL_RATIO)
+    text = (
+        f"❓ Вы уверены, что хотите продать <b>{item['name']}</b> "
+        f"за <b>{sell_price}</b> сыр.?"
+    )
+    await _safe_edit(callback.message, text, reply_markup=get_sell_confirm_kb(item_id))
+
 
 @router.callback_query(F.data.startswith("sell_confirm_"))
 async def process_sell_confirm(callback: types.CallbackQuery):
-    item_id = callback.data.replace("sell_confirm_", "")
+    item_id = callback.data.removeprefix("sell_confirm_")
     item = ITEMS.get(item_id)
-    if not item: return
+    if not item:
+        return await callback.answer("Товар не найден.", show_alert=True)
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    data = await get_user_data(chat_id, user_id)
+    sell_price = int(item["price"] * SELL_RATIO)
+    db = get_db()
 
-    sell_price = int(item['price'] * 0.75)
-
-    # Verify user still has the item
     if item_id == "вип":
-        from db import get_db
-        from user_manager import sell_vip_tr
-        from firebase_admin import firestore_async
-        db = get_db()
-
         @firestore_async.transactional
-        async def run_sell_vip_transaction(transaction, chat_id, user_id, price):
-            return await sell_vip_tr(transaction, chat_id, user_id, price)
+        async def _sell_vip_txn(transaction):
+            return await sell_vip_tr(transaction, chat_id, user_id, sell_price)
 
         try:
-            success = await run_sell_vip_transaction(db.transaction(), chat_id, user_id, sell_price)
-            if not success:
-                return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
+            success = await _sell_vip_txn(db.transaction())
         except Exception:
-            return await callback.answer('Произошла ошибка при продаже VIP. Попробуйте еще раз.', show_alert=True)
-    else:
-        from db import get_db
-        from user_manager import sell_item_tr
-        from firebase_admin import firestore_async
-
-        db = get_db()
-
-        @firestore_async.transactional
-        async def run_sell_transaction(transaction, chat_id, user_id, item_id, item_cat, sell_price):
-            return await sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price)
-
-        try:
-            res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, item.get('cat', ''), sell_price)
-            if hasattr(res, "__aiter__"):
-                async for r in res: success = r
-            else:
-                success = await res
-        except Exception:
-            return await callback.answer('Произошла ошибка при продаже предмета. Попробуйте еще раз.', show_alert=True)
+            logger.exception("Sell VIP transaction failed (user=%s)", user_id)
+            return await callback.answer(
+                "Произошла ошибка при продаже VIP. Попробуйте ещё раз.", show_alert=True
+            )
 
         if not success:
-            return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
+            return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
+
+    else:
+        item_cat = item.get("cat", "")
+
+        @firestore_async.transactional
+        async def _sell_txn(transaction):
+            return await sell_item_tr(
+                transaction, chat_id, user_id, item_id, item_cat, sell_price
+            )
+
+        try:
+            success = await _sell_txn(db.transaction())
+        except Exception:
+            logger.exception("Sell transaction failed (user=%s item=%s)", user_id, item_id)
+            return await callback.answer(
+                "Произошла ошибка при продаже предмета. Попробуйте ещё раз.",
+                show_alert=True,
+            )
+
+        if not success:
+            return await callback.answer(
+                "Предмет не найден в вашем инвентаре!", show_alert=True
+            )
 
     await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
-    await show_sell_menu(callback)
+
+    # Обновляем меню продажи свежими данными
+    fresh = await get_user_data(chat_id, user_id)
+    await _render_sell_menu(callback.message, fresh)
