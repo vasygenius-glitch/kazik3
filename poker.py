@@ -1,17 +1,3 @@
-"""
-═══════════════════════════════════════════════════════════════════════════════
-                    🎰 ВИДЕОПОКЕР "JACKS OR BETTER" 🎰
-═══════════════════════════════════════════════════════════════════════════════
-    Классическая казино-игра с дружелюбным интерфейсом для новичков.
-    
-    ▸ Подробный туториал и подсказки на каждом шаге
-    ▸ Красивое визуальное оформление
-    ▸ Анимация раздачи карт
-    ▸ Таблица выплат и история игр
-    ▸ Умные советы для начинающих
-═══════════════════════════════════════════════════════════════════════════════
-"""
-
 import asyncio
 import secrets
 import logging
@@ -29,214 +15,296 @@ from cards import SUITS, RANKS, format_cards
 from escape import escape_html
 from utils import schedule_delete
 
+
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🎯 СОСТОЯНИЯ FSM
-# ═══════════════════════════════════════════════════════════════════════════════
-
 class PokerState(StatesGroup):
-    """Состояния игровой сессии видеопокера."""
-    playing = State()      # Игрок выбирает карты для удержания
-    confirming = State()   # Подтверждение обмена карт
+    playing = State()
+    confirming = State()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 💰 ИГРОВЫЕ КОНСТАНТЫ
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Лимиты ставок (в сыроежках)
 MIN_BET = 100
 MAX_BET = 50_000_000
-CREDIT_LIMIT = -5000        # Допустимый "овердрафт" игрока
-AUTO_DELETE_DELAY = 60      # Сек. до автоудаления финального сообщения
+CREDIT_LIMIT = -5000
+AUTO_DELETE_DELAY = 60
+GAME_TIMEOUT = 300
+HAND_SIZE = 5
+HIGH_CARD_VALUE = 11
+MEGA_WIN_MULTIPLIER = 25
 
-# Таймауты
-GAME_TIMEOUT = 300          # 5 минут на ход — потом авто-сброс
 
-# ─── ТАБЛИЦА ВЫПЛАТ (от лучшей к худшей) ───────────────────────────────────────
+PAY_ROYAL_FLUSH = 250
+PAY_STRAIGHT_FLUSH = 50
+PAY_FOUR_OF_A_KIND = 25
+PAY_FULL_HOUSE = 9
+PAY_FLUSH = 6
+PAY_STRAIGHT = 4
+PAY_THREE_OF_A_KIND = 3
+PAY_TWO_PAIR = 2
+PAY_JACKS_OR_BETTER = 1
+PAY_NOTHING = 0
+
+
 PAYOUT_TABLE = {
-    "Royal Flush":      250,   # 🌟 Роял Флеш: 10-J-Q-K-A одной масти
-    "Straight Flush":   50,    # 💎 Стрит-флеш: 5 подряд одной масти
-    "Four of a Kind":   25,    # 🔥 Каре: 4 карты одного ранга
-    "Full House":       9,     # 🏠 Фулл-хаус: тройка + пара
-    "Flush":            6,     # 🌊 Флеш: 5 карт одной масти
-    "Straight":         4,     # ➡️ Стрит: 5 карт подряд
-    "Three of a Kind":  3,     # 🎯 Сет: 3 карты одного ранга
-    "Two Pair":         2,     # 👬 Две пары
-    "Jacks or Better":  1,     # 🤴 Пара валетов или выше
+    "Royal Flush": PAY_ROYAL_FLUSH,
+    "Straight Flush": PAY_STRAIGHT_FLUSH,
+    "Four of a Kind": PAY_FOUR_OF_A_KIND,
+    "Full House": PAY_FULL_HOUSE,
+    "Flush": PAY_FLUSH,
+    "Straight": PAY_STRAIGHT,
+    "Three of a Kind": PAY_THREE_OF_A_KIND,
+    "Two Pair": PAY_TWO_PAIR,
+    "Jacks or Better": PAY_JACKS_OR_BETTER,
 }
 
-# Описания комбинаций для туториала (русские названия и пояснения)
-COMBINATION_INFO = {
-    "Royal Flush":     ("🌟 Роял Флеш",      "10, J, Q, K, A одной масти — максимум!"),
-    "Straight Flush":  ("💎 Стрит-флеш",     "5 карт по порядку одной масти"),
-    "Four of a Kind":  ("🔥 Каре",           "4 карты одного ранга (4 туза и т.п.)"),
-    "Full House":      ("🏠 Фулл-хаус",      "Тройка + пара (например, 3 дамы + 2 семёрки)"),
-    "Flush":           ("🌊 Флеш",           "Любые 5 карт одной масти"),
-    "Straight":        ("➡️ Стрит",          "5 карт по порядку любых мастей"),
-    "Three of a Kind": ("🎯 Сет (тройка)",   "3 карты одного ранга"),
-    "Two Pair":        ("👬 Две пары",        "Две разные пары карт"),
-    "Jacks or Better": ("🤴 Пара J/Q/K/A",   "Пара валетов, дам, королей или тузов"),
-    "Nothing":         ("❌ Нет комбинации", "Соберите хотя бы пару валетов!"),
+
+COMBO_NAMES = {
+    "Royal Flush": "🌟 Роял Флеш",
+    "Straight Flush": "💎 Стрит-флеш",
+    "Four of a Kind": "🔥 Каре",
+    "Full House": "🏠 Фулл-хаус",
+    "Flush": "🌊 Флеш",
+    "Straight": "➡️ Стрит",
+    "Three of a Kind": "🎯 Сет (тройка)",
+    "Two Pair": "👬 Две пары",
+    "Jacks or Better": "🤴 Пара J/Q/K/A",
+    "Nothing": "❌ Нет комбинации",
 }
 
-# Численные значения рангов для сравнения
+
+COMBO_DESCRIPTIONS = {
+    "Royal Flush": "10, J, Q, K, A одной масти — максимум!",
+    "Straight Flush": "5 карт по порядку одной масти",
+    "Four of a Kind": "4 карты одного ранга (4 туза и т.п.)",
+    "Full House": "Тройка + пара (например, 3 дамы + 2 семёрки)",
+    "Flush": "Любые 5 карт одной масти",
+    "Straight": "5 карт по порядку любых мастей",
+    "Three of a Kind": "3 карты одного ранга",
+    "Two Pair": "Две разные пары карт",
+    "Jacks or Better": "Пара валетов, дам, королей или тузов",
+    "Nothing": "Соберите хотя бы пару валетов!",
+}
+
+
 RANK_VALUES = {
-    '2': 2,  '3': 3,  '4': 4,  '5': 5,  '6': 6,  '7': 7,  '8': 8,
-    '9': 9,  '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14
+    '2': 2,
+    '3': 3,
+    '4': 4,
+    '5': 5,
+    '6': 6,
+    '7': 7,
+    '8': 8,
+    '9': 9,
+    '10': 10,
+    'J': 11,
+    'Q': 12,
+    'K': 13,
+    'A': 14,
 }
 
-# Визуальные элементы интерфейса
-HOLD_BADGE      = "🔒"  # Карта удержана
-DROP_BADGE      = "🔄"  # Карта будет сброшена
-CARD_BACK       = "🂠"  # Рубашка карты
-SEPARATOR_LINE  = "━" * 27
-DOUBLE_LINE     = "═" * 27
 
-# Эмодзи мастей для красивого вывода
-SUIT_COLORS = {
-    "♠": "♠️",  "♣": "♣️",  "♥": "♥️",  "♦": "♦️",
-    "♠️": "♠️", "♣️": "♣️", "♥️": "♥️", "♦️": "♦️",
+HOLD_BADGE = "🔒"
+DROP_BADGE = "🔄"
+CARD_BACK = "🂠"
+WIN_BADGE = "🏆"
+WIN_SPARKLE = "✨"
+HOLD_PIN = "📌"
+SEPARATOR_LINE = "━" * 27
+DOUBLE_LINE = "═" * 27
+
+
+SUIT_EMOJI = {
+    "♠": "♠️",
+    "♣": "♣️",
+    "♥": "♥️",
+    "♦": "♦️",
+    "♠️": "♠️",
+    "♣️": "♣️",
+    "♥️": "♥️",
+    "♦️": "♦️",
 }
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 📊 ГЛОБАЛЬНАЯ СТАТИСТИКА (в памяти процесса)
-# ═══════════════════════════════════════════════════════════════════════════════
-# Хранит краткую статистику последних игр пользователя:
-#   user_stats[user_id] = {
-#       "games": int, "wins": int, "best": str, "biggest_win": int, "total_won": int
-#   }
 user_stats: dict[int, dict] = {}
 
 
+def make_empty_stats() -> dict:
+    return {
+        "games": 0,
+        "wins": 0,
+        "best": "Nothing",
+        "biggest_win": 0,
+        "total_won": 0,
+    }
+
+
+def get_user_stats(user_id: int) -> dict:
+    if user_id not in user_stats:
+        user_stats[user_id] = make_empty_stats()
+    return user_stats[user_id]
+
+
+def is_better_combo(new_combo: str, old_combo: str) -> bool:
+    new_rank = PAYOUT_TABLE.get(new_combo, 0)
+    old_rank = PAYOUT_TABLE.get(old_combo, 0)
+    return new_rank > old_rank
+
+
 def update_stats(user_id: int, combination: str, win_amount: int) -> dict:
-    """Обновляет статистику игрока после партии."""
-    stats = user_stats.setdefault(user_id, {
-        "games": 0, "wins": 0, "best": "Nothing",
-        "biggest_win": 0, "total_won": 0,
-    })
+    stats = get_user_stats(user_id)
     stats["games"] += 1
     if win_amount > 0:
         stats["wins"] += 1
         stats["total_won"] += win_amount
         if win_amount > stats["biggest_win"]:
             stats["biggest_win"] = win_amount
-
-    # Обновляем "лучшую комбинацию", если она выше предыдущей
-    cur_rank = PAYOUT_TABLE.get(stats["best"], 0)
-    new_rank = PAYOUT_TABLE.get(combination, 0)
-    if new_rank > cur_rank:
+    if is_better_combo(combination, stats["best"]):
         stats["best"] = combination
-
     return stats
 
 
+def calc_win_rate(stats: dict) -> float:
+    if stats["games"] == 0:
+        return 0.0
+    return (stats["wins"] / stats["games"]) * 100
+
+
 def get_stats_block(user_id: int) -> str:
-    """Возвращает HTML-блок со статистикой игрока."""
     stats = user_stats.get(user_id)
     if not stats or stats["games"] == 0:
         return ""
+    win_rate = calc_win_rate(stats)
+    best_name = COMBO_NAMES.get(stats["best"], "—")
+    lines = []
+    lines.append("\n📊 <b>Ваша статистика:</b>")
+    lines.append(f"  • Игр сыграно: <b>{stats['games']}</b>")
+    lines.append(f"  • Побед: <b>{stats['wins']}</b> ({win_rate:.0f}%)")
+    lines.append(f"  • Лучшая рука: {best_name}")
+    lines.append(f"  • Макс. выигрыш: <b>{stats['biggest_win']:,}</b> сыр.")
+    return "\n".join(lines) + "\n"
 
-    win_rate = (stats["wins"] / stats["games"]) * 100
-    best_name = COMBINATION_INFO.get(stats["best"], ("—", ""))[0]
-    return (
-        f"\n📊 <b>Ваша статистика:</b>\n"
-        f"  • Игр сыграно: <b>{stats['games']}</b>\n"
-        f"  • Побед: <b>{stats['wins']}</b> ({win_rate:.0f}%)\n"
-        f"  • Лучшая рука: {best_name}\n"
-        f"  • Макс. выигрыш: <b>{stats['biggest_win']:,}</b> сыр.\n"
-    )
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🃏 РАБОТА С КОЛОДОЙ
-# ═══════════════════════════════════════════════════════════════════════════════
-
-# Криптостойкий генератор случайных чисел (честная раздача)
 _rng = secrets.SystemRandom()
 
 
+def make_random_card() -> dict:
+    return {
+        'rank': _rng.choice(RANKS),
+        'suit': _rng.choice(SUITS),
+    }
+
+
+def is_card_in_list(card: dict, cards: list) -> bool:
+    for existing in cards:
+        if existing['rank'] == card['rank'] and existing['suit'] == card['suit']:
+            return True
+    return False
+
+
 def get_unique_card(exclude_cards: list) -> dict:
-    """
-    Возвращает случайную карту, которой ещё нет в `exclude_cards`.
-    Использует SystemRandom для криптографически честной раздачи.
-    """
     while True:
-        card = {'rank': _rng.choice(RANKS), 'suit': _rng.choice(SUITS)}
-        if card not in exclude_cards:
+        card = make_random_card()
+        if not is_card_in_list(card, exclude_cards):
             return card
 
 
 def deal_initial_hand() -> list[dict]:
-    """Сдаёт начальную руку из 5 уникальных карт."""
     hand: list[dict] = []
-    for _ in range(5):
+    for _ in range(HAND_SIZE):
         hand.append(get_unique_card(hand))
     return hand
 
 
 def redraw_cards(cards: list[dict], held_indices: list[int]) -> list[dict]:
-    """Заменяет все неудержанные карты на новые уникальные."""
     new_hand = list(cards)
-    for i in range(5):
+    for i in range(HAND_SIZE):
         if i not in held_indices:
             new_hand[i] = get_unique_card(new_hand)
     return new_hand
 
 
+def get_suit_emoji(raw_suit: str) -> str:
+    return SUIT_EMOJI.get(raw_suit, raw_suit)
+
+
 def format_card(card: dict) -> str:
-    """Форматирует одну карту как 'AS♠️' с цветным значком масти."""
-    suit = SUIT_COLORS.get(card['suit'], card['suit'])
+    suit = get_suit_emoji(card['suit'])
     return f"{card['rank']}{suit}"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🏆 ОЦЕНКА ПОКЕРНЫХ КОМБИНАЦИЙ
-# ═══════════════════════════════════════════════════════════════════════════════
+def get_card_ranks(cards: list[dict]) -> list[str]:
+    return [c['rank'] for c in cards]
+
+
+def get_card_suits(cards: list[dict]) -> list[str]:
+    return [c['suit'] for c in cards]
+
+
+def get_rank_values_sorted(cards: list[dict]) -> list[int]:
+    return sorted(RANK_VALUES[r] for r in get_card_ranks(cards))
+
+
+def count_ranks(cards: list[dict]) -> Counter:
+    return Counter(get_card_ranks(cards))
+
+
+def count_suits(cards: list[dict]) -> Counter:
+    return Counter(get_card_suits(cards))
+
+
+def is_flush(cards: list[dict]) -> bool:
+    return len(set(get_card_suits(cards))) == 1
+
+
+def is_normal_straight(values: list[int]) -> bool:
+    if len(set(values)) != HAND_SIZE:
+        return False
+    return values[-1] - values[0] == 4
+
+
+def is_wheel_straight(values: list[int]) -> bool:
+    return values == [2, 3, 4, 5, 14]
+
+
+def is_straight(values: list[int]) -> bool:
+    if is_normal_straight(values):
+        return True
+    if is_wheel_straight(values):
+        return True
+    return False
+
+
+def is_royal(values: list[int]) -> bool:
+    if is_wheel_straight(values):
+        return False
+    return values[0] == 10 and values[-1] == 14
+
+
+def find_pair_rank(rank_counts: Counter) -> Optional[str]:
+    for rank, count in rank_counts.items():
+        if count == 2:
+            return rank
+    return None
+
+
+def is_high_pair(rank: str) -> bool:
+    return RANK_VALUES[rank] >= HIGH_CARD_VALUE
+
 
 def evaluate_hand(cards: list[dict]) -> str:
-    """
-    Определяет покерную комбинацию для 5 карт.
-    Возвращает ключ из PAYOUT_TABLE или "Nothing".
-    
-    Алгоритм:
-      1) Считаем повторяющиеся ранги (для пар, троек, каре, фулл-хауса).
-      2) Проверяем флеш (одна масть).
-      3) Проверяем стрит (5 подряд), включая "колесо" A-2-3-4-5.
-      4) Складываем результаты в порядке убывания силы.
-    """
-    if len(cards) != 5:
+    if len(cards) != HAND_SIZE:
         return "Nothing"
 
-    ranks = [c['rank'] for c in cards]
-    suits = [c['suit'] for c in cards]
-    rank_vals = sorted(RANK_VALUES[r] for r in ranks)
-
-    # Количество повторений каждого ранга
-    rank_counts = Counter(ranks)
+    rank_counts = count_ranks(cards)
     counts = sorted(rank_counts.values(), reverse=True)
+    values = get_rank_values_sorted(cards)
+    flush = is_flush(cards)
+    straight = is_straight(values)
 
-    # ── Флеш: все карты одной масти ──
-    is_flush = len(set(suits)) == 1
-
-    # ── Стрит: 5 уникальных подряд ──
-    is_straight = False
-    is_low_straight = False  # "колесо" A-2-3-4-5
-    if len(set(rank_vals)) == 5:
-        if rank_vals[4] - rank_vals[0] == 4:
-            is_straight = True
-        elif rank_vals == [2, 3, 4, 5, 14]:
-            is_straight = True
-            is_low_straight = True
-
-    # ── Проверки от старшей к младшей ──
-    if is_flush and is_straight:
-        # Роял-флеш только для 10-J-Q-K-A
-        if not is_low_straight and rank_vals[0] == 10:
+    if flush and straight:
+        if is_royal(values):
             return "Royal Flush"
         return "Straight Flush"
 
@@ -246,10 +314,10 @@ def evaluate_hand(cards: list[dict]) -> str:
     if counts == [3, 2]:
         return "Full House"
 
-    if is_flush:
+    if flush:
         return "Flush"
 
-    if is_straight:
+    if straight:
         return "Straight"
 
     if counts[0] == 3:
@@ -259,435 +327,843 @@ def evaluate_hand(cards: list[dict]) -> str:
         return "Two Pair"
 
     if counts[0] == 2:
-        # Пара ценная, только если это J, Q, K или A
-        pair_rank = next(r for r, cnt in rank_counts.items() if cnt == 2)
-        if RANK_VALUES[pair_rank] >= 11:
+        pair_rank = find_pair_rank(rank_counts)
+        if pair_rank and is_high_pair(pair_rank):
             return "Jacks or Better"
 
     return "Nothing"
 
 
-def get_held_card_indices_by_combo(cards: list[dict], combo: str) -> set[int]:
-    """
-    Возвращает индексы карт, которые формируют выигрышную комбинацию.
-    Используется для подсветки победных карт в итоговом экране.
-    """
+def get_payout_multiplier(combination: str) -> int:
+    return PAYOUT_TABLE.get(combination, 0)
+
+
+def calculate_win_amount(bet: int, combination: str) -> int:
+    return bet * get_payout_multiplier(combination)
+
+
+def get_all_card_indices() -> set[int]:
+    return set(range(HAND_SIZE))
+
+
+def get_indices_for_ranks(cards: list[dict], ranks: set[str]) -> set[int]:
+    return {i for i, c in enumerate(cards) if c['rank'] in ranks}
+
+
+def get_four_of_a_kind_ranks(rank_counts: Counter) -> set[str]:
+    return {r for r, c in rank_counts.items() if c == 4}
+
+
+def get_full_house_ranks(rank_counts: Counter) -> set[str]:
+    return {r for r, c in rank_counts.items() if c >= 2}
+
+
+def get_three_of_a_kind_ranks(rank_counts: Counter) -> set[str]:
+    return {r for r, c in rank_counts.items() if c == 3}
+
+
+def get_pair_ranks(rank_counts: Counter) -> set[str]:
+    return {r for r, c in rank_counts.items() if c == 2}
+
+
+def get_high_pair_ranks(rank_counts: Counter) -> set[str]:
+    return {r for r, c in rank_counts.items() if c == 2 and is_high_pair(r)}
+
+
+def get_winning_card_indices(cards: list[dict], combo: str) -> set[int]:
     if combo == "Nothing":
         return set()
 
-    rank_counts = Counter(c['rank'] for c in cards)
-
-    # Для флешей/стритов/роялов — все 5 карт
     if combo in ("Royal Flush", "Straight Flush", "Flush", "Straight"):
-        return {0, 1, 2, 3, 4}
+        return get_all_card_indices()
 
-    # Для каре/сета/пар — карты соответствующих рангов
-    target_ranks = set()
+    rank_counts = count_ranks(cards)
+
     if combo == "Four of a Kind":
-        target_ranks = {r for r, c in rank_counts.items() if c == 4}
+        target = get_four_of_a_kind_ranks(rank_counts)
     elif combo == "Full House":
-        target_ranks = {r for r, c in rank_counts.items() if c >= 2}
+        target = get_full_house_ranks(rank_counts)
     elif combo == "Three of a Kind":
-        target_ranks = {r for r, c in rank_counts.items() if c == 3}
+        target = get_three_of_a_kind_ranks(rank_counts)
     elif combo == "Two Pair":
-        target_ranks = {r for r, c in rank_counts.items() if c == 2}
+        target = get_pair_ranks(rank_counts)
     elif combo == "Jacks or Better":
-        target_ranks = {r for r, c in rank_counts.items()
-                        if c == 2 and RANK_VALUES[r] >= 11}
+        target = get_high_pair_ranks(rank_counts)
+    else:
+        target = set()
 
-    return {i for i, c in enumerate(cards) if c['rank'] in target_ranks}
+    return get_indices_for_ranks(cards, target)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 💡 ПОДСКАЗКИ ДЛЯ НОВИЧКОВ
-# ═══════════════════════════════════════════════════════════════════════════════
+def find_triple_rank(rank_counts: Counter) -> Optional[str]:
+    for rank, count in rank_counts.items():
+        if count == 3:
+            return rank
+    return None
 
-def get_smart_hint(cards: list[dict]) -> str:
-    """
-    Анализирует начальную руку и даёт совет, какие карты держать.
-    Совет учитывает базовую стратегию видеопокера.
-    """
-    rank_counts = Counter(c['rank'] for c in cards)
-    suit_counts = Counter(c['suit'] for c in cards)
 
-    # 1. Уже готовая выигрышная комбинация → держим всё
-    current = evaluate_hand(cards)
-    if current != "Nothing" and PAYOUT_TABLE.get(current, 0) >= 6:
-        return f"💡 <b>Совет:</b> Уже есть {COMBINATION_INFO[current][0]}! Удержите все 5 карт."
+def find_quad_rank(rank_counts: Counter) -> Optional[str]:
+    for rank, count in rank_counts.items():
+        if count == 4:
+            return rank
+    return None
 
-    # 2. Каре, фулл-хаус — держим всё
-    if current in ("Four of a Kind", "Full House"):
-        return f"💡 <b>Совет:</b> Отличная рука — {COMBINATION_INFO[current][0]}! Держите всё."
 
-    # 3. Тройка → сбросьте 2 лишних ради каре/фулл-хауса
-    if 3 in rank_counts.values():
-        triple_rank = next(r for r, c in rank_counts.items() if c == 3)
-        return f"💡 <b>Совет:</b> Держите тройку <b>{triple_rank}</b> и тяните каре или фулл-хаус."
+def find_all_pairs(rank_counts: Counter) -> list[str]:
+    return [r for r, c in rank_counts.items() if c == 2]
 
-    # 4. Две пары → держим обе, тянем фулл-хаус
-    pairs = [r for r, c in rank_counts.items() if c == 2]
-    if len(pairs) == 2:
-        return "💡 <b>Совет:</b> Две пары! Держите обе и тяните фулл-хаус."
 
-    # 5. Пара J+ → ценная, держим
-    if pairs:
-        pr = pairs[0]
-        if RANK_VALUES[pr] >= 11:
-            return f"💡 <b>Совет:</b> Пара <b>{pr}</b> — уже выплата 1:1. Держите и улучшайте."
-        return f"💡 <b>Совет:</b> Маленькая пара <b>{pr}</b>. Держите — есть шанс на сет."
+def get_high_card_indices(cards: list[dict]) -> list[int]:
+    return [i for i, c in enumerate(cards) if RANK_VALUES[c['rank']] >= HIGH_CARD_VALUE]
 
-    # 6. 4 карты одной масти → флеш-дро
-    if max(suit_counts.values()) == 4:
-        suit = suit_counts.most_common(1)[0][0]
-        return f"💡 <b>Совет:</b> 4 карты масти {suit} — держите их, есть шанс на флеш!"
 
-    # 7. Иначе — держим только высокие карты (J, Q, K, A)
-    highs = [i for i, c in enumerate(cards) if RANK_VALUES[c['rank']] >= 11]
-    if highs:
-        return f"💡 <b>Совет:</b> Держите старшие карты (J/Q/K/A) — шанс на пару."
+def get_dominant_suit(suit_counts: Counter) -> tuple[str, int]:
+    most_common = suit_counts.most_common(1)
+    if not most_common:
+        return ("", 0)
+    return most_common[0]
+
+
+def hint_already_winning(combo: str) -> Optional[str]:
+    if combo == "Nothing":
+        return None
+    multiplier = get_payout_multiplier(combo)
+    if multiplier >= PAY_FLUSH:
+        name = COMBO_NAMES[combo]
+        return f"💡 <b>Совет:</b> Уже есть {name}! Удержите все 5 карт."
+    if combo in ("Four of a Kind", "Full House"):
+        name = COMBO_NAMES[combo]
+        return f"💡 <b>Совет:</b> Отличная рука — {name}! Держите всё."
+    return None
+
+
+def hint_three_of_a_kind(rank_counts: Counter) -> Optional[str]:
+    triple = find_triple_rank(rank_counts)
+    if triple is None:
+        return None
+    return f"💡 <b>Совет:</b> Держите тройку <b>{triple}</b> и тяните каре или фулл-хаус."
+
+
+def hint_two_pairs(rank_counts: Counter) -> Optional[str]:
+    pairs = find_all_pairs(rank_counts)
+    if len(pairs) != 2:
+        return None
+    return "💡 <b>Совет:</b> Две пары! Держите обе и тяните фулл-хаус."
+
+
+def hint_one_pair(rank_counts: Counter) -> Optional[str]:
+    pairs = find_all_pairs(rank_counts)
+    if len(pairs) != 1:
+        return None
+    pair_rank = pairs[0]
+    if is_high_pair(pair_rank):
+        return f"💡 <b>Совет:</b> Пара <b>{pair_rank}</b> — уже выплата 1:1. Держите и улучшайте."
+    return f"💡 <b>Совет:</b> Маленькая пара <b>{pair_rank}</b>. Держите — есть шанс на сет."
+
+
+def hint_flush_draw(suit_counts: Counter) -> Optional[str]:
+    suit, count = get_dominant_suit(suit_counts)
+    if count != 4:
+        return None
+    pretty_suit = get_suit_emoji(suit)
+    return f"💡 <b>Совет:</b> 4 карты масти {pretty_suit} — держите их, есть шанс на флеш!"
+
+
+def hint_high_cards(cards: list[dict]) -> Optional[str]:
+    highs = get_high_card_indices(cards)
+    if not highs:
+        return None
+    return "💡 <b>Совет:</b> Держите старшие карты (J/Q/K/A) — шанс на пару."
+
+
+def hint_weak_hand() -> str:
     return "💡 <b>Совет:</b> Слабая рука. Сбросьте все 5 карт и попробуйте удачу!"
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🎨 ОТРИСОВКА ИНТЕРФЕЙСА
-# ═══════════════════════════════════════════════════════════════════════════════
+def get_smart_hint(cards: list[dict]) -> str:
+    current = evaluate_hand(cards)
+    rank_counts = count_ranks(cards)
+    suit_counts = count_suits(cards)
 
-def render_card_row(cards: list[dict], held_indices: list[int],
-                    highlight: Optional[set[int]] = None) -> str:
-    """
-    Красиво рисует карты в одну строку и под ними индикаторы:
-        🂠  🂠  🂠  🂠  🂠
-       A♠ K♥ Q♦ J♣ 10♠
-       🔒  🔄  🔒  🔄  🔄
-    """
+    hint = hint_already_winning(current)
+    if hint:
+        return hint
+
+    hint = hint_three_of_a_kind(rank_counts)
+    if hint:
+        return hint
+
+    hint = hint_two_pairs(rank_counts)
+    if hint:
+        return hint
+
+    hint = hint_one_pair(rank_counts)
+    if hint:
+        return hint
+
+    hint = hint_flush_draw(suit_counts)
+    if hint:
+        return hint
+
+    hint = hint_high_cards(cards)
+    if hint:
+        return hint
+
+    return hint_weak_hand()
+
+
+def render_card_visual_row(face: str, is_win: bool, is_held: bool) -> tuple[str, str, str]:
+    if is_win:
+        return (WIN_SPARKLE, f"<b>{face}</b>", WIN_BADGE)
+    if is_held:
+        return (HOLD_PIN, f"<b>{face}</b>", HOLD_BADGE)
+    return ("· ", f"<i>{face}</i>", DROP_BADGE)
+
+
+def render_card_row(
+    cards: list[dict],
+    held_indices: list[int],
+    highlight: Optional[set[int]] = None,
+) -> str:
     highlight = highlight or set()
-    line_top, line_mid, line_bot = [], [], []
-
+    line_top: list[str] = []
+    line_mid: list[str] = []
+    line_bot: list[str] = []
     for i, c in enumerate(cards):
         is_held = i in held_indices
         is_win = i in highlight
         face = format_card(c)
-
-        # Карта оформляется по-разному в зависимости от статуса
-        if is_win:
-            line_top.append("✨")
-            line_mid.append(f"<b>{face}</b>")
-            line_bot.append("🏆")
-        elif is_held:
-            line_top.append("📌")
-            line_mid.append(f"<b>{face}</b>")
-            line_bot.append(HOLD_BADGE)
-        else:
-            line_top.append("· ")
-            line_mid.append(f"<i>{face}</i>")
-            line_bot.append(DROP_BADGE)
-
+        top, mid, bot = render_card_visual_row(face, is_win, is_held)
+        line_top.append(top)
+        line_mid.append(mid)
+        line_bot.append(bot)
+    number_line = "  ".join(f"<code>{i + 1}</code>" for i in range(HAND_SIZE))
     return (
         "  ".join(line_top) + "\n"
         + "  ".join(line_mid) + "\n"
-        + "  ".join(f"<code>{i+1}</code>" for i in range(5)) + "\n"
+        + number_line + "\n"
         + "  ".join(line_bot)
     )
 
 
-def render_card_list(cards: list[dict], held_indices: list[int],
-                     highlight: Optional[set[int]] = None) -> str:
-    """Текстовый список карт под номерами для тех, у кого узкий экран."""
+def get_card_status_label(i: int, held_indices: list[int], highlight: set[int]) -> tuple[str, str]:
+    if i in highlight:
+        return (WIN_BADGE, "<b>ВЫИГРЫШНАЯ</b>")
+    if i in held_indices:
+        return (HOLD_BADGE, "<b>Удержана</b>")
+    return (DROP_BADGE, "<i>Будет сброшена</i>")
+
+
+def render_single_card_line(
+    index: int,
+    card: dict,
+    held_indices: list[int],
+    highlight: set[int],
+) -> str:
+    face = format_card(card)
+    badge, label = get_card_status_label(index, held_indices, highlight)
+    return f"  {badge}  <code>{index + 1}.</code> <b>{face}</b> — {label}"
+
+
+def render_card_list(
+    cards: list[dict],
+    held_indices: list[int],
+    highlight: Optional[set[int]] = None,
+) -> str:
     highlight = highlight or set()
     lines = []
     for i, c in enumerate(cards):
-        face = format_card(c)
-        if i in highlight:
-            badge, label = "🏆", "<b>ВЫИГРЫШНАЯ</b>"
-        elif i in held_indices:
-            badge, label = HOLD_BADGE, "<b>Удержана</b>"
-        else:
-            badge, label = DROP_BADGE, "<i>Будет сброшена</i>"
-        lines.append(f"  {badge}  <code>{i+1}.</code> <b>{face}</b> — {label}")
+        lines.append(render_single_card_line(i, c, held_indices, highlight))
     return "\n".join(lines)
 
 
-def get_game_screen(cards: list[dict], held_indices: list[int],
-                    user_name: str, bet: int, status_text: str,
-                    *, highlight: Optional[set[int]] = None,
-                    show_hint: bool = False) -> str:
-    """Главный экран игры — компонует все секции в одно сообщение."""
-    potential_combo = evaluate_hand(cards) if not highlight else None
-    potential_text = ""
-    if show_hint and potential_combo and potential_combo != "Nothing":
-        mult = PAYOUT_TABLE.get(potential_combo, 0)
-        name = COMBINATION_INFO[potential_combo][0]
-        potential_text = f"\n🎲 <b>Сейчас на руках:</b> {name} (x{mult})"
+def get_potential_combo_text(cards: list[dict]) -> str:
+    combo = evaluate_hand(cards)
+    if combo == "Nothing":
+        return ""
+    multiplier = get_payout_multiplier(combo)
+    name = COMBO_NAMES[combo]
+    return f"\n🎲 <b>Сейчас на руках:</b> {name} (x{multiplier})"
 
-    hint = ("\n" + get_smart_hint(cards)) if show_hint else ""
 
+def get_game_header(user_name: str, bet: int) -> str:
+    lines = []
+    lines.append("🎰 <b>ВИДЕОПОКЕР</b> · <i>Jacks or Better</i> 🎰")
+    lines.append(DOUBLE_LINE)
+    lines.append(f"👤 <b>Игрок:</b> {user_name}")
+    lines.append(f"💰 <b>Ставка:</b> {bet:,} сыр.")
+    lines.append(SEPARATOR_LINE)
+    return "\n".join(lines)
+
+
+def get_finale_header(user_name: str, bet: int) -> str:
+    lines = []
+    lines.append("🎰 <b>ВИДЕОПОКЕР</b> · <i>Финал партии</i> 🎰")
+    lines.append(DOUBLE_LINE)
+    lines.append(f"👤 <b>Игрок:</b> {user_name}")
+    lines.append(f"💰 <b>Ставка:</b> {bet:,} сыр.")
+    lines.append(SEPARATOR_LINE)
+    return "\n".join(lines)
+
+
+def get_game_screen(
+    cards: list[dict],
+    held_indices: list[int],
+    user_name: str,
+    bet: int,
+    status_text: str,
+    *,
+    highlight: Optional[set[int]] = None,
+    show_hint: bool = False,
+) -> str:
+    if highlight:
+        potential = ""
+    else:
+        potential = get_potential_combo_text(cards) if show_hint else ""
+    hint = "\n" + get_smart_hint(cards) if show_hint else ""
+    body = render_card_list(cards, held_indices, highlight)
+    header = get_game_header(user_name, bet)
     return (
-        f"🎰 <b>ВИДЕОПОКЕР</b> · <i>Jacks or Better</i> 🎰\n"
-        f"{DOUBLE_LINE}\n"
-        f"👤 <b>Игрок:</b> {user_name}\n"
-        f"💰 <b>Ставка:</b> {bet:,} сыр.\n"
-        f"{SEPARATOR_LINE}\n"
-        f"{render_card_list(cards, held_indices, highlight)}\n"
-        f"{potential_text}"
+        f"{header}\n"
+        f"{body}\n"
+        f"{potential}"
         f"{SEPARATOR_LINE}\n"
         f"{status_text}"
         f"{hint}"
     )
 
 
+def format_payout_line(combo: str, multiplier: int) -> str:
+    name = COMBO_NAMES[combo]
+    descr = COMBO_DESCRIPTIONS[combo]
+    return f"<b>x{multiplier:<3}</b> · {name}\n      <i>{descr}</i>"
+
+
 def get_payout_table_text() -> str:
-    """Возвращает HTML-строку с полной таблицей выплат."""
-    lines = ["💰 <b>ТАБЛИЦА ВЫПЛАТ</b>", DOUBLE_LINE]
-    for combo, mult in PAYOUT_TABLE.items():
-        name, descr = COMBINATION_INFO[combo]
-        lines.append(f"<b>x{mult:<3}</b> · {name}\n      <i>{descr}</i>")
+    lines = []
+    lines.append("💰 <b>ТАБЛИЦА ВЫПЛАТ</b>")
+    lines.append(DOUBLE_LINE)
+    for combo, multiplier in PAYOUT_TABLE.items():
+        lines.append(format_payout_line(combo, multiplier))
     lines.append(DOUBLE_LINE)
     lines.append("ℹ️ Множитель умножается на размер вашей ставки.")
     return "\n".join(lines)
 
 
+def get_tutorial_intro() -> str:
+    lines = []
+    lines.append("📖 <b>КАК ИГРАТЬ В ВИДЕОПОКЕР</b>")
+    lines.append(DOUBLE_LINE)
+    lines.append("🎯 <b>Цель:</b> собрать одну из выигрышных комбинаций.")
+    return "\n".join(lines)
+
+
+def get_tutorial_rules() -> str:
+    lines = []
+    lines.append("🎮 <b>Правила игры:</b>")
+    lines.append("  <b>1.</b> Вы делаете ставку командой <code>/poker 100</code>.")
+    lines.append("  <b>2.</b> Получаете 5 случайных карт.")
+    lines.append("  <b>3.</b> Решаете, какие оставить (🔒 Hold), нажав на номер.")
+    lines.append("  <b>4.</b> Нажимаете <b>«Обменять»</b> — несохранённые карты")
+    lines.append("       заменяются новыми.")
+    lines.append("  <b>5.</b> Если итоговая рука — выигрышная комбинация,")
+    lines.append("       вы получаете выплату по таблице.")
+    return "\n".join(lines)
+
+
+def get_tutorial_tips() -> str:
+    lines = []
+    lines.append("💡 <b>Подсказки:</b>")
+    lines.append("  • Минимальная выплата — за пару валетов и выше.")
+    lines.append("  • Не сбрасывайте уже готовые комбинации!")
+    lines.append("  • Если есть 4 карты одной масти — стремитесь к флешу.")
+    lines.append("  • Если 4 карты подряд — пытайтесь поймать стрит.")
+    lines.append("  • Кнопка <b>«Сбросить все»</b> снимает все Hold-метки.")
+    return "\n".join(lines)
+
+
+def get_tutorial_bet_limits() -> str:
+    lines = []
+    lines.append("💰 <b>Ставки:</b>")
+    lines.append(f"  • Минимальная: <b>{MIN_BET:,}</b> сыр.")
+    lines.append(f"  • Максимальная: <b>{MAX_BET:,}</b> сыр.")
+    return "\n".join(lines)
+
+
 def get_tutorial_text() -> str:
-    """Подробный гайд для новичков."""
-    return (
-        "📖 <b>КАК ИГРАТЬ В ВИДЕОПОКЕР</b>\n"
-        f"{DOUBLE_LINE}\n"
-        "🎯 <b>Цель:</b> собрать одну из выигрышных комбинаций.\n\n"
-        "🎮 <b>Правила игры:</b>\n"
-        "  <b>1.</b> Вы делаете ставку командой <code>/poker 100</code>.\n"
-        "  <b>2.</b> Получаете 5 случайных карт.\n"
-        "  <b>3.</b> Решаете, какие оставить (🔒 Hold), нажав на номер.\n"
-        "  <b>4.</b> Нажимаете <b>«Обменять»</b> — несохранённые карты\n"
-        "       заменяются новыми.\n"
-        "  <b>5.</b> Если итоговая рука — выигрышная комбинация,\n"
-        "       вы получаете выплату по таблице.\n\n"
-        "💡 <b>Подсказки:</b>\n"
-        "  • Минимальная выплата — за пару валетов и выше.\n"
-        "  • Не сбрасывайте уже готовые комбинации!\n"
-        "  • Если есть 4 карты одной масти — стремитесь к флешу.\n"
-        "  • Если 4 карты подряд — пытайтесь поймать стрит.\n"
-        "  • Кнопка <b>«Сбросить все»</b> снимает все Hold-метки.\n\n"
-        f"{SEPARATOR_LINE}\n"
-        "💰 <b>Ставки:</b>\n"
-        f"  • Минимальная: <b>{MIN_BET:,}</b> сыр.\n"
-        f"  • Максимальная: <b>{MAX_BET:,}</b> сыр.\n\n"
-        "📊 Нажмите кнопку ниже, чтобы увидеть таблицу выплат."
+    parts = []
+    parts.append(get_tutorial_intro())
+    parts.append("")
+    parts.append(get_tutorial_rules())
+    parts.append("")
+    parts.append(get_tutorial_tips())
+    parts.append("")
+    parts.append(SEPARATOR_LINE)
+    parts.append(get_tutorial_bet_limits())
+    parts.append("")
+    parts.append("📊 Нажмите кнопку ниже, чтобы увидеть таблицу выплат.")
+    return "\n".join(parts)
+
+
+def make_card_button(game_id: str, index: int, held: bool) -> types.InlineKeyboardButton:
+    emoji = HOLD_BADGE if held else DROP_BADGE
+    text = f"{emoji} {index + 1}"
+    callback = f"poker_hold_{game_id}_{index}"
+    return types.InlineKeyboardButton(text=text, callback_data=callback)
+
+
+def make_hint_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="💡 Подсказка",
+        callback_data=f"poker_hint_{game_id}",
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ⌨️ КЛАВИАТУРЫ
-# ═══════════════════════════════════════════════════════════════════════════════
+def make_reset_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="❌ Сброс всех",
+        callback_data=f"poker_reset_{game_id}",
+    )
 
-def get_poker_keyboard(game_id: str, held_indices: list[int],
-                       show_confirm: bool = False) -> types.InlineKeyboardMarkup:
-    """
-    Главная игровая клавиатура.
-    
-    Layout (5 карт + действия):
-        [ 🔒 1 ] [ 🔄 2 ] [ 🔒 3 ]
-        [ 🔄 4 ] [ 🔒 5 ]
-        [ 💡 Подсказка ] [ ❌ Сброс всех ]
-        [ 🎰 ОБМЕНЯТЬ КАРТЫ ]
-    """
+
+def make_confirm_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="✅ ПОДТВЕРДИТЬ ОБМЕН",
+        callback_data=f"poker_confirm_{game_id}",
+    )
+
+
+def make_back_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="↩️ Назад",
+        callback_data=f"poker_back_{game_id}",
+    )
+
+
+def make_draw_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="🎰 ОБМЕНЯТЬ КАРТЫ",
+        callback_data=f"poker_draw_{game_id}",
+    )
+
+
+def make_help_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="📖 Правила",
+        callback_data=f"poker_help_{game_id}",
+    )
+
+
+def make_payouts_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="💰 Выплаты",
+        callback_data=f"poker_payouts_{game_id}",
+    )
+
+
+def make_back_to_game_button(game_id: str) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="↩️ Вернуться к игре",
+        callback_data=f"poker_back_{game_id}",
+    )
+
+
+def make_replay_button(bet: int) -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text=f"🔁 Сыграть ещё (ставка {bet:,})",
+        callback_data=f"poker_replay_{bet}",
+    )
+
+
+def make_static_help_button() -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="📖 Правила игры",
+        callback_data="poker_help_static",
+    )
+
+
+def make_static_payouts_button() -> types.InlineKeyboardButton:
+    return types.InlineKeyboardButton(
+        text="💰 Таблица выплат",
+        callback_data="poker_payouts_static",
+    )
+
+
+def get_poker_keyboard(
+    game_id: str,
+    held_indices: list[int],
+    show_confirm: bool = False,
+) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
 
-    # Кнопки выбора карт
-    buttons = []
-    for i in range(5):
+    card_buttons = []
+    for i in range(HAND_SIZE):
         held = i in held_indices
-        emoji = HOLD_BADGE if held else DROP_BADGE
-        text = f"{emoji} {i+1}"
-        buttons.append(types.InlineKeyboardButton(
-            text=text, callback_data=f"poker_hold_{game_id}_{i}"
-        ))
+        card_buttons.append(make_card_button(game_id, i, held))
 
-    # Раскладка: 3 + 2 (центрируется визуально)
-    builder.row(*buttons[:3])
-    builder.row(*buttons[3:])
+    builder.row(*card_buttons[:3])
+    builder.row(*card_buttons[3:])
+    builder.row(make_hint_button(game_id), make_reset_button(game_id))
 
-    # Вспомогательные действия
-    builder.row(
-        types.InlineKeyboardButton(
-            text="💡 Подсказка",
-            callback_data=f"poker_hint_{game_id}"
-        ),
-        types.InlineKeyboardButton(
-            text="❌ Сброс всех",
-            callback_data=f"poker_reset_{game_id}"
-        ),
-    )
-
-    # Главная кнопка действия
     if show_confirm:
-        builder.row(types.InlineKeyboardButton(
-            text="✅ ПОДТВЕРДИТЬ ОБМЕН",
-            callback_data=f"poker_confirm_{game_id}"
-        ))
-        builder.row(types.InlineKeyboardButton(
-            text="↩️ Назад",
-            callback_data=f"poker_back_{game_id}"
-        ))
+        builder.row(make_confirm_button(game_id))
+        builder.row(make_back_button(game_id))
     else:
-        builder.row(types.InlineKeyboardButton(
-            text="🎰 ОБМЕНЯТЬ КАРТЫ",
-            callback_data=f"poker_draw_{game_id}"
-        ))
+        builder.row(make_draw_button(game_id))
 
-    # Информационные кнопки внизу
-    builder.row(
-        types.InlineKeyboardButton(
-            text="📖 Правила",
-            callback_data=f"poker_help_{game_id}"
-        ),
-        types.InlineKeyboardButton(
-            text="💰 Выплаты",
-            callback_data=f"poker_payouts_{game_id}"
-        ),
-    )
+    builder.row(make_help_button(game_id), make_payouts_button(game_id))
     return builder.as_markup()
 
 
 def get_close_keyboard(game_id: str) -> types.InlineKeyboardMarkup:
-    """Клавиатура для попап-окон правил/выплат — кнопка «назад в игру»."""
     builder = InlineKeyboardBuilder()
-    builder.row(types.InlineKeyboardButton(
-        text="↩️ Вернуться к игре",
-        callback_data=f"poker_back_{game_id}"
-    ))
+    builder.row(make_back_to_game_button(game_id))
     return builder.as_markup()
 
 
 def get_replay_keyboard(bet: int) -> types.InlineKeyboardMarkup:
-    """Клавиатура после окончания игры — быстрое повторение ставки."""
     builder = InlineKeyboardBuilder()
-    builder.row(
-        types.InlineKeyboardButton(
-            text=f"🔁 Сыграть ещё (ставка {bet:,})",
-            callback_data=f"poker_replay_{bet}"
-        )
-    )
-    builder.row(
-        types.InlineKeyboardButton(
-            text="📖 Правила игры",
-            callback_data="poker_help_static"
-        ),
-        types.InlineKeyboardButton(
-            text="💰 Таблица выплат",
-            callback_data="poker_payouts_static"
-        ),
-    )
+    builder.row(make_replay_button(bet))
+    builder.row(make_static_help_button(), make_static_payouts_button())
     return builder.as_markup()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🚀 СТАРТ ИГРЫ
-# ═══════════════════════════════════════════════════════════════════════════════
+def get_tutorial_keyboard() -> types.InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.row(make_static_payouts_button())
+    return builder.as_markup()
+
+
+def build_game_id(chat_id: int, user_id: int, message_id: int) -> str:
+    return f"{chat_id}_{user_id}_{message_id}"
+
+
+def parse_bet_from_args(args: list[str]) -> Optional[int]:
+    if len(args) < 2:
+        return None
+    try:
+        return int(args[1])
+    except ValueError:
+        return None
+
+
+def is_valid_bet(bet: int) -> bool:
+    return MIN_BET <= bet <= MAX_BET
+
+
+def has_enough_balance(balance: int, bet: int) -> bool:
+    return balance - bet >= CREDIT_LIMIT
+
+
+def get_status_text_for_hold(held_count: int) -> str:
+    if held_count == 0:
+        return "🔄 Все карты будут сброшены — полная замена руки."
+    if held_count == HAND_SIZE:
+        return "🔒 Все 5 карт удержаны — замены не будет."
+    return f"🔒 Удержано: <b>{held_count}/5</b>. Заменим <b>{HAND_SIZE - held_count}</b> карт(ы)."
+
+
+def get_hold_answer_text(index: int, is_held_now: bool) -> str:
+    if is_held_now:
+        return f"🔒 Карта {index + 1} удержана."
+    return f"🔄 Карта {index + 1} будет сброшена."
+
+
+def toggle_held_index(held_indices: list[int], index: int) -> tuple[list[int], bool]:
+    new_list = list(held_indices)
+    if index in new_list:
+        new_list.remove(index)
+        is_held_now = False
+    else:
+        new_list.append(index)
+        is_held_now = True
+    new_list.sort()
+    return new_list, is_held_now
+
+
+def parse_callback_index(callback_data: str, position: int) -> Optional[int]:
+    try:
+        return int(callback_data.split("_")[position])
+    except (ValueError, IndexError):
+        return None
+
+
+def is_static_callback(callback_data: str) -> bool:
+    parts = callback_data.split("_")
+    return len(parts) >= 3 and parts[2] == "static"
+
+
+async def safe_edit_message(message: types.Message, text: str, reply_markup=None) -> bool:
+    try:
+        await message.edit_text(text, reply_markup=reply_markup)
+        return True
+    except Exception as exc:
+        logger.debug("edit_text failed: %s", exc)
+        return False
+
+
+async def safe_delete_message(message: types.Message) -> bool:
+    try:
+        await message.delete()
+        return True
+    except Exception as exc:
+        logger.debug("delete failed: %s", exc)
+        return False
+
+
+async def safe_send_message(message: types.Message, text: str, reply_markup=None) -> Optional[types.Message]:
+    try:
+        return await message.answer(text, reply_markup=reply_markup)
+    except Exception as exc:
+        logger.debug("answer failed: %s", exc)
+        return None
+
+
+async def check_user_is_banned(chat_id: int, user_id: int, full_name: str) -> bool:
+    data = await get_user_data(chat_id, user_id, full_name)
+    return bool(data.get('is_banned'))
+
+
+async def check_user_has_gonorrhea(chat_id: int, user_id: int) -> bool:
+    try:
+        from diseases import get_active_diseases
+        active = await get_active_diseases(chat_id, user_id)
+        return 'gonorrhea' in active
+    except ImportError:
+        return False
+
+
+def get_gonorrhea_message() -> str:
+    return (
+        "🦠 <b>Гонорея</b>: Крупье брезгует раздавать тебе карты.\n"
+        "Сначала вылечись — и возвращайся за стол!"
+    )
+
+
+def get_invalid_bet_format_message() -> str:
+    return (
+        "❗ Ставка должна быть числом.\n"
+        f"Пример: <code>/poker {MIN_BET}</code>"
+    )
+
+
+def get_invalid_bet_range_message() -> str:
+    return (
+        f"❗ Ставка должна быть в диапазоне\n"
+        f"<b>{MIN_BET:,}</b> — <b>{MAX_BET:,}</b> сыроежек."
+    )
+
+
+def get_insufficient_balance_message() -> str:
+    return (
+        f"💳 Ваш кредитный лимит ({CREDIT_LIMIT:,}) исчерпан.\n"
+        "Пополните баланс, чтобы продолжить игру."
+    )
+
+
+def get_shuffle_message() -> str:
+    return "🎴 <b>Крупье тасует колоду...</b>"
+
+
+def get_dealing_message() -> str:
+    return "🎴 <b>Раздача карт...</b>  🂠 🂠 🂠 🂠 🂠"
+
+
+def get_changing_cards_message(held_indices: list[int]) -> str:
+    visual = []
+    for i in range(HAND_SIZE):
+        if i in held_indices:
+            visual.append(HOLD_BADGE)
+        else:
+            visual.append(CARD_BACK)
+    return "🎴 <b>Крупье меняет карты...</b>\n" + "  ".join(visual)
+
+
+def get_initial_status_text() -> str:
+    return (
+        "👆 <b>Ваш ход!</b> Нажмите номера карт, которые хотите\n"
+        "оставить (🔒), и нажмите <b>«Обменять карты»</b>."
+    )
+
+
+def get_back_to_game_status() -> str:
+    return "🎯 Продолжайте игру — выберите карты для удержания."
+
+
+def get_reset_status() -> str:
+    return "↺ Все метки сняты. Выберите карты заново."
+
+
+def get_win_header() -> str:
+    return "🎉 <b>ПОБЕДА!</b> 🎉"
+
+
+def get_loss_header() -> str:
+    return "💔 <b>Не повезло...</b>"
+
+
+def format_win_result(combo: str, multiplier: int, win_amount: int) -> str:
+    name = COMBO_NAMES.get(combo, "Без выигрыша")
+    descr = COMBO_DESCRIPTIONS.get(combo, "")
+    lines = []
+    lines.append("")
+    lines.append(get_win_header())
+    lines.append(SEPARATOR_LINE)
+    lines.append(f"🏆 Комбинация: <b>{name}</b>")
+    lines.append(f"📋 <i>{descr}</i>")
+    lines.append(f"✖️ Множитель: <b>x{multiplier}</b>")
+    lines.append(f"💰 Выигрыш: <b>+{win_amount:,}</b> сыроежек!")
+    if multiplier >= MEGA_WIN_MULTIPLIER:
+        lines.append("🎆🎆🎆 <b>МЕГА-ВЫИГРЫШ!</b> 🎆🎆🎆")
+    return "\n".join(lines) + "\n"
+
+
+def format_loss_result(combo: str, bet: int) -> str:
+    name = COMBO_NAMES.get(combo, "Без выигрыша")
+    descr = COMBO_DESCRIPTIONS.get(combo, "")
+    lines = []
+    lines.append("")
+    lines.append(get_loss_header())
+    lines.append(SEPARATOR_LINE)
+    lines.append(f"🃏 Итоговая рука: <b>{name}</b>")
+    lines.append(f"📋 <i>{descr}</i>")
+    lines.append(f"💸 Потеряно: <b>-{bet:,}</b> сыроежек")
+    lines.append("🍀 Не сдавайтесь — удача рядом!")
+    return "\n".join(lines) + "\n"
+
+
+def format_game_result(combo: str, multiplier: int, win_amount: int, bet: int) -> str:
+    if multiplier > 0:
+        return format_win_result(combo, multiplier, win_amount)
+    return format_loss_result(combo, bet)
+
+
+def build_final_text(
+    cards: list[dict],
+    held_indices: list[int],
+    highlight: set[int],
+    full_name: str,
+    bet: int,
+    result_text: str,
+    user_id: int,
+) -> str:
+    header = get_finale_header(full_name, bet)
+    body = render_card_list(cards, held_indices, highlight)
+    stats = get_stats_block(user_id)
+    return f"{header}\n{body}\n{result_text}{stats}"
+
+
+def get_final_answer_text(win_amount: int) -> str:
+    if win_amount > 0:
+        return f"🏆 +{win_amount:,} сыр."
+    return "💔 Не в этот раз..."
+
+
+async def play_deal_animation(message: types.Message) -> types.Message:
+    deal_msg = await message.answer(get_shuffle_message())
+    await asyncio.sleep(0.4)
+    await safe_edit_message(deal_msg, get_dealing_message())
+    await asyncio.sleep(0.4)
+    return deal_msg
+
+
+async def play_change_cards_animation(message: types.Message, held_indices: list[int]) -> None:
+    if len(held_indices) >= HAND_SIZE:
+        return
+    await safe_edit_message(message, get_changing_cards_message(held_indices))
+    await asyncio.sleep(0.5)
+
+
+async def is_player_match(callback: types.CallbackQuery, state: FSMContext) -> tuple[bool, dict]:
+    game = await state.get_data()
+    if not game:
+        return False, {}
+    if callback.from_user.id != game.get('user_id'):
+        return False, game
+    return True, game
+
+
+async def verify_active_game(callback: types.CallbackQuery, state: FSMContext) -> Optional[dict]:
+    if await state.get_state() != PokerState.playing.state:
+        await callback.answer()
+        return None
+    matches, game = await is_player_match(callback, state)
+    if not matches:
+        if game:
+            await callback.answer("Это не ваша игра!", show_alert=True)
+        else:
+            await callback.answer()
+        return None
+    return game
+
 
 @router.message(Command("poker"))
 async def cmd_poker(message: types.Message, state: FSMContext):
-    """
-    Точка входа в игру: /poker [ставка]
-    Без аргументов покажет туториал.
-    """
-    # Если предыдущая игра «зависла» — сбрасываем
     if await state.get_state() == PokerState.playing.state:
         await state.clear()
 
-    chat_id, user_id = message.chat.id, message.from_user.id
+    chat_id = message.chat.id
+    user_id = message.from_user.id
     full_name = escape_html(message.from_user.full_name)
-    data = await get_user_data(chat_id, user_id, full_name)
 
-    # ── Проверка бана ──
-    if data.get('is_banned'):
+    if await check_user_is_banned(chat_id, user_id, full_name):
         return
 
-    # ── Проверка болезней (если игрок болен гонореей — нельзя) ──
-    try:
-        from diseases import get_active_diseases
-        if 'gonorrhea' in await get_active_diseases(chat_id, user_id):
-            return await message.answer(
-                "🦠 <b>Гонорея</b>: Крупье брезгует раздавать тебе карты.\n"
-                "Сначала вылечись — и возвращайся за стол!"
-            )
-    except ImportError:
-        pass
+    if await check_user_has_gonorrhea(chat_id, user_id):
+        return await message.answer(get_gonorrhea_message())
 
     args = message.text.split()
+    bet = parse_bet_from_args(args)
 
-    # ── Без аргументов: показываем туториал ──
-    if len(args) < 2:
-        builder = InlineKeyboardBuilder()
-        builder.row(
-            types.InlineKeyboardButton(
-                text="💰 Таблица выплат",
-                callback_data="poker_payouts_static"
-            )
-        )
+    if bet is None and len(args) < 2:
         return await message.answer(
             get_tutorial_text(),
-            reply_markup=builder.as_markup()
+            reply_markup=get_tutorial_keyboard(),
         )
 
-    # ── Парсинг ставки ──
-    try:
-        bet = int(args[1])
-    except ValueError:
-        return await message.answer(
-            "❗ Ставка должна быть числом.\n"
-            f"Пример: <code>/poker {MIN_BET}</code>"
-        )
+    if bet is None:
+        return await message.answer(get_invalid_bet_format_message())
 
-    if not (MIN_BET <= bet <= MAX_BET):
-        return await message.answer(
-            f"❗ Ставка должна быть в диапазоне\n"
-            f"<b>{MIN_BET:,}</b> — <b>{MAX_BET:,}</b> сыроежек."
-        )
+    if not is_valid_bet(bet):
+        return await message.answer(get_invalid_bet_range_message())
 
-    # ── Проверка баланса (с учётом овердрафта) ──
-    if data.get('balance', 0) - bet < CREDIT_LIMIT:
-        return await message.answer(
-            f"💳 Ваш кредитный лимит ({CREDIT_LIMIT:,}) исчерпан.\n"
-            "Пополните баланс, чтобы продолжить игру."
-        )
+    user_data = await get_user_data(chat_id, user_id, full_name)
+    balance = user_data.get('balance', 0)
+    if not has_enough_balance(balance, bet):
+        return await message.answer(get_insufficient_balance_message())
 
-    # ── Запрос подтверждения через casino_utils ──
     from casino_utils import ask_casino_confirmation
     await ask_casino_confirmation(message, "poker", bet)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# ✅ ПОДТВЕРЖДЕНИЕ СТАВКИ → НАЧАЛО ИГРЫ
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @router.callback_query(F.data.startswith("cas_conf_poker_"))
 async def process_poker_confirm(callback: types.CallbackQuery, state: FSMContext):
-    """Срабатывает после подтверждения ставки в общем UI казино."""
     try:
         bet = int(callback.data.split("_")[3])
     except (ValueError, IndexError):
         return await callback.answer("⚠️ Ошибка ставки.", show_alert=True)
 
-    chat_id, user_id = callback.message.chat.id, callback.from_user.id
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
     full_name = escape_html(callback.from_user.full_name)
-    await get_user_data(chat_id, user_id, full_name)  # синхронизируем кеш
+    await get_user_data(chat_id, user_id, full_name)
 
-    # ── Списываем ставку (атомарно, с лимитом) ──
     new_balance = await update_user_balance(
-        chat_id, user_id, -bet, min_balance=CREDIT_LIMIT,
-        action="VideoPoker Bet"
+        chat_id,
+        user_id,
+        -bet,
+        min_balance=CREDIT_LIMIT,
+        action="VideoPoker Bet",
     )
     if new_balance is None:
         return await callback.answer(
-            "💸 Недостаточно средств для ставки!", show_alert=True
+            "💸 Недостаточно средств для ставки!",
+            show_alert=True,
         )
 
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
+    await safe_delete_message(callback.message)
 
-    # ── Создаём игровую сессию ──
-    game_id = f"{chat_id}_{user_id}_{callback.message.message_id}"
+    game_id = build_game_id(chat_id, user_id, callback.message.message_id)
     cards = deal_initial_hand()
 
     await state.set_state(PokerState.playing)
@@ -699,397 +1175,223 @@ async def process_poker_confirm(callback: types.CallbackQuery, state: FSMContext
         bet=bet,
         cards=cards,
         held_indices=[],
-        original_cards=list(cards),  # сохраняем для статистики
+        original_cards=list(cards),
     )
 
-    # ── Анимация раздачи ──
-    deal_msg = await callback.message.answer(
-        "🎴 <b>Крупье тасует колоду...</b>"
-    )
-    await asyncio.sleep(0.4)
-    try:
-        await deal_msg.edit_text("🎴 <b>Раздача карт...</b>  🂠 🂠 🂠 🂠 🂠")
-        await asyncio.sleep(0.4)
-    except Exception:
-        pass
+    deal_msg = await play_deal_animation(callback.message)
 
-    # ── Финальный экран ──
     text = get_game_screen(
-        cards, [], full_name, bet,
-        status_text=(
-            "👆 <b>Ваш ход!</b> Нажмите номера карт, которые хотите\n"
-            "оставить (🔒), и нажмите <b>«Обменять карты»</b>."
-        ),
+        cards,
+        [],
+        full_name,
+        bet,
+        status_text=get_initial_status_text(),
         show_hint=True,
     )
-    try:
-        await deal_msg.edit_text(
-            text, reply_markup=get_poker_keyboard(game_id, [])
-        )
-    except Exception:
-        await callback.message.answer(
-            text, reply_markup=get_poker_keyboard(game_id, [])
-        )
+    keyboard = get_poker_keyboard(game_id, [])
+    edited = await safe_edit_message(deal_msg, text, reply_markup=keyboard)
+    if not edited:
+        await safe_send_message(callback.message, text, reply_markup=keyboard)
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🔒 УДЕРЖАНИЕ / СБРОС ОТДЕЛЬНОЙ КАРТЫ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith("poker_hold_"))
 async def process_poker_hold(callback: types.CallbackQuery, state: FSMContext):
-    """Переключает статус Hold/Drop у выбранной карты."""
-    if await state.get_state() != PokerState.playing.state:
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
+
+    index = parse_callback_index(callback.data, 4)
+    if index is None:
         return await callback.answer()
 
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer("Это не ваша игра!", show_alert=True)
+    new_held, is_held_now = toggle_held_index(game['held_indices'], index)
+    await state.update_data(held_indices=new_held)
 
-    try:
-        idx = int(callback.data.split("_")[4])
-    except (ValueError, IndexError):
-        return await callback.answer()
-
-    held_indices = list(game['held_indices'])
-
-    if idx in held_indices:
-        held_indices.remove(idx)
-        answer_text = f"🔄 Карта {idx+1} будет сброшена."
-    else:
-        held_indices.append(idx)
-        answer_text = f"🔒 Карта {idx+1} удержана."
-
-    held_indices.sort()
-    await state.update_data(held_indices=held_indices)
-
-    # Краткий статус сверху: сколько удержано
-    cnt = len(held_indices)
-    if cnt == 0:
-        status = "🔄 Все карты будут сброшены — полная замена руки."
-    elif cnt == 5:
-        status = "🔒 Все 5 карт удержаны — замены не будет."
-    else:
-        status = f"🔒 Удержано: <b>{cnt}/5</b>. Заменим <b>{5-cnt}</b> карт(ы)."
-
+    status = get_status_text_for_hold(len(new_held))
     text = get_game_screen(
-        game['cards'], held_indices, game['full_name'], game['bet'],
-        status_text=status, show_hint=False,
+        game['cards'],
+        new_held,
+        game['full_name'],
+        game['bet'],
+        status_text=status,
+        show_hint=False,
     )
-    try:
-        await callback.message.edit_text(
-            text, reply_markup=get_poker_keyboard(game['game_id'], held_indices)
-        )
-    except Exception:
-        pass
-    await callback.answer(answer_text)
+    keyboard = get_poker_keyboard(game['game_id'], new_held)
+    await safe_edit_message(callback.message, text, reply_markup=keyboard)
+    await callback.answer(get_hold_answer_text(index, is_held_now))
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ❌ СБРОС ВСЕХ HOLD-МЕТОК
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith("poker_reset_"))
 async def process_poker_reset(callback: types.CallbackQuery, state: FSMContext):
-    """Сбрасывает все Hold-метки разом."""
-    if await state.get_state() != PokerState.playing.state:
-        return await callback.answer()
-
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer("Это не ваша игра!", show_alert=True)
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
 
     await state.update_data(held_indices=[])
     text = get_game_screen(
-        game['cards'], [], game['full_name'], game['bet'],
-        status_text="↺ Все метки сняты. Выберите карты заново.",
+        game['cards'],
+        [],
+        game['full_name'],
+        game['bet'],
+        status_text=get_reset_status(),
         show_hint=True,
     )
-    try:
-        await callback.message.edit_text(
-            text, reply_markup=get_poker_keyboard(game['game_id'], [])
-        )
-    except Exception:
-        pass
+    keyboard = get_poker_keyboard(game['game_id'], [])
+    await safe_edit_message(callback.message, text, reply_markup=keyboard)
     await callback.answer("❌ Все Hold-метки сняты.")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 💡 ПОДСКАЗКА
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @router.callback_query(F.data.startswith("poker_hint_"))
 async def process_poker_hint(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает совет на основе текущей руки."""
-    if await state.get_state() != PokerState.playing.state:
-        return await callback.answer()
-
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer("Это не ваша игра!", show_alert=True)
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
 
     hint = get_smart_hint(game['cards'])
     text = get_game_screen(
-        game['cards'], game['held_indices'], game['full_name'], game['bet'],
-        status_text=hint, show_hint=True,
+        game['cards'],
+        game['held_indices'],
+        game['full_name'],
+        game['bet'],
+        status_text=hint,
+        show_hint=True,
     )
-    try:
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_poker_keyboard(game['game_id'], game['held_indices'])
-        )
-    except Exception:
-        pass
+    keyboard = get_poker_keyboard(game['game_id'], game['held_indices'])
+    await safe_edit_message(callback.message, text, reply_markup=keyboard)
     await callback.answer("💡 Подсказка от крупье!")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 📖 ПРАВИЛА / 💰 ВЫПЛАТЫ (попапы)
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @router.callback_query(F.data.startswith("poker_help_"))
 async def process_poker_help(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает правила игры, не теряя состояние."""
-    parts = callback.data.split("_")
-    if len(parts) >= 3 and parts[2] == "static":
+    if is_static_callback(callback.data):
         return await callback.message.answer(get_tutorial_text())
 
-    if await state.get_state() != PokerState.playing.state:
-        return await callback.answer()
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer()
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
 
-    try:
-        await callback.message.edit_text(
-            get_tutorial_text(),
-            reply_markup=get_close_keyboard(game['game_id'])
-        )
-    except Exception:
-        pass
+    keyboard = get_close_keyboard(game['game_id'])
+    await safe_edit_message(callback.message, get_tutorial_text(), reply_markup=keyboard)
     await callback.answer()
 
 
 @router.callback_query(F.data.startswith("poker_payouts_"))
 async def process_poker_payouts(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает таблицу выплат."""
-    parts = callback.data.split("_")
-    if len(parts) >= 3 and parts[2] == "static":
+    if is_static_callback(callback.data):
         return await callback.message.answer(get_payout_table_text())
 
-    if await state.get_state() != PokerState.playing.state:
-        return await callback.answer()
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer()
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
 
-    try:
-        await callback.message.edit_text(
-            get_payout_table_text(),
-            reply_markup=get_close_keyboard(game['game_id'])
-        )
-    except Exception:
-        pass
+    keyboard = get_close_keyboard(game['game_id'])
+    await safe_edit_message(callback.message, get_payout_table_text(), reply_markup=keyboard)
     await callback.answer()
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# ↩️ ВОЗВРАТ ИЗ ПОПАПА К ИГРЕ
-# ═══════════════════════════════════════════════════════════════════════════════
 
 @router.callback_query(F.data.startswith("poker_back_"))
 async def process_poker_back(callback: types.CallbackQuery, state: FSMContext):
-    """Возвращает игрока на основной экран игры."""
-    if await state.get_state() != PokerState.playing.state:
-        return await callback.answer()
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer()
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
 
     text = get_game_screen(
-        game['cards'], game['held_indices'], game['full_name'], game['bet'],
-        status_text="🎯 Продолжайте игру — выберите карты для удержания.",
+        game['cards'],
+        game['held_indices'],
+        game['full_name'],
+        game['bet'],
+        status_text=get_back_to_game_status(),
         show_hint=True,
     )
-    try:
-        await callback.message.edit_text(
-            text,
-            reply_markup=get_poker_keyboard(game['game_id'], game['held_indices'])
-        )
-    except Exception:
-        pass
+    keyboard = get_poker_keyboard(game['game_id'], game['held_indices'])
+    await safe_edit_message(callback.message, text, reply_markup=keyboard)
     await callback.answer()
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🎰 ОБМЕН КАРТ И ПОДВЕДЕНИЕ ИТОГОВ
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @router.callback_query(F.data.startswith("poker_draw_"))
 async def process_poker_draw(callback: types.CallbackQuery, state: FSMContext):
-    """
-    Главный финал игры: меняем неудержанные карты, оцениваем руку,
-    начисляем выигрыш и показываем красивый финальный экран.
-    """
-    if await state.get_state() != PokerState.playing.state:
-        return await callback.answer()
+    game = await verify_active_game(callback, state)
+    if game is None:
+        return
 
-    game = await state.get_data()
-    if callback.from_user.id != game['user_id']:
-        return await callback.answer("Это не ваша игра!", show_alert=True)
-
-    chat_id, user_id = game['chat_id'], game['user_id']
+    chat_id = game['chat_id']
+    user_id = game['user_id']
     bet = game['bet']
     held_indices = game['held_indices']
     full_name = game['full_name']
 
-    # ── Анимация замены ──
-    if len(held_indices) < 5:
-        try:
-            await callback.message.edit_text(
-                "🎴 <b>Крупье меняет карты...</b>\n"
-                + "  ".join(
-                    HOLD_BADGE if i in held_indices else "🂠"
-                    for i in range(5)
-                )
-            )
-            await asyncio.sleep(0.5)
-        except Exception:
-            pass
+    await play_change_cards_animation(callback.message, held_indices)
 
-    # ── Замена и оценка ──
-    cards = redraw_cards(game['cards'], held_indices)
-    combination = evaluate_hand(cards)
-    multiplier = PAYOUT_TABLE.get(combination, 0)
-    highlight = get_held_card_indices_by_combo(cards, combination)
+    final_cards = redraw_cards(game['cards'], held_indices)
+    combination = evaluate_hand(final_cards)
+    multiplier = get_payout_multiplier(combination)
+    highlight = get_winning_card_indices(final_cards, combination)
 
-    # ── Финансы ──
+    win_amount = 0
     if multiplier > 0:
-        win_amount = bet * multiplier
+        win_amount = calculate_win_amount(bet, combination)
         await update_user_balance(
-            chat_id, user_id, win_amount, action="VideoPoker Win"
-        )
-    else:
-        win_amount = 0
-
-    # ── Статистика ──
-    stats = update_stats(user_id, combination, win_amount)
-
-    # ── Формируем красивый результат ──
-    name, descr = COMBINATION_INFO.get(combination, ("Без выигрыша", ""))
-
-    if multiplier > 0:
-        # Победа
-        header = f"🎉 <b>ПОБЕДА!</b> 🎉"
-        result = (
-            f"\n{header}\n"
-            f"{SEPARATOR_LINE}\n"
-            f"🏆 Комбинация: <b>{name}</b>\n"
-            f"📋 <i>{descr}</i>\n"
-            f"✖️ Множитель: <b>x{multiplier}</b>\n"
-            f"💰 Выигрыш: <b>+{win_amount:,}</b> сыроежек!\n"
-        )
-        # Особый эффект для крупных побед
-        if multiplier >= 25:
-            result += f"🎆🎆🎆 <b>МЕГА-ВЫИГРЫШ!</b> 🎆🎆🎆\n"
-    else:
-        # Проигрыш
-        header = "💔 <b>Не повезло...</b>"
-        result = (
-            f"\n{header}\n"
-            f"{SEPARATOR_LINE}\n"
-            f"🃏 Итоговая рука: <b>{name}</b>\n"
-            f"📋 <i>{descr}</i>\n"
-            f"💸 Потеряно: <b>-{bet:,}</b> сыроежек\n"
-            f"🍀 Не сдавайтесь — удача рядом!\n"
+            chat_id,
+            user_id,
+            win_amount,
+            action="VideoPoker Win",
         )
 
-    # ── Сборка финального текста ──
-    final_text = (
-        f"🎰 <b>ВИДЕОПОКЕР</b> · <i>Финал партии</i> 🎰\n"
-        f"{DOUBLE_LINE}\n"
-        f"👤 <b>Игрок:</b> {full_name}\n"
-        f"💰 <b>Ставка:</b> {bet:,} сыр.\n"
-        f"{SEPARATOR_LINE}\n"
-        f"{render_card_list(cards, held_indices, highlight)}\n"
-        f"{result}"
-        f"{get_stats_block(user_id)}"
+    update_stats(user_id, combination, win_amount)
+
+    result_text = format_game_result(combination, multiplier, win_amount, bet)
+    final_text = build_final_text(
+        final_cards,
+        held_indices,
+        highlight,
+        full_name,
+        bet,
+        result_text,
+        user_id,
     )
 
-    # ── Инвалидация кеша баланса ──
     invalidate_user_cache(chat_id, user_id)
 
-    try:
-        await callback.message.edit_text(
-            final_text, reply_markup=get_replay_keyboard(bet)
-        )
-    except Exception:
-        await callback.message.answer(
-            final_text, reply_markup=get_replay_keyboard(bet)
-        )
+    keyboard = get_replay_keyboard(bet)
+    edited = await safe_edit_message(callback.message, final_text, reply_markup=keyboard)
+    if not edited:
+        await safe_send_message(callback.message, final_text, reply_markup=keyboard)
 
     await state.clear()
-    await callback.answer(
-        f"🏆 +{win_amount:,} сыр." if win_amount > 0 else "💔 Не в этот раз...",
-        show_alert=False
-    )
-
-    # Автоудаление через AUTO_DELETE_DELAY секунд
+    await callback.answer(get_final_answer_text(win_amount), show_alert=False)
     asyncio.create_task(schedule_delete(callback.message, AUTO_DELETE_DELAY))
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🔁 ПОВТОР ИГРЫ
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @router.callback_query(F.data.startswith("poker_replay_"))
 async def process_poker_replay(callback: types.CallbackQuery, state: FSMContext):
-    """Быстрый рестарт с той же ставкой."""
-    try:
-        bet = int(callback.data.split("_")[2])
-    except (ValueError, IndexError):
+    bet = parse_callback_index(callback.data, 2)
+    if bet is None:
         return await callback.answer()
 
-    chat_id, user_id = callback.message.chat.id, callback.from_user.id
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
     full_name = escape_html(callback.from_user.full_name)
     data = await get_user_data(chat_id, user_id, full_name)
 
     if data.get('is_banned'):
         return await callback.answer("⛔ Вы заблокированы.", show_alert=True)
 
-    if data.get('balance', 0) - bet < CREDIT_LIMIT:
+    if not has_enough_balance(data.get('balance', 0), bet):
         return await callback.answer(
             "💳 Недостаточно средств для повтора.",
-            show_alert=True
+            show_alert=True,
         )
 
-    # Имитируем callback подтверждения через casino_utils
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
+    await safe_delete_message(callback.message)
     from casino_utils import ask_casino_confirmation
     await ask_casino_confirmation(callback.message, "poker", bet, user_id=user_id)
     await callback.answer("🔁 Готовим новую раздачу...")
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 🛡️ ОБРАБОТЧИК НЕИЗВЕСТНЫХ КОЛЛБЭКОВ POKER_*
-# ═══════════════════════════════════════════════════════════════════════════════
-
 @router.callback_query(F.data.startswith("poker_"))
 async def process_poker_unknown(callback: types.CallbackQuery):
-    """
-    Перехватывает устаревшие/неизвестные коллбэки покера
-    (например, после рестарта бота).
-    """
     await callback.answer(
         "⚠️ Эта игра устарела или завершена.\n"
         "Начните новую: /poker [ставка]",
-        show_alert=True
+        show_alert=True,
     )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#                              🎰 КОНЕЦ ФАЙЛА 🎰
-# ═══════════════════════════════════════════════════════════════════════════════
