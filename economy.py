@@ -107,11 +107,10 @@ async def cmd_help(message: types.Message):
     text = (
         "📜 <b>ПОЛНЫЙ СПИСОК КОМАНД БОТА</b> 📜\n\n"
         "🚀 <b>ПОСЛЕДНИЕ ОБНОВЛЕНИЯ:</b>\n"
-        "• <b>Фондовая Биржа:</b> <code>/stocks</code> — ГазСыр и SpaceMilk!\n"
-        "• <b>Сезоны:</b> <code>/season</code> — тематические события с бонусами!\n"
-        "• <b>Налог на богатство:</b> чем больше денег, тем выше комиссия.\n"
-        "• <b>Мини-игры:</b> в <code>/work</code> и <code>/crime</code> нужна реакция.\n"
-        "• <b>Оптимизация:</b> исправлены баги в /pay, /work, /crime.\n\n"
+        "• 📈 <b>КРАШ-АВИАТОР:</b> <code>/crash</code> — Лети к звездам! Графики в реальном времени с dynamic Matplotlib, темы (neon, matrix...), авто-кешаут, достижения и <code>/crash_top</code>!\n"
+        "• 🃏 <b>ВИДЕО-ПОКЕР:</b> <code>/poker</code> — Полноценный 5-карточный покер с умным советником, обучением, статистикой и авто-сохранением!\n"
+        "• 📈 <b>Фондовая Биржа:</b> <code>/stocks</code> — Инвестируй в ГазСыр и SpaceMilk!\n"
+        "• 📅 <b>Сезоны:</b> <code>/season</code> — Тематические события с бонусами!\n\n"
 
         "💰 <b>ЭКОНОМИКА И БАНК:</b>\n"
         "<code>/profile</code> — Профиль.\n"
@@ -139,7 +138,7 @@ async def cmd_help(message: types.Message):
         "🛡 <b>КЛАНЫ:</b> <code>/clan</code>, "
         "<code>Брак</code>, <code>Развод</code>, <code>Подарок</code>.\n\n"
 
-        "🎰 <b>ИГРЫ:</b> <code>/bj</code>, <code>/slots</code>, "
+        "🎰 <b>ИГРЫ:</b> <code>/poker</code>, <code>/crash</code>, <code>/bj</code>, <code>/slots</code>, "
         "<code>/roulette</code>, <code>Вызвать на дуэль</code>, <code>/lottery</code>.\n\n"
 
         "👮 <b>АДМИНКА:</b> <code>мут</code>, <code>бан</code>, "
