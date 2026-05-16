@@ -280,7 +280,14 @@ async def process_buy(callback: types.CallbackQuery):
         return await callback.answer("Ошибка при покупке.", show_alert=True)
 
     await callback.answer(f"Куплено: {item['name']}!", show_alert=True)
-    await show_category(callback)
+
+    # Refresh data and render category
+    data = await get_user_data(chat_id, user_id)
+    base_tax = await get_global_tax()
+    category = item.get('cat', 'other')
+    cats_names = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}
+    text = f"📂 <b>Категория: {cats_names.get(category)}</b>\n\nВыбери товар для покупки (цены указаны с учетом твоего налога):"
+    await callback.message.edit_text(text, reply_markup=get_category_kb(category, data.get('balance', 0), base_tax, data.get('skills', {}).get('negotiation', 0)))
 
 @router.callback_query(F.data == "shop_sell_menu")
 async def show_sell_menu(callback: types.CallbackQuery):
