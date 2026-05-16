@@ -276,6 +276,7 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id, total_
         
         if bank_id:
             from profile_bank import get_bank_info, create_or_update_bank
+            from db import get_db
             # В транзакции сложно вызывать сложные функции, поэтому обновим напрямую
             db = get_db()
             bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(bank_id))
