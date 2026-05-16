@@ -52,7 +52,7 @@ class TestBaccarat(unittest.IsolatedAsyncioTestCase):
             # First call is the bet deduction
             mock_update_balance.assert_any_call(1, 2, -100, min_balance=-5000)
             # Second call is the win payment (bet + profit)
-            mock_update_balance.assert_any_call(1, 2, 200)
+            mock_update_balance.assert_any_call(1, 2, 200, action='Baccarat Win')
 
     @patch('baccarat.get_user_data')
     @patch('baccarat.update_user_balance')

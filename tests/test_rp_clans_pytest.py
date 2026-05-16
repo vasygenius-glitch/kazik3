@@ -2,16 +2,22 @@ import pytest
 import sys
 from unittest.mock import AsyncMock, patch, MagicMock
 
-# Mock system dependencies before importing
-sys.modules['firebase_admin'] = MagicMock()
+# Mock external dependencies
+mock_fa_async = MagicMock()
+mock_fa_async.transactional = lambda f: f
+
+firebase_admin_mock = MagicMock()
+firebase_admin_mock.firestore_async = mock_fa_async
+
+sys.modules['firebase_admin'] = firebase_admin_mock
 sys.modules['firebase_admin.credentials'] = MagicMock()
 sys.modules['firebase_admin.firestore'] = MagicMock()
-sys.modules['firebase_admin.firestore_async'] = MagicMock()
-
+sys.modules['firebase_admin.firestore_async'] = mock_fa_async
 sys.modules['diseases'] = MagicMock()
-sys.modules['economy_utils'] = MagicMock()
 sys.modules['config'] = MagicMock()
 sys.modules['config'].CREATOR_ID = 999
+sys.modules['economy_utils'] = MagicMock()
+
 
 import rp_clans
 
