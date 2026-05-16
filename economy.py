@@ -4,7 +4,7 @@ from firebase_admin import firestore_async
 import secrets
 import time
 from economy_utils import get_global_tax
-from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users
+from user_manager import get_user_data, update_user_balance, check_and_give_bonus, update_user_field, get_top_users, get_user_ref, safe_get_snapshot
 from seasons import apply_season_logic
 from escape import escape_html
 

@@ -24,9 +24,21 @@ async def test_join_hg_tr_success():
     with patch('hunger_games.get_user_ref') as mock_ref, \
          patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
 
-        mock_snap.return_value = snapshot
+        # For mock_snap, AsyncMock should return snapshot directly but since side_effect is sometimes used
+        async def mock_safe_get_snapshot(*args, **kwargs):
+            return snapshot
+        mock_snap.side_effect = mock_safe_get_snapshot
 
-        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        # Extract unwrapped function because @firestore_async.transactional wraps it
+        from hunger_games import join_hg_tr
+        unwrapped = join_hg_tr.__dict__.get('to_wrap', join_hg_tr)
+
+        # Check if the unwrapped function is still awaitable, and call it
+        res = unwrapped(transaction, chat_id, user_id, base_bet)
+        if hasattr(res, '__await__'):
+            player_data, error, updates = await res
+        else:
+            player_data, error, updates = res
 
         assert error is None
         assert player_data['id'] == user_id
@@ -57,9 +69,20 @@ async def test_join_hg_tr_vip_discount():
     with patch('hunger_games.get_user_ref'), \
          patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
 
-        mock_snap.return_value = snapshot
+        # For mock_snap, AsyncMock should return snapshot directly but since side_effect is sometimes used
+        async def mock_safe_get_snapshot(*args, **kwargs):
+            return snapshot
+        mock_snap.side_effect = mock_safe_get_snapshot
 
-        player_data, error, updates = await join_hg_tr(transaction, chat_id, user_id, base_bet)
+        # Extract unwrapped function because @firestore_async.transactional wraps it
+        from hunger_games import join_hg_tr
+        unwrapped = join_hg_tr.__dict__.get('to_wrap', join_hg_tr)
+
+        res = unwrapped(transaction, chat_id, user_id, base_bet)
+        if hasattr(res, '__await__'):
+            player_data, error, updates = await res
+        else:
+            player_data, error, updates = res
 
         assert error is None
         assert player_data['bet_paid'] == 800 # 20% discount
@@ -86,9 +109,24 @@ async def test_distribute_prizes_tr():
     with patch('hunger_games.get_user_ref'), \
          patch('hunger_games.safe_get_snapshot', new_callable=AsyncMock) as mock_snap:
 
-        mock_snap.side_effect = [winner_snap, host_snap]
+        async def mock_safe_get_snapshot(*args, **kwargs):
+            if mock_safe_get_snapshot.call_count == 0:
+                mock_safe_get_snapshot.call_count += 1
+                return winner_snap
+            else:
+                return host_snap
+        mock_safe_get_snapshot.call_count = 0
+        mock_snap.side_effect = mock_safe_get_snapshot
 
-        winner_upd, host_upd = await distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
+        # Extract unwrapped function because @firestore_async.transactional wraps it
+        from hunger_games import distribute_prizes_tr
+        unwrapped = distribute_prizes_tr.__dict__.get('to_wrap', distribute_prizes_tr)
+
+        res = unwrapped(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases)
+        if hasattr(res, '__await__'):
+            winner_upd, host_upd = await res
+        else:
+            winner_upd, host_upd = res
 
         assert winner_upd['balance'] == 5000
         assert 'hiv' in winner_upd['diseases']
