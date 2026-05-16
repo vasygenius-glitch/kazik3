@@ -3,10 +3,16 @@ import sys
 from unittest.mock import AsyncMock, patch, MagicMock
 
 # Mock external dependencies
-sys.modules['firebase_admin'] = MagicMock()
+mock_fa_async = MagicMock()
+mock_fa_async.transactional = lambda f: f
+
+firebase_admin_mock = MagicMock()
+firebase_admin_mock.firestore_async = mock_fa_async
+
+sys.modules['firebase_admin'] = firebase_admin_mock
 sys.modules['firebase_admin.credentials'] = MagicMock()
 sys.modules['firebase_admin.firestore'] = MagicMock()
-sys.modules['firebase_admin.firestore_async'] = MagicMock()
+sys.modules['firebase_admin.firestore_async'] = mock_fa_async
 sys.modules['diseases'] = MagicMock()
 sys.modules['config'] = MagicMock()
 sys.modules['config'].CREATOR_ID = 999
@@ -63,7 +69,7 @@ class TestCupsGame(unittest.IsolatedAsyncioTestCase):
             mock_get_data.return_value = {'balance': 1000}
 
             await cups.process_cups(callback)
-            mock_update.assert_called_once_with(chat_id, user_id, bet + bet * 2)
+            mock_update.assert_called_once_with(chat_id, user_id, bet + bet * 2, action='Cups Win')
 
     async def test_process_cups_loss_rate(self):
         game_id = "test_game_2"

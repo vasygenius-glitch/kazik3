@@ -186,7 +186,12 @@ async def show_category(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("buy_"))
 async def process_buy(callback: types.CallbackQuery):
-    item_id = callback.data.replace("buy_", "")
+    is_confirmed = callback.data.startswith("buy_conf_")
+    if is_confirmed:
+        item_id = callback.data.replace("buy_conf_", "")
+    else:
+        item_id = callback.data.replace("buy_", "")
+
     item = ITEMS.get(item_id)
     if not item: return
 
@@ -229,7 +234,7 @@ async def process_buy(callback: types.CallbackQuery):
         return await callback.answer(f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True)
 
     # Confirmation for expensive items
-    if final_price > 1000000 and not callback.data.startswith("buy_conf_"):
+    if final_price > 1000000 and not is_confirmed:
         builder = InlineKeyboardBuilder()
         builder.button(text="✅ Да, купить", callback_data=f"buy_conf_{item_id}")
         builder.button(text="❌ Отмена", callback_data=f"shop_cat_{item.get('cat', 'other')}")
@@ -276,11 +281,6 @@ async def process_buy(callback: types.CallbackQuery):
 
     await callback.answer(f"Куплено: {item['name']}!", show_alert=True)
     await show_category(callback)
-
-@router.callback_query(F.data.startswith("buy_conf_"))
-async def process_buy_confirm(callback: types.CallbackQuery):
-    callback.data = callback.data.replace("buy_conf_", "buy_")
-    await process_buy(callback)
 
 @router.callback_query(F.data == "shop_sell_menu")
 async def show_sell_menu(callback: types.CallbackQuery):
