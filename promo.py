@@ -59,7 +59,7 @@ async def cmd_promo(message: types.Message):
     from firebase_admin import firestore_async
     from user_manager import safe_get_snapshot
 
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def process_promo_activation_tx(transaction, promo_ref, u_id):
         snap = await safe_get_snapshot(transaction, promo_ref)
         if not snap.exists:

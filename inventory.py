@@ -133,7 +133,7 @@ async def inv_upgrade(callback: types.CallbackQuery):
     
     db = get_db()
     
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def run_upgrade_transaction(transaction, chat_id, user_id, item_id, cost, max_lvl):
         return await upgrade_business_tr(transaction, chat_id, user_id, item_id, cost, max_lvl)
 
@@ -178,7 +178,7 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
     
     db = get_db()
     
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def run_sell_transaction(transaction, chat_id, user_id, item_id, item_info):
         ref = get_user_ref(chat_id, user_id)
         snapshot = await safe_get_snapshot(transaction, ref)

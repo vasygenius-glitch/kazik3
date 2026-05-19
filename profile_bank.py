@@ -292,7 +292,7 @@ async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
     fire_and_forget(bank_ref.set(data, merge=True))
 
 # ===================== ТРАНЗАКЦИИ ВКЛАДОВ =====================
-@firestore_async.transactional
+@firestore_async.async_transactional
 async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, amount):
     from user_manager import get_user_ref, safe_get_snapshot
     db = get_db()
@@ -347,7 +347,7 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
     return amount, current_deposit + amount
 
 
-@firestore_async.transactional
+@firestore_async.async_transactional
 async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount):
     from user_manager import get_user_ref, safe_get_snapshot
     db = get_db()
@@ -665,7 +665,7 @@ async def cmd_bank_offshore(message: types.Message):
     db = get_db()
     from user_manager import update_user_balance, get_user_ref
 
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def activate_offshore_tx(transaction, chat_id, user_id, price):
         from user_manager import safe_get_snapshot
         user_ref = get_user_ref(chat_id, user_id)

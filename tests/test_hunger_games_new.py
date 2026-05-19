@@ -29,7 +29,7 @@ async def test_join_hg_tr_success():
             return snapshot
         mock_snap.side_effect = mock_safe_get_snapshot
 
-        # Extract unwrapped function because @firestore_async.transactional wraps it
+        # Extract unwrapped function because @firestore_async.async_transactional wraps it
         from hunger_games import join_hg_tr
         unwrapped = join_hg_tr.__dict__.get('to_wrap', join_hg_tr)
 
@@ -74,7 +74,7 @@ async def test_join_hg_tr_vip_discount():
             return snapshot
         mock_snap.side_effect = mock_safe_get_snapshot
 
-        # Extract unwrapped function because @firestore_async.transactional wraps it
+        # Extract unwrapped function because @firestore_async.async_transactional wraps it
         from hunger_games import join_hg_tr
         unwrapped = join_hg_tr.__dict__.get('to_wrap', join_hg_tr)
 
@@ -118,7 +118,7 @@ async def test_distribute_prizes_tr():
         mock_safe_get_snapshot.call_count = 0
         mock_snap.side_effect = mock_safe_get_snapshot
 
-        # Extract unwrapped function because @firestore_async.transactional wraps it
+        # Extract unwrapped function because @firestore_async.async_transactional wraps it
         from hunger_games import distribute_prizes_tr
         unwrapped = distribute_prizes_tr.__dict__.get('to_wrap', distribute_prizes_tr)
 

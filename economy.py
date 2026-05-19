@@ -309,7 +309,7 @@ async def cmd_pay(message: types.Message):
     )
 
 
-@firestore_async.transactional
+@firestore_async.async_transactional
 async def process_transfer_tx(transaction, chat_id, sender_id, target_id,
                               total_cost, amount, human_admins, commission):
     """Атомарный перевод с защитой от отрицательного баланса."""

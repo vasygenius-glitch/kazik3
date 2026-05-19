@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 # Mock external dependencies
 mock_fa_async = MagicMock()
 mock_fa_async.transactional = lambda f: f
+mock_fa_async.async_transactional = lambda f: f
 
 firebase_admin_mock = MagicMock()
 firebase_admin_mock.firestore_async = mock_fa_async

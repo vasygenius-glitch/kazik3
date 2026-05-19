@@ -126,7 +126,7 @@ async def process_bank_loan(callback: types.CallbackQuery):
     db = get_db()
     from user_manager import update_user_balance, get_user_ref, safe_get_snapshot, set_in_cache, mark_dirty
 
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def issue_loan_tx(transaction, chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id):
         bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(lender_id))
         user_ref = get_user_ref(chat_id, borrower_id)

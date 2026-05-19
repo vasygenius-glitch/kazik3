@@ -126,7 +126,7 @@ async def cmd_hg_create(message: types.Message):
         reply_markup=builder.as_markup()
     )
 
-@firestore_async.transactional
+@firestore_async.async_transactional
 async def distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, fee, winner_diseases):
     winner_ref = get_user_ref(chat_id, winner_id)
     host_ref = get_user_ref(chat_id, host_id)
@@ -154,7 +154,7 @@ async def distribute_prizes_tr(transaction, chat_id, winner_id, prize, host_id, 
 
     return winner_updates, host_updates
 
-@firestore_async.transactional
+@firestore_async.async_transactional
 async def join_hg_tr(transaction, chat_id, user_id, base_bet):
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)

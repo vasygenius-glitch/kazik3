@@ -408,7 +408,7 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
     # ─── Транзакция покупки ───
     db = get_db()
 
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def _buy_txn(transaction):
         return await buy_item_tr(
             transaction, chat_id, user_id, item_id, final_price, item_id == "вип"
@@ -484,7 +484,7 @@ async def process_sell_confirm(callback: types.CallbackQuery):
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         if item_id == "вип":
-            @firestore_async.transactional
+            @firestore_async.async_transactional
             async def _sell_vip_txn(transaction):
                 return await sell_vip_tr(transaction, chat_id, user_id, sell_price)
 
@@ -502,7 +502,7 @@ async def process_sell_confirm(callback: types.CallbackQuery):
         else:
             item_cat = item.get("cat", "")
 
-            @firestore_async.transactional
+            @firestore_async.async_transactional
             async def _sell_txn(transaction):
                 return await sell_item_tr(
                     transaction, chat_id, user_id, item_id, item_cat, sell_price

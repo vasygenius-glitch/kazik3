@@ -27,6 +27,8 @@ async def cmd_buypet(message: types.Message):
     args = message.text.split()
     if len(args) < 2: return await message.answer("Укажите ID питомца.")
 
+    chat_id = message.chat.id
+    user_id = message.from_user.id
     pet_id = args[1].lower()
     if pet_id not in PETS_SHOP: return await message.answer("Такого питомца нет в магазине.")
 
@@ -36,7 +38,7 @@ async def cmd_buypet(message: types.Message):
     
     db = get_db()
 
-    @firestore_async.transactional
+    @firestore_async.async_transactional
     async def run_pet_transaction(transaction, chat_id, user_id, pet_id, price):
         ref = get_user_ref(chat_id, user_id)
         snapshot = await safe_get_snapshot(transaction, ref)
@@ -61,11 +63,7 @@ async def cmd_buypet(message: types.Message):
 
     try:
         price = PETS_SHOP[pet_id]['price']
-        res = run_pet_transaction(db.transaction(), chat_id, user_id, pet_id, price)
-        if hasattr(res, "__aiter__"):
-            async for r in res: success, error_msg = r
-        else:
-            success, error_msg = await res
+        success, error_msg = await run_pet_transaction(db.transaction(), chat_id, user_id, pet_id, price)
             
         if not success:
             return await message.answer(error_msg)
