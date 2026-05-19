@@ -294,7 +294,7 @@ async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
 # ===================== ТРАНЗАКЦИИ ВКЛАДОВ =====================
 @firestore_async.transactional
 async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, amount):
-    from user_manager import update_user_balance, get_user_ref, safe_get_snapshot
+    from user_manager import get_user_ref, safe_get_snapshot
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(target_banker_id))
     user_ref = get_user_ref(chat_id, user_id)
@@ -308,12 +308,14 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
     user_snapshot = await safe_get_snapshot(transaction, user_ref)
     user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
 
+    current_balance = int(user_data.get('balance', 0) or 0)
+
     if amount == -1:  # all
-        amount = user_data.get('balance', 0)
+        amount = current_balance
 
     if amount <= 0:
         raise ValueError("Сумма должна быть положительной.")
-    if user_data.get('balance', 0) < amount:
+    if current_balance < amount:
         raise ValueError("Недостаточно средств на балансе.")
 
     current_deposit = user_data.get('bank_deposit', 0)
@@ -323,10 +325,8 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
         raise ValueError("У вас уже есть активный вклад в другом банке! Сначала снимите все средства.")
 
     # Записи
-    await update_user_balance(chat_id, user_id, -amount, min_balance=0,
-                              transaction=transaction, action="Bank Deposit")
-
     updates = {
+        'balance': current_balance - amount,
         'bank_deposit': current_deposit + amount,
         'bank_name': target_banker_id,
     }
@@ -349,7 +349,7 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
 
 @firestore_async.transactional
 async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, amount):
-    from user_manager import update_user_balance, get_user_ref, safe_get_snapshot
+    from user_manager import get_user_ref, safe_get_snapshot
     db = get_db()
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(current_banker_id))
     user_ref = get_user_ref(chat_id, user_id)
@@ -362,6 +362,7 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
 
     current_deposit = user_data.get('bank_deposit', 0)
+    current_balance = int(user_data.get('balance', 0) or 0)
 
     if amount == -1:  # all
         amount = current_deposit
@@ -381,10 +382,10 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
         else:
             await bank_ref.update({'capital': new_capital})
 
-    await update_user_balance(chat_id, user_id, amount,
-                              transaction=transaction, action="Bank Withdraw")
-
-    updates = {'bank_deposit': current_deposit - amount}
+    updates = {
+        'balance': current_balance + amount,
+        'bank_deposit': current_deposit - amount
+    }
     if current_deposit - amount <= 0:
         updates['bank_name'] = None
         updates['deposit_start_time'] = 0
@@ -664,10 +665,20 @@ async def cmd_bank_offshore(message: types.Message):
 
     @firestore_async.transactional
     async def activate_offshore_tx(transaction, chat_id, user_id, price):
-        await update_user_balance(chat_id, user_id, -price, min_balance=0,
-                                  transaction=transaction, action="Offshore License")
+        from user_manager import safe_get_snapshot
         user_ref = get_user_ref(chat_id, user_id)
-        transaction.update(user_ref, {'is_offshore': True})
+        snapshot = await safe_get_snapshot(transaction, user_ref)
+        if not snapshot.exists:
+            raise ValueError("Пользователь не найден")
+        user_data = snapshot.to_dict() or {}
+        current_balance = int(user_data.get('balance', 0) or 0)
+        if current_balance < price:
+            raise ValueError("Недостаточно средств")
+        updates = {
+            'balance': current_balance - price,
+            'is_offshore': True
+        }
+        transaction.update(user_ref, updates)
 
     try:
         await activate_offshore_tx(db.transaction(), chat_id, user_id, OFFSHORE_PRICE)
