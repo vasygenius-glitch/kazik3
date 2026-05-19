@@ -92,3 +92,102 @@ async def test_duel_god_mode_enemy_shoots_creator(setup_duel):
         assert duel_id in rp_clans.active_duels
         assert rp_clans.active_duels[duel_id]['turn'] == creator_id
         mock_render.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_clan_info_when_in_clan():
+    chat_id = 123
+    user_id = 999
+    
+    message = AsyncMock()
+    message.chat.id = chat_id
+    message.from_user.id = user_id
+    message.from_user.full_name = "Boss"
+    message.text = "/clan info"
+    
+    mock_user_data = {
+        'clan': 'GangsOfNY',
+        'balance': 100000,
+        'full_name': 'Boss'
+    }
+    
+    mock_clan_data = {
+        'leader_id': user_id,
+        'deputy_ids': [],
+        'treasury': 50000,
+        'members': [user_id]
+    }
+    
+    # Mock doc snapshot
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = mock_clan_data
+    
+    # Mock clan ref
+    mock_ref = AsyncMock()
+    mock_ref.get.return_value = mock_doc
+    
+    with patch("rp_clans.get_user_data", new_callable=AsyncMock) as mock_get_user, \
+         patch("rp_clans.get_clan_ref", new_callable=AsyncMock) as mock_get_clan_ref:
+        
+        mock_get_user.side_effect = lambda chat, uid, *args: mock_user_data if uid == user_id else {'full_name': 'Player'}
+        mock_get_clan_ref.return_value = mock_ref
+        
+        await rp_clans.cmd_clan(message)
+        
+        # Verify message answer is called with correct info
+        message.answer.assert_called_once()
+        args, kwargs = message.answer.call_args
+        assert "GangsOfNY" in args[0]
+        assert "Boss" in args[0]
+        assert "50000" in args[0]
+
+
+@pytest.mark.asyncio
+async def test_clan_promote_demote():
+    chat_id = 123
+    leader_id = 999
+    member_id = 777
+    
+    message = AsyncMock()
+    message.chat.id = chat_id
+    message.from_user.id = leader_id
+    message.from_user.full_name = "Boss"
+    message.text = "/clan promote"
+    
+    message.reply_to_message = AsyncMock()
+    message.reply_to_message.from_user.id = member_id
+    message.reply_to_message.from_user.full_name = "Soldier"
+    
+    mock_leader_data = {'clan': 'GangsOfNY', 'balance': 100000, 'full_name': 'Boss'}
+    
+    mock_clan_data = {
+        'leader_id': leader_id,
+        'deputy_ids': [],
+        'treasury': 50000,
+        'members': [leader_id, member_id]
+    }
+    
+    mock_doc = MagicMock()
+    mock_doc.exists = True
+    mock_doc.to_dict.return_value = mock_clan_data
+    
+    mock_ref = AsyncMock()
+    mock_ref.get.return_value = mock_doc
+    mock_ref.update = AsyncMock()
+    
+    with patch("rp_clans.get_user_data", new_callable=AsyncMock) as mock_get_user, \
+         patch("rp_clans.get_clan_ref", new_callable=AsyncMock) as mock_get_clan_ref:
+         
+        mock_get_user.side_effect = lambda chat, uid, *args: mock_leader_data if uid == leader_id else {'full_name': 'Soldier'}
+        mock_get_clan_ref.return_value = mock_ref
+        
+        # Promote
+        await rp_clans.cmd_clan(message)
+        mock_ref.update.assert_called_with({'deputy_ids': [member_id]})
+        
+        # Demote
+        message.text = "/clan demote"
+        mock_clan_data['deputy_ids'] = [member_id]
+        await rp_clans.cmd_clan(message)
+        mock_ref.update.assert_called_with({'deputy_ids': []})

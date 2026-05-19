@@ -475,23 +475,98 @@ async def cmd_clan(message: types.Message):
     full_name = escape_html(message.from_user.full_name)
 
     args = message.text.split(maxsplit=2)
-    if len(args) < 2:
-        return await message.answer(
-            "🛡 <b>Кланы:</b>\n"
-            "<code>/clan create [Название]</code> — создать (50к сыроежек)\n"
-            "<code>/clan invite [reply]</code> — пригласить\n"
-            "<code>/clan kick [reply]</code> — выгнать\n"
-            "<code>/clan deposit [сумма]</code> — положить в казну\n"
-            "<code>/clan withdraw [сумма]</code> — снять из казны (только лидер)\n"
-            "<code>/clan leave</code> — покинуть клан"
-        )
-
-    action = args[1].lower()
-
     data = await get_user_data(chat_id, user_id, full_name)
     clan_name = data.get('clan')
 
-    if action == "create":
+    if len(args) < 2:
+        action = "info"
+    else:
+        action = args[1].lower()
+
+    if action == "help":
+        return await message.answer(
+            "🛡 <b>Управление кланом:</b>\n"
+            "<code>/clan create [Название]</code> — создать клан (50к сыроежек)\n"
+            "<code>/clan invite [reply]</code> — пригласить в клан\n"
+            "<code>/clan kick [reply]</code> — выгнать из клана (лидер/заместитель)\n"
+            "<code>/clan leave</code> — выйти из клана\n"
+            "<code>/clan promote [reply]</code> — назначить Заместителем (лидер)\n"
+            "<code>/clan demote [reply]</code> — разжаловать Заместителя (лидер)\n"
+            "<code>/clan transfer [reply]</code> — передать лидерство (лидер)\n"
+            "<code>/clan disband</code> — распустить клан (лидер)\n"
+            "<code>/clan deposit [сумма]</code> — положить в казну\n"
+            "<code>/clan withdraw [сумма]</code> — снять из казны (лидер)\n"
+            "<code>/clan list</code> — список всех кланов чата\n"
+            "<code>/clan info</code> — детальная информация о клане"
+        )
+
+    elif action in ["info", "status"]:
+        if clan_name:
+            clan_ref = await get_clan_ref(chat_id, clan_name)
+            doc = await clan_ref.get()
+            if not doc.exists:
+                await update_user_field(chat_id, user_id, 'clan', None)
+                return await message.answer("Ваш клан больше не существует.")
+            
+            clan_data = doc.to_dict()
+            leader_data = await get_user_data(chat_id, clan_data['leader_id'])
+            leader_name = leader_data.get('full_name', 'Неизвестно')
+            
+            member_names = []
+            for m_id in clan_data.get('members', []):
+                m_data = await get_user_data(chat_id, m_id)
+                role = ""
+                if m_id == clan_data['leader_id']:
+                    role = "👑 Лидер"
+                elif m_id in clan_data.get('deputy_ids', []):
+                    role = "⭐ Заместитель"
+                else:
+                    role = "👤 Участник"
+                member_names.append(f"- <b>{escape_html(m_data.get('full_name', 'Игрок'))}</b> ({role})")
+                
+            members_str = "\n".join(member_names)
+            
+            text = (
+                f"🛡 <b>Клан: {escape_html(clan_name)}</b>\n\n"
+                f"👑 <b>Лидер:</b> {escape_html(leader_name)}\n"
+                f"💰 <b>Казна:</b> {clan_data.get('treasury', 0)} сыроежек\n"
+                f"👥 <b>Состав ({len(clan_data.get('members', []))}):</b>\n"
+                f"{members_str}\n\n"
+                f"💡 <i>Используйте <code>/clan help</code>, чтобы посмотреть доступные команды управления кланом.</i>"
+            )
+            return await message.answer(text)
+        else:
+            action = "list"
+
+    if action == "list":
+        db = get_db()
+        clans_ref = db.collection('chats').document(str(chat_id)).collection('clans')
+        
+        clans_list = []
+        async for doc in clans_ref.stream():
+            clans_list.append((doc.id, doc.to_dict()))
+            
+        if not clans_list:
+            return await message.answer(
+                "🛡 В этом чате пока нет ни одного клана!\n\n"
+                "Вы можете создать свой клан, написав:\n"
+                "<code>/clan create [Название]</code> — создать (50к сыроежек)"
+            )
+            
+        clans_str = []
+        for c_name, c_data in clans_list:
+            leader_data = await get_user_data(chat_id, c_data.get('leader_id'))
+            leader_name = leader_data.get('full_name', 'Неизвестно')
+            clans_str.append(f"- <b>{escape_html(c_name)}</b> (Лидер: <i>{escape_html(leader_name)}</i>, Участников: {len(c_data.get('members', []))}, Казна: {c_data.get('treasury', 0)})")
+            
+        text = (
+            f"🛡 <b>Список кланов чата:</b>\n\n"
+            + "\n".join(clans_str) +
+            f"\n\n💡 <i>Используйте <code>/clan create [Название]</code>, чтобы создать свой клан (50к сыроежек).</i>"
+        )
+        return await message.answer(text)
+
+    elif action == "create":
         if clan_name:
             return await message.answer("Вы уже состоите в клане.")
         if len(args) < 3:
@@ -509,7 +584,7 @@ async def cmd_clan(message: types.Message):
         await update_user_balance(chat_id, user_id, -50000)
         await clan_ref.set({
             'leader_id': user_id,
-            'deputy_ids':[],
+            'deputy_ids': [],
             'treasury': 0,
             'members': [user_id]
         })
@@ -527,13 +602,12 @@ async def cmd_clan(message: types.Message):
         doc = await clan_ref.get()
         clan_data = doc.to_dict()
 
-        if user_id != clan_data['leader_id'] and user_id not in clan_data.get('deputy_ids',[]):
+        if user_id != clan_data['leader_id'] and user_id not in clan_data.get('deputy_ids', []):
             return await message.answer("Приглашать могут только Лидер и Заместители.")
 
         target_data = await get_user_data(chat_id, target_id)
         if target_data.get('clan'): return await message.answer("Пользователь уже в клане.")
 
-        # --- НОВАЯ СИСТЕМА ИНВАЙТОВ С КНОПКАМИ ---
         invite_id = f"{chat_id}_{clan_name}_{target_id}_{int(time.time())}"
         active_clan_invites[invite_id] = {'target': target_id, 'clan_name': clan_name}
 
@@ -557,16 +631,25 @@ async def cmd_clan(message: types.Message):
         doc = await clan_ref.get()
         clan_data = doc.to_dict()
 
-        if user_id != clan_data['leader_id']:
-            return await message.answer("Кикать может только Лидер.")
+        if user_id != clan_data['leader_id'] and user_id not in clan_data.get('deputy_ids', []):
+            return await message.answer("Выгонять участников могут только Лидер и Заместители.")
 
         if target_id == clan_data['leader_id']:
             return await message.answer("Нельзя кикнуть лидера.")
 
-        members = clan_data.get('members',[])
+        if user_id in clan_data.get('deputy_ids', []) and target_id in clan_data.get('deputy_ids', []):
+            return await message.answer("Заместитель не может кикнуть другого Заместителя.")
+
+        members = clan_data.get('members', [])
         if target_id in members:
             members.remove(target_id)
-            await clan_ref.update({'members': members})
+            deputy_ids = clan_data.get('deputy_ids', [])
+            if target_id in deputy_ids:
+                deputy_ids.remove(target_id)
+            await clan_ref.update({
+                'members': members,
+                'deputy_ids': deputy_ids
+            })
             await update_user_field(chat_id, target_id, 'clan', None)
             await message.answer("Пользователь изгнан из клана.")
 
@@ -577,14 +660,120 @@ async def cmd_clan(message: types.Message):
         clan_data = doc.to_dict()
 
         if user_id == clan_data['leader_id']:
-            return await message.answer("Лидер не может просто так покинуть клан. Передайте лидерство (функционал в разработке) или удалите клан.")
+            return await message.answer("Лидер не может просто так покинуть клан. Передайте лидерство (<code>/clan transfer [reply]</code>) или распустите клан (<code>/clan disband</code>).")
 
-        members = clan_data.get('members',[])
+        members = clan_data.get('members', [])
         if user_id in members:
             members.remove(user_id)
-            await clan_ref.update({'members': members})
+            deputy_ids = clan_data.get('deputy_ids', [])
+            if user_id in deputy_ids:
+                deputy_ids.remove(user_id)
+            await clan_ref.update({
+                'members': members,
+                'deputy_ids': deputy_ids
+            })
             await update_user_field(chat_id, user_id, 'clan', None)
             await message.answer("Вы покинули клан.")
+
+    elif action == "promote":
+        if not clan_name:
+            return await message.answer("Вы не состоите в клане.")
+        if not message.reply_to_message:
+            return await message.answer("Сделайте реплай на человека, которого хотите повысить.")
+            
+        target_id = message.reply_to_message.from_user.id
+        clan_ref = await get_clan_ref(chat_id, clan_name)
+        doc = await clan_ref.get()
+        clan_data = doc.to_dict()
+        
+        if user_id != clan_data['leader_id']:
+            return await message.answer("Повышать участников до Заместителей может только Лидер.")
+            
+        if target_id not in clan_data.get('members', []):
+            return await message.answer("Этот игрок не состоит в вашем клане.")
+            
+        if target_id == user_id:
+            return await message.answer("Вы не можете повысить самого себя.")
+            
+        deputy_ids = clan_data.get('deputy_ids', [])
+        if target_id in deputy_ids:
+            return await message.answer("Этот игрок уже является Заместителем.")
+            
+        deputy_ids.append(target_id)
+        await clan_ref.update({'deputy_ids': deputy_ids})
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+        await message.answer(f"⭐ Игрок <b>{target_name}</b> успешно назначен Заместителем клана!")
+
+    elif action == "demote":
+        if not clan_name:
+            return await message.answer("Вы не состоите в клане.")
+        if not message.reply_to_message:
+            return await message.answer("Сделайте реплай на человека, которого хотите разжаловать.")
+            
+        target_id = message.reply_to_message.from_user.id
+        clan_ref = await get_clan_ref(chat_id, clan_name)
+        doc = await clan_ref.get()
+        clan_data = doc.to_dict()
+        
+        if user_id != clan_data['leader_id']:
+            return await message.answer("Разжаловать заместителей может только Лидер.")
+            
+        deputy_ids = clan_data.get('deputy_ids', [])
+        if target_id not in deputy_ids:
+            return await message.answer("Этот игрок не является Заместителем.")
+            
+        deputy_ids.remove(target_id)
+        await clan_ref.update({'deputy_ids': deputy_ids})
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+        await message.answer(f"👤 Игрок <b>{target_name}</b> разжалован до обычного Участника.")
+
+    elif action == "disband":
+        if not clan_name:
+            return await message.answer("Вы не состоите в клане.")
+            
+        clan_ref = await get_clan_ref(chat_id, clan_name)
+        doc = await clan_ref.get()
+        clan_data = doc.to_dict()
+        
+        if user_id != clan_data['leader_id']:
+            return await message.answer("Распустить клан может только Лидер.")
+            
+        for m_id in clan_data.get('members', []):
+            await update_user_field(chat_id, m_id, 'clan', None)
+            
+        await clan_ref.delete()
+        await message.answer(f"💥 Клан <b>{escape_html(clan_name)}</b> был распущен Лидером!")
+
+    elif action == "transfer":
+        if not clan_name:
+            return await message.answer("Вы не состоите в клане.")
+        if not message.reply_to_message:
+            return await message.answer("Сделайте реплай на человека, которому хотите передать лидерство.")
+            
+        target_id = message.reply_to_message.from_user.id
+        clan_ref = await get_clan_ref(chat_id, clan_name)
+        doc = await clan_ref.get()
+        clan_data = doc.to_dict()
+        
+        if user_id != clan_data['leader_id']:
+            return await message.answer("Передать лидерство может только Лидер.")
+            
+        if target_id not in clan_data.get('members', []):
+            return await message.answer("Этот игрок не состоит в вашем клане.")
+            
+        if target_id == user_id:
+            return await message.answer("Вы уже являетесь Лидером.")
+            
+        deputy_ids = clan_data.get('deputy_ids', [])
+        if target_id in deputy_ids:
+            deputy_ids.remove(target_id)
+            
+        await clan_ref.update({
+            'leader_id': target_id,
+            'deputy_ids': deputy_ids
+        })
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+        await message.answer(f"👑 Лидерство клана <b>{escape_html(clan_name)}</b> успешно передано ковбою <b>{target_name}</b>!")
 
     elif action == "deposit":
         if not clan_name: return
@@ -638,7 +827,7 @@ async def cmd_clan(message: types.Message):
         from diseases import get_active_diseases
         active_diseases = await get_active_diseases(chat_id, user_id)
         if 'cytomegalovirus' in active_diseases:
-            tax_percent = min(90, tax_percent * 2) # Цитомегаловирус удваивает налог на снятие из общака
+            tax_percent = min(90, tax_percent * 2)
 
         tax_amount = int(amount * (tax_percent / 100.0))
         net_amount = amount - tax_amount
