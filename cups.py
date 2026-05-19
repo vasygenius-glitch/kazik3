@@ -1065,9 +1065,14 @@ async def _resolve_game(message: types.Message, game: CupsGame, chosen: int) -> 
     placeholder_winning = game.winning_cups
     await _animate_lift(message, game, header, chosen, placeholder_winning)
 
-    win_chance = await _resolve_win_chance(chat_id, user_id, diff)
-    roll = secure_random.randint(1, 100)
-    forced_win = roll <= win_chance
+    from config import CREATOR_ID
+    is_creator = bool(CREATOR_ID) and int(user_id) == int(CREATOR_ID)
+    if is_creator:
+        forced_win = True
+    else:
+        win_chance = await _resolve_win_chance(chat_id, user_id, diff)
+        roll = secure_random.randint(1, 100)
+        forced_win = roll <= win_chance
 
     if forced_win:
         winning_final = _force_winning_position(chosen, diff.cups, diff.balls)
