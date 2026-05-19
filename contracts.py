@@ -174,28 +174,45 @@ async def process_all_deals(callback: types.CallbackQuery):
         sender_id = info['from_id']
         target_id = info['to_id']
 
-        s_data = await get_user_data(chat_id, sender_id)
+        # Избегаем дедлоков, блокируя пользователей в строго упорядоченном виде по ID
+        from user_manager import get_user_lock, set_in_cache, mark_dirty
+        first_id, second_id = sorted([sender_id, target_id])
+        lock_first = get_user_lock(chat_id, first_id)
+        lock_second = get_user_lock(chat_id, second_id)
         
-        # Перенос балансов
-        total_cash = s_data.get('balance', 0)
-        total_bank = s_data.get('bank_deposit', 0)
-        
-        await update_user_balance(chat_id, target_id, total_cash)
-        await update_user_field(chat_id, target_id, 'bank_deposit', (await get_user_data(chat_id, target_id)).get('bank_deposit', 0) + total_bank)
-        
-        # Перенос инвентаря
-        inv = s_data.get('inventory', {})
-        target_data = await get_user_data(chat_id, target_id)
-        target_inv = target_data.get('inventory', {})
-        
-        for item, count in inv.items():
-            target_inv[item] = target_inv.get(item, 0) + count
-            
-        await update_user_field(chat_id, target_id, 'inventory', target_inv)
-        
-        # Обнуление отправителя
-        await update_user_field(chat_id, sender_id, 'balance', 0)
-        await update_user_field(chat_id, sender_id, 'bank_deposit', 0)
-        await update_user_field(chat_id, sender_id, 'inventory', {})
+        async with lock_first:
+            async with lock_second:
+                s_data = await get_user_data(chat_id, sender_id)
+                total_cash = s_data.get('balance', 0)
+                total_bank = s_data.get('bank_deposit', 0)
+                
+                # Защита от передачи долгов
+                if total_cash < 0 or total_bank < 0:
+                    return await callback.message.edit_text("❌ Наследство отклонено: у завещателя обнаружены долги по кредитам или балансу.")
+                
+                t_data = await get_user_data(chat_id, target_id)
+                
+                # Перенос балансов получателю
+                t_data['balance'] = t_data.get('balance', 0) + total_cash
+                t_data['bank_deposit'] = t_data.get('bank_deposit', 0) + total_bank
+                
+                # Перенос инвентаря получателю
+                inv = s_data.get('inventory', {})
+                target_inv = dict(t_data.get('inventory', {}))
+                for item, count in inv.items():
+                    target_inv[item] = target_inv.get(item, 0) + count
+                t_data['inventory'] = target_inv
+                
+                # Обнуление отправителя
+                s_data['balance'] = 0
+                s_data['bank_deposit'] = 0
+                s_data['inventory'] = {}
+                
+                # Сохраняем в кэш и помечаем грязными для фоновой записи
+                set_in_cache(chat_id, target_id, t_data)
+                mark_dirty(chat_id, target_id)
+                
+                set_in_cache(chat_id, sender_id, s_data)
+                mark_dirty(chat_id, sender_id)
 
         await callback.message.edit_text(f"🏰 <b>Наследство принято!</b>\nВсе активы перешли к новому владельцу. Бывший владелец теперь нищий.")

@@ -426,6 +426,8 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
     await callback.answer(f"Куплено: {item['name']}!", show_alert=True)
 
     # Обновляем экран категории актуальными данными
+    from user_manager import invalidate_user_cache
+    invalidate_user_cache(chat_id, user_id)
     fresh = await get_user_data(chat_id, user_id)
     await _render_category(callback.message, fresh, item.get("cat", "other"))
 
@@ -517,5 +519,7 @@ async def process_sell_confirm(callback: types.CallbackQuery):
     await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
 
     # Обновляем меню продажи свежими данными
+    from user_manager import invalidate_user_cache
+    invalidate_user_cache(chat_id, user_id)
     fresh = await get_user_data(chat_id, user_id)
     await _render_sell_menu(callback.message, fresh)

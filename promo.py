@@ -55,27 +55,38 @@ async def cmd_promo(message: types.Message):
 
     db = get_db()
     ref = db.collection('bot_settings').document('promocodes').collection('active').document(code)
-    doc = await ref.get()
 
-    if not doc.exists:
-        await message.answer("❌ Такого промокода не существует или он был удален.")
-        return
+    from firebase_admin import firestore_async
+    from user_manager import safe_get_snapshot
 
-    data = doc.to_dict()
-    used_by = data.get('used_by', [])
-    max_activations = data.get('max_activations', 0)
-    reward = data.get('reward', 0)
+    @firestore_async.transactional
+    async def process_promo_activation_tx(transaction, promo_ref, u_id):
+        snap = await safe_get_snapshot(transaction, promo_ref)
+        if not snap.exists:
+            return None, "❌ Такого промокода не существует или он был удален."
+        
+        p_data = snap.to_dict()
+        u_by = list(p_data.get('used_by', []))
+        max_act = p_data.get('max_activations', 0)
+        rwd = p_data.get('reward', 0)
 
-    if user_id in used_by:
-        await message.answer("❌ Вы уже активировали этот промокод!")
-        return
+        if u_id in u_by:
+            return None, "❌ Вы уже активировали этот промокод!"
 
-    if len(used_by) >= max_activations:
-        await message.answer("❌ Этот промокод больше не действителен (превышен лимит активаций).")
-        return
+        if len(u_by) >= max_act:
+            return None, "❌ Этот промокод больше не действителен (превышен лимит активаций)."
 
-    used_by.append(user_id)
-    fire_and_forget(ref.update({'used_by': used_by}))
+        u_by.append(u_id)
+        transaction.update(promo_ref, {'used_by': u_by})
+        return rwd, None
 
-    await update_user_balance(chat_id, user_id, reward)
-    await message.answer(f"🎉 Вы успешно активировали промокод <b>{code}</b> и получили <b>{reward}</b> сыроежек!")
+    try:
+        reward, error_msg = await process_promo_activation_tx(db.transaction(), ref, user_id)
+        if error_msg:
+            return await message.answer(error_msg)
+
+        await update_user_balance(chat_id, user_id, reward)
+        await message.answer(f"🎉 Вы успешно активировали промокод <b>{code}</b> и получили <b>{reward}</b> сыроежек!")
+    except Exception as e:
+        print(f"Promo activation error: {e}")
+        await message.answer("❌ Произошла ошибка при активации промокода. Попробуйте позже.")

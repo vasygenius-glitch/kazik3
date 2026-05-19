@@ -54,13 +54,7 @@ async def process_dice_confirm(callback: types.CallbackQuery):
     full_name = escape_html(callback.from_user.full_name)
     
     rand = secrets.SystemRandom()
-    from config import CREATOR_ID
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
-
-    if is_creator:
-        is_forced_win = True
-    else:
-        is_forced_win = (rand.randint(1, 100) <= 35)
+    is_forced_win = (rand.randint(1, 100) <= 35)
 
     while True:
         player_roll = rand.randint(1, 6)

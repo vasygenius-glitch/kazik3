@@ -88,9 +88,6 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
     game_id = f"{chat_id}_{user_id}_{callback.message.message_id}"
     player_cards = [get_random_card(), get_random_card()]
     dealer_cards = [get_random_card(), get_random_card()]
-    
-    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
-        player_cards = [{'rank': 'A', 'suit': '♠'}, {'rank': 'K', 'suit': '♠'}]
 
     p_score = calculate_score(player_cards)
     d_score = calculate_score(dealer_cards)
@@ -127,8 +124,7 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     
     if p_score > 21:
         secure_random = secrets.SystemRandom()
-        is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
-        if is_creator or secure_random.randint(1, 100) <= 5:
+        if secure_random.randint(1, 100) <= 5:
              game['player_cards'].pop()
              game['player_cards'].append({'rank': '2', 'suit': '♣'})
              p_score = calculate_score(game['player_cards'])
@@ -163,13 +159,8 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
     p_score = calculate_score(game['player_cards'])
     dealer_cards = game['dealer_cards']
     
-    is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
     secure_random = secrets.SystemRandom()
-
-    if is_creator:
-        target_win = True
-    else:
-        target_win = secure_random.randint(1, 100) <= 35
+    target_win = secure_random.randint(1, 100) <= 35
 
     # Pre-calculate the outcome using a while loop to match the target_win condition
     # Keep only the first (face-up) card and reroll the rest

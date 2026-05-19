@@ -519,14 +519,9 @@ async def cmd_bank(message: types.Message):
                     tx, chat_id, user_id, target_banker_id, tx_amount
                 )
 
-                # Синхронизация кэша пользователя
-                from user_manager import _user_cache
-                key = (chat_id, user_id)
-                if key in _user_cache:
-                    _user_cache[key]['data']['bank_deposit'] = total_dep
-                    _user_cache[key]['data']['bank_name'] = target_banker_id
-
-                # Инвалидация кэша банка (капитал изменился)
+                # Инвалидация кэша пользователя и банка (баланс и капитал изменились)
+                from user_manager import invalidate_user_cache
+                invalidate_user_cache(chat_id, user_id)
                 invalidate_bank_cache(chat_id, target_banker_id, bank_data.get('name'))
 
                 await message.answer(
@@ -564,17 +559,9 @@ async def cmd_bank(message: types.Message):
                     tx, chat_id, user_id, current_banker_id, tx_amount
                 )
 
-                # Синхронизация кэша пользователя
-                from user_manager import _user_cache
-                key = (chat_id, user_id)
-                if key in _user_cache:
-                    new_dep = max(0, _user_cache[key]['data'].get('bank_deposit', 0) - actual_withdrawn)
-                    _user_cache[key]['data']['bank_deposit'] = new_dep
-                    if new_dep == 0:
-                        _user_cache[key]['data']['bank_name'] = None
-                        _user_cache[key]['data']['deposit_start_time'] = 0
-
-                # Инвалидация кэша банка
+                # Инвалидация кэша пользователя и банка (баланс и капитал изменились)
+                from user_manager import invalidate_user_cache
+                invalidate_user_cache(chat_id, user_id)
                 invalidate_bank_cache(chat_id, current_banker_id)
 
                 await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")

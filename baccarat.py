@@ -53,9 +53,6 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
     
     secure_random = secrets.SystemRandom()
 
-    from config import CREATOR_ID
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
-
     is_win = secure_random.randint(1, 100) <= 35
 
     while True:
@@ -73,9 +70,6 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
         if b_score < 6:
             b_cards.append(get_random_card())
             b_score = get_baccarat_score(b_cards)
-
-        if is_creator:
-            break # Creator uses real random, or we can force win
 
         if is_win and p_score > b_score:
             break

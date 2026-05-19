@@ -274,21 +274,29 @@ async def cb_stk_buy(callback: types.CallbackQuery):
     data, ALL_COMPANIES = await get_stocks_db()
     price = data.get('prices', {}).get(cid, [1000])[-1]
     
-    # Налог на роскошь при покупке
-    base_tax = await get_global_tax()
-    ud = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    tax_rate = calculate_progressive_tax(ud.get('balance', 0), base_tax, ud.get('skills', {}).get('negotiation', 0))
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
     
-    total_cost = int((price * qty) * (1 + tax_rate / 100))
-    
-    if ud.get('balance', 0) < total_cost:
-        return await callback.answer(f"❌ Недостаточно сыра! Нужно {fmt(total_cost)} (с учетом налога {tax_rate}%).", show_alert=True)
-    
-    await update_user_balance(callback.message.chat.id, callback.from_user.id, -total_cost)
-    
-    portfolio = ud.get('stocks_portfolio', {})
-    portfolio[cid] = portfolio.get(cid, 0) + qty
-    await update_user_field(callback.message.chat.id, callback.from_user.id, 'stocks_portfolio', portfolio)
+    from user_manager import get_user_lock
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        # Налог на роскошь при покупке
+        base_tax = await get_global_tax()
+        ud = await get_user_data(chat_id, user_id)
+        tax_rate = calculate_progressive_tax(ud.get('balance', 0), base_tax, ud.get('skills', {}).get('negotiation', 0))
+        
+        total_cost = int((price * qty) * (1 + tax_rate / 100))
+        
+        if ud.get('balance', 0) < total_cost:
+            return await callback.answer(f"❌ Недостаточно сыра! Нужно {fmt(total_cost)} (с учетом налога {tax_rate}%).", show_alert=True)
+        
+        await update_user_balance(chat_id, user_id, -total_cost)
+        
+        # Получаем свежие данные с обновленным балансом и делаем копию портфеля
+        ud = await get_user_data(chat_id, user_id)
+        portfolio = dict(ud.get('stocks_portfolio', {}))
+        portfolio[cid] = portfolio.get(cid, 0) + qty
+        await update_user_field(chat_id, user_id, 'stocks_portfolio', portfolio)
     
     await callback.answer(f"✅ Куплено {qty} акций {ALL_COMPANIES[cid]['ticker']}!")
     await cb_stk_view(callback)
@@ -299,31 +307,40 @@ async def cb_stk_sell(callback: types.CallbackQuery):
     qty_str = parts[2]
     cid = parts[3]
     
-    ud = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    portfolio = ud.get('stocks_portfolio', {})
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
     
-    if cid not in portfolio or portfolio[cid] <= 0:
-        return await callback.answer("❌ У вас нет акций этой компании.", show_alert=True)
-    
-    qty = portfolio[cid] if qty_str == "all" else int(qty_str)
-    if portfolio[cid] < qty:
-        return await callback.answer("❌ Недостаточно акций для продажи.", show_alert=True)
-    
-    data, ALL_COMPANIES = await get_stocks_db()
-    price = data.get('prices', {}).get(cid, [1000])[-1]
-    
-    # Комиссия при продаже (фиксированная 5% + прогрессивный налог)
-    base_tax = await get_global_tax()
-    tax_rate = calculate_progressive_tax(ud.get('balance', 0), base_tax, ud.get('skills', {}).get('negotiation', 0))
-    
-    total_tax = 5 + tax_rate
-    profit = int((price * qty) * (1 - total_tax / 100))
-    
-    await update_user_balance(callback.message.chat.id, callback.from_user.id, profit)
-    
-    portfolio[cid] -= qty
-    if portfolio[cid] <= 0: del portfolio[cid]
-    await update_user_field(callback.message.chat.id, callback.from_user.id, 'stocks_portfolio', portfolio)
+    from user_manager import get_user_lock
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        ud = await get_user_data(chat_id, user_id)
+        portfolio = dict(ud.get('stocks_portfolio', {}))
+        
+        if cid not in portfolio or portfolio[cid] <= 0:
+            return await callback.answer("❌ У вас нет акций этой компании.", show_alert=True)
+        
+        qty = portfolio[cid] if qty_str == "all" else int(qty_str)
+        if portfolio[cid] < qty:
+            return await callback.answer("❌ Недостаточно акций для продажи.", show_alert=True)
+        
+        data, ALL_COMPANIES = await get_stocks_db()
+        price = data.get('prices', {}).get(cid, [1000])[-1]
+        
+        # Комиссия при продаже (фиксированная 5% + прогрессивный налог)
+        base_tax = await get_global_tax()
+        tax_rate = calculate_progressive_tax(ud.get('balance', 0), base_tax, ud.get('skills', {}).get('negotiation', 0))
+        
+        total_tax = 5 + tax_rate
+        profit = int((price * qty) * (1 - total_tax / 100))
+        
+        await update_user_balance(chat_id, user_id, profit)
+        
+        # Получаем свежие данные после начисления прибыли и делаем копию портфеля
+        ud = await get_user_data(chat_id, user_id)
+        portfolio = dict(ud.get('stocks_portfolio', {}))
+        portfolio[cid] -= qty
+        if portfolio[cid] <= 0: del portfolio[cid]
+        await update_user_field(chat_id, user_id, 'stocks_portfolio', portfolio)
     
     await callback.answer(f"✅ Продано {qty} акций! Вы получили {fmt(profit)} сыр (налог {total_tax}%).")
     await cb_stk_view(callback)

@@ -257,6 +257,18 @@ async def cmd_pay(message: types.Message):
                 chat_id, sender_id, target_user.id,
                 total_cost, amount, human_admins, commission,
             )
+            # Инвалидация кэша после успешного перевода
+            from user_manager import invalidate_user_cache
+            invalidate_user_cache(chat_id, sender_id)
+            invalidate_user_cache(chat_id, target_user.id)
+            if commission > 0:
+                bank_id = sender_data.get('bank_name')
+                if bank_id:
+                    from profile_bank import invalidate_bank_cache
+                    invalidate_bank_cache(chat_id, bank_id)
+                elif human_admins:
+                    for aid in human_admins:
+                        invalidate_user_cache(chat_id, aid)
         else:
             # Fallback (локальный мок)
             await update_user_balance(chat_id, sender_id, -total_cost, min_balance=0)

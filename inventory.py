@@ -147,6 +147,8 @@ async def inv_upgrade(callback: types.CallbackQuery):
         if not success:
             return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
             
+        from user_manager import invalidate_user_cache
+        invalidate_user_cache(chat_id, user_id)
         await callback.answer(f"🎉 Бизнес {info['name']} успешно улучшен!", show_alert=True)
         
         # Reload UI
@@ -209,6 +211,8 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
         print(f"Sell error: {e}")
         return await callback.answer("Ошибка при продаже.", show_alert=True)
 
+    from user_manager import invalidate_user_cache
+    invalidate_user_cache(chat_id, user_id)
     await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
     await inv_back(callback)
 
