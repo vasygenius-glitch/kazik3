@@ -102,10 +102,15 @@ async def main():
         print(f"❌ Ошибка проверки токена: {e}")
 
     # Бесконечный цикл поллинга для защиты от падений сети на Hugging Face Spaces
+    from aiogram.exceptions import TelegramConflictError
     try:
         while True:
             try:
                 await dp.start_polling(bot, handle_signals=False)
+            except TelegramConflictError as e:
+                print(f"⚠️ Обнаружен конфликт сессий (запущена другая копия бота): {e}")
+                print("Принудительно завершаю этот процесс для разрешения конфликта.")
+                break
             except Exception as e:
                 print(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}")
                 await asyncio.sleep(5)
