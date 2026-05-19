@@ -128,4 +128,4 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     try:
         await msg.edit_text(final_text)
     except Exception: pass
-    asyncio.create_task(schedule_delete(msg, message))
+    asyncio.create_task(schedule_delete(msg, callback.message))
