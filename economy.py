@@ -252,15 +252,21 @@ async def cmd_pay(message: types.Message):
 
     try:
         if hasattr(db, "transaction"):
-            await process_transfer_tx(
-                db.transaction(),
-                chat_id, sender_id, target_user.id,
-                total_cost, amount, human_admins, commission,
-            )
-            # Инвалидация кэша после успешного перевода
-            from user_manager import invalidate_user_cache
-            invalidate_user_cache(chat_id, sender_id)
-            invalidate_user_cache(chat_id, target_user.id)
+            from user_manager import get_user_lock, invalidate_user_cache
+            ids = sorted([sender_id, target_user.id])
+            lock1 = get_user_lock(chat_id, ids[0])
+            lock2 = get_user_lock(chat_id, ids[1])
+            async with lock1:
+                async with lock2:
+                    await process_transfer_tx(
+                        db.transaction(),
+                        chat_id, sender_id, target_user.id,
+                        total_cost, amount, human_admins, commission,
+                    )
+                    # Инвалидация кэша после успешного перевода
+                    invalidate_user_cache(chat_id, sender_id)
+                    invalidate_user_cache(chat_id, target_user.id)
+
             if commission > 0:
                 bank_id = sender_data.get('bank_name')
                 if bank_id:

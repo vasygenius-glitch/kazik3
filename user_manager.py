@@ -188,6 +188,16 @@ def mark_dirty(chat_id, user_id) -> None:
     _dirty_cache.add((chat_id, user_id))
 
 
+async def _flush_single_user(chat_id, user_id, expected_timestamp) -> None:
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        entry = _user_cache.get((chat_id, user_id))
+        if not entry or entry.get("timestamp") != expected_timestamp:
+            return
+        ref = get_user_ref(chat_id, user_id)
+        await ref.set(entry["data"], merge=True)
+
+
 # ============================================================
 # FLUSH В БД
 # ============================================================
@@ -213,16 +223,8 @@ async def flush_user_data() -> None:
                 entry = _user_cache.get(key)
                 if not entry:
                     continue
-                try:
-                    ref = get_user_ref(key[0], key[1])
-                except Exception as e:
-                    logger.error("get_user_ref failed for %s: %s", key, e)
-                    _dirty_cache.add(key)
-                    continue
 
-                # Передаём актуальную ссылку из кэша (set_in_cache всегда копирует —
-                # значит наш снимок никем не мутируется).
-                tasks.append(ref.set(entry["data"], merge=True))
+                tasks.append(_flush_single_user(key[0], key[1], entry["timestamp"]))
                 task_keys.append(key)
 
             if not tasks:

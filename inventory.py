@@ -142,13 +142,16 @@ async def inv_upgrade(callback: types.CallbackQuery):
         current_level = data.get('biz_levels', {}).get(item_id, 1)
         upgrade_cost = int(info['price'] * 0.5 * current_level)
 
-        success, error_msg = await run_upgrade_transaction(db.transaction(), chat_id, user_id, item_id, upgrade_cost, MAX_BIZ_LEVEL)
+        from user_manager import get_user_lock, invalidate_user_cache
+        lock = get_user_lock(chat_id, user_id)
+        async with lock:
+            success, error_msg = await run_upgrade_transaction(db.transaction(), chat_id, user_id, item_id, upgrade_cost, MAX_BIZ_LEVEL)
+            if success:
+                invalidate_user_cache(chat_id, user_id)
         
         if not success:
             return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
             
-        from user_manager import invalidate_user_cache
-        invalidate_user_cache(chat_id, user_id)
         await callback.answer(f"🎉 Бизнес {info['name']} успешно улучшен!", show_alert=True)
         
         # Reload UI
@@ -198,11 +201,17 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
         return success, sell_price
 
     try:
-        res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, info)
-        if hasattr(res, "__aiter__"):
-            async for r in res: success, sell_price = r
-        else:
-            success, sell_price = await res
+        from user_manager import get_user_lock, invalidate_user_cache
+        lock = get_user_lock(chat_id, user_id)
+        async with lock:
+            res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, info)
+            if hasattr(res, "__aiter__"):
+                async for r in res: success, sell_price = r
+            else:
+                success, sell_price = await res
+                
+            if success:
+                invalidate_user_cache(chat_id, user_id)
             
         if not success:
             return await callback.answer("Предмет не найден в инвентаре!", show_alert=True)
@@ -211,8 +220,6 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
         print(f"Sell error: {e}")
         return await callback.answer("Ошибка при продаже.", show_alert=True)
 
-    from user_manager import invalidate_user_cache
-    invalidate_user_cache(chat_id, user_id)
     await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
     await inv_back(callback)
 

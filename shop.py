@@ -415,7 +415,12 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
         )
 
     try:
-        success, error_msg = await _buy_txn(db.transaction())
+        from user_manager import get_user_lock, invalidate_user_cache
+        lock = get_user_lock(chat_id, user_id)
+        async with lock:
+            success, error_msg = await _buy_txn(db.transaction())
+            if success:
+                invalidate_user_cache(chat_id, user_id)
     except Exception:
         logger.exception("Buy transaction failed (user=%s item=%s)", user_id, item_id)
         return await callback.answer("Ошибка при покупке. Попробуйте ещё раз.", show_alert=True)
@@ -426,8 +431,6 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
     await callback.answer(f"Куплено: {item['name']}!", show_alert=True)
 
     # Обновляем экран категории актуальными данными
-    from user_manager import invalidate_user_cache
-    invalidate_user_cache(chat_id, user_id)
     fresh = await get_user_data(chat_id, user_id)
     await _render_category(callback.message, fresh, item.get("cat", "other"))
 
@@ -477,49 +480,52 @@ async def process_sell_confirm(callback: types.CallbackQuery):
     sell_price = int(item["price"] * SELL_RATIO)
     db = get_db()
 
-    if item_id == "вип":
-        @firestore_async.transactional
-        async def _sell_vip_txn(transaction):
-            return await sell_vip_tr(transaction, chat_id, user_id, sell_price)
+    from user_manager import get_user_lock, invalidate_user_cache
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        if item_id == "вип":
+            @firestore_async.transactional
+            async def _sell_vip_txn(transaction):
+                return await sell_vip_tr(transaction, chat_id, user_id, sell_price)
 
-        try:
-            success = await _sell_vip_txn(db.transaction())
-        except Exception:
-            logger.exception("Sell VIP transaction failed (user=%s)", user_id)
-            return await callback.answer(
-                "Произошла ошибка при продаже VIP. Попробуйте ещё раз.", show_alert=True
-            )
+            try:
+                success = await _sell_vip_txn(db.transaction())
+            except Exception:
+                logger.exception("Sell VIP transaction failed (user=%s)", user_id)
+                return await callback.answer(
+                    "Произошла ошибка при продаже VIP. Попробуйте ещё раз.", show_alert=True
+                )
 
-        if not success:
-            return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
+            if not success:
+                return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
 
-    else:
-        item_cat = item.get("cat", "")
+        else:
+            item_cat = item.get("cat", "")
 
-        @firestore_async.transactional
-        async def _sell_txn(transaction):
-            return await sell_item_tr(
-                transaction, chat_id, user_id, item_id, item_cat, sell_price
-            )
+            @firestore_async.transactional
+            async def _sell_txn(transaction):
+                return await sell_item_tr(
+                    transaction, chat_id, user_id, item_id, item_cat, sell_price
+                )
 
-        try:
-            success = await _sell_txn(db.transaction())
-        except Exception:
-            logger.exception("Sell transaction failed (user=%s item=%s)", user_id, item_id)
-            return await callback.answer(
-                "Произошла ошибка при продаже предмета. Попробуйте ещё раз.",
-                show_alert=True,
-            )
+            try:
+                success = await _sell_txn(db.transaction())
+            except Exception:
+                logger.exception("Sell transaction failed (user=%s item=%s)", user_id, item_id)
+                return await callback.answer(
+                    "Произошла ошибка при продаже предмета. Попробуйте ещё раз.",
+                    show_alert=True,
+                )
 
-        if not success:
-            return await callback.answer(
-                "Предмет не найден в вашем инвентаре!", show_alert=True
-            )
+            if not success:
+                return await callback.answer(
+                    "Предмет не найден в вашем инвентаре!", show_alert=True
+                )
+
+        invalidate_user_cache(chat_id, user_id)
 
     await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
 
     # Обновляем меню продажи свежими данными
-    from user_manager import invalidate_user_cache
-    invalidate_user_cache(chat_id, user_id)
     fresh = await get_user_data(chat_id, user_id)
     await _render_sell_menu(callback.message, fresh)

@@ -516,13 +516,14 @@ async def cmd_bank(message: types.Message):
             db = get_db()
             tx = db.transaction() if hasattr(db, 'transaction') else None
             try:
-                actual_amount, total_dep = await process_deposit_tx(
-                    tx, chat_id, user_id, target_banker_id, tx_amount
-                )
+                from user_manager import get_user_lock, invalidate_user_cache
+                lock = get_user_lock(chat_id, user_id)
+                async with lock:
+                    actual_amount, total_dep = await process_deposit_tx(
+                        tx, chat_id, user_id, target_banker_id, tx_amount
+                    )
+                    invalidate_user_cache(chat_id, user_id)
 
-                # Инвалидация кэша пользователя и банка (баланс и капитал изменились)
-                from user_manager import invalidate_user_cache
-                invalidate_user_cache(chat_id, user_id)
                 invalidate_bank_cache(chat_id, target_banker_id, bank_data.get('name'))
 
                 await message.answer(
@@ -556,13 +557,14 @@ async def cmd_bank(message: types.Message):
             db = get_db()
             tx = db.transaction() if hasattr(db, 'transaction') else None
             try:
-                actual_withdrawn = await process_withdraw_tx(
-                    tx, chat_id, user_id, current_banker_id, tx_amount
-                )
+                from user_manager import get_user_lock, invalidate_user_cache
+                lock = get_user_lock(chat_id, user_id)
+                async with lock:
+                    actual_withdrawn = await process_withdraw_tx(
+                        tx, chat_id, user_id, current_banker_id, tx_amount
+                    )
+                    invalidate_user_cache(chat_id, user_id)
 
-                # Инвалидация кэша пользователя и банка (баланс и капитал изменились)
-                from user_manager import invalidate_user_cache
-                invalidate_user_cache(chat_id, user_id)
                 invalidate_bank_cache(chat_id, current_banker_id)
 
                 await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")
@@ -681,14 +683,11 @@ async def cmd_bank_offshore(message: types.Message):
         transaction.update(user_ref, updates)
 
     try:
-        await activate_offshore_tx(db.transaction(), chat_id, user_id, OFFSHORE_PRICE)
-
-        from user_manager import get_user_lock, set_in_cache, mark_dirty
-        async with get_user_lock(chat_id, user_id):
-            fresh_data = await get_user_data(chat_id, user_id)
-            fresh_data['is_offshore'] = True
-            set_in_cache(chat_id, user_id, fresh_data)
-            mark_dirty(chat_id, user_id)
+        from user_manager import get_user_lock, invalidate_user_cache
+        lock = get_user_lock(chat_id, user_id)
+        async with lock:
+            await activate_offshore_tx(db.transaction(), chat_id, user_id, OFFSHORE_PRICE)
+            invalidate_user_cache(chat_id, user_id)
 
         await message.answer(
             f"🏝 <b>Оффшорный счет активирован!</b>\n"

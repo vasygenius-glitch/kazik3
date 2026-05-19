@@ -167,7 +167,10 @@ async def process_bank_loan(callback: types.CallbackQuery):
         return True
 
     try:
-        await issue_loan_tx(db.transaction(), chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id)
+        from user_manager import get_user_lock
+        lock = get_user_lock(chat_id, borrower_id)
+        async with lock:
+            await issue_loan_tx(db.transaction(), chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id)
         await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
     except ValueError as ve:
         await callback.message.edit_text(f"❌ Ошибка: {ve}")
