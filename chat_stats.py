@@ -127,199 +127,202 @@ async def cmd_top(message: types.Message):
 
 async def weekly_reset_task(bot: Bot):
     while True:
-        await asyncio.sleep(60) # Проверяем каждую минуту
-        import datetime
-        # Получаем время по МСК (UTC+3)
-        now_utc = datetime.datetime.now(datetime.timezone.utc)
-        now_msk = now_utc + datetime.timedelta(hours=3)
-        current_time = now_msk.timetuple()
+        try:
+            await asyncio.sleep(60) # Проверяем каждую минуту
+            import datetime
+            # Получаем время по МСК (UTC+3)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            now_msk = now_utc + datetime.timedelta(hours=3)
+            current_time = now_msk.timetuple()
 
-        # --- 10-минутные задачи (Чесотка и т.д.) ---
-        if current_time.tm_min % 10 == 0:
-            try:
+            # --- 10-минутные задачи (Чесотка и т.д.) ---
+            if current_time.tm_min % 10 == 0:
+                try:
+                    db = get_db()
+                    from diseases import get_active_diseases
+                    from user_manager import update_user_balance
+                    chats = await db.collection('chats').get()
+                    for chat in chats:
+                        chat_id = int(chat.id)
+                        # ОПТИМИЗАЦИЯ: Ищем только тех, у кого ЕСТЬ болезни
+                        users = await db.collection('chats').document(str(chat_id)).collection('users').where('diseases.scabies', '!=', None).get()
+                        for user in users:
+                            user_id = int(user.id)
+                            data = user.to_dict()
+                            active_diseases = await get_active_diseases(chat_id, user_id)
+                            if 'scabies' in active_diseases:
+                                if data.get('balance', 0) >= 50:
+                                    await update_user_balance(chat_id, user_id, -50)
+                except Exception as e:
+                    print(f"Ошибка в 10-минутной таске (Чесотка): {e}")
+
+            # --- Ежедневное пополнение капитала банков и начисление % по вкладам ---
+            if current_time.tm_hour == 0 and current_time.tm_min == 0:
                 db = get_db()
-                from diseases import get_active_diseases
-                from user_manager import update_user_balance
-                chats = await db.collection('chats').get()
-                for chat in chats:
-                    chat_id = int(chat.id)
-                    # ОПТИМИЗАЦИЯ: Ищем только тех, у кого ЕСТЬ болезни
-                    users = await db.collection('chats').document(str(chat_id)).collection('users').where('diseases.scabies', '!=', None).get()
-                    for user in users:
-                        user_id = int(user.id)
-                        data = user.to_dict()
-                        active_diseases = await get_active_diseases(chat_id, user_id)
-                        if 'scabies' in active_diseases:
-                            if data.get('balance', 0) >= 50:
-                                await update_user_balance(chat_id, user_id, -50)
-            except Exception as e:
-                print(f"Ошибка в 10-минутной таске (Чесотка): {e}")
+                from whitelist import get_whitelist
+                from user_manager import update_user_field
+                whitelist = await get_whitelist()
+                for chat_id in whitelist.keys():
+                    try:
+                        # 1. Загружаем все банки в чате
+                        banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
+                        bank_docs = await banks_ref.get()
+                        banks_data = {doc.id: doc.to_dict() for doc in bank_docs}
 
-        # --- Ежедневное пополнение капитала банков и начисление % по вкладам ---
-        if current_time.tm_hour == 0 and current_time.tm_min == 0:
-            db = get_db()
-            from whitelist import get_whitelist
-            from user_manager import update_user_field
-            whitelist = await get_whitelist()
-            for chat_id in whitelist.keys():
-                try:
-                    # 1. Загружаем все банки в чате
-                    banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
-                    bank_docs = await banks_ref.get()
-                    banks_data = {doc.id: doc.to_dict() for doc in bank_docs}
-
-                    # 2. Начисляем % только тем, у кого ЕСТЬ вклад
-                    users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-                    users_with_deposits = await users_ref.where('bank_deposit', '>', 0).get()
-                    
-                    for user_doc in users_with_deposits:
-                        u_data = user_doc.to_dict()
-                        deposit = u_data.get('bank_deposit', 0)
-                        bank_id_str = str(u_data.get('bank_name', ''))
-
-                        if bank_id_str in banks_data:
-                            base_rate = banks_data[bank_id_str].get('deposit_rate', 3.0)
-
-                            # Лояльность (бонус за дни)
-                            deposit_start_time = u_data.get('deposit_start_time', time.time())
-                            days_held = (time.time() - deposit_start_time) // 86400
-                            loyalty_bonus = min(5.0, days_held * 0.5) 
-
-                            final_rate = base_rate + loyalty_bonus
-                            profit = int(deposit * (final_rate / 100))
-
-                            if profit > 0:
-                                if banks_data[bank_id_str].get('capital', 0) >= profit:
-                                    banks_data[bank_id_str]['capital'] -= profit
-                                    new_dep = deposit + profit
-                                    
-                                    if u_data.get('is_offshore', False):
-                                        fee = int(new_dep * 0.005)
-                                        new_dep -= fee
-                                    
-                                    await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
-
-                    # 3. Обновляем капитал банков и проверяем банкротство
-                    for b_id, b_data in banks_data.items():
-                        current_cap = b_data.get('capital', 0)
-
-                        # Банкротство
-                        if current_cap < 0:
-                            # Оптимизация: ищем только вкладчиков этого конкретного банка
-                            bankrupt_vips = await users_ref.where('bank_name', '==', b_id).get()
-                            count_refunded = 0
-                            for v_doc in bankrupt_vips:
-                                dep = v_doc.to_dict().get('bank_deposit', 0)
-                                refund = int(dep * 0.5)
-                                await update_user_field(chat_id, int(v_doc.id), 'bank_deposit', 0)
-                                await update_user_balance(chat_id, int(v_doc.id), refund)
-                                await update_user_field(chat_id, int(v_doc.id), 'bank_name', None)
-                                count_refunded += 1
-
-                            await banks_ref.document(b_id).delete()
-                            await update_user_field(chat_id, int(b_id), 'is_banker', False)
-                            try:
-                                await bot.send_message(chat_id, f"💥 <b>ДЕФОЛТ!</b> Банк <b>{b_data.get('name')}</b> признан банкротом и закрыт. ЦБ компенсировал 50% вкладов для {count_refunded} чел.")
-                            except Exception: pass
-                            continue
-
-                        # Проверяем репутацию банкира (если меньше 0, субсидии не будет)
-                        banker_doc = await users_ref.document(b_id).get()
-                        banker_data = banker_doc.to_dict() if banker_doc.exists else {}
-                        banker_rep = banker_data.get('reputation', 0)
-
-                        # Подсчет выданных кредитов для мультипликатора субсидии
-                        total_loans_given = 0
-                        debt_users = await users_ref.where('debts', '!=', {}).get()
-                        for user_doc in debt_users:
+                        # 2. Начисляем % только тем, у кого ЕСТЬ вклад
+                        users_ref = db.collection('chats').document(str(chat_id)).collection('users')
+                        users_with_deposits = await users_ref.where('bank_deposit', '>', 0).get()
+                        
+                        for user_doc in users_with_deposits:
                             u_data = user_doc.to_dict()
-                            debts = u_data.get('debts', {})
-                            for k, v in debts.items():
-                                if k.startswith(f"bank_{b_id}_") and v > 0:
-                                    total_loans_given += 1
+                            deposit = u_data.get('bank_deposit', 0)
+                            bank_id_str = str(u_data.get('bank_name', ''))
 
-                        # Базовая субсидия 10 лямов + бонус за кредиты (допустим 1 лям за каждый выданный кредит)
-                        base_subsidy = 10000000 + (total_loans_given * 1000000)
+                            if bank_id_str in banks_data:
+                                base_rate = banks_data[bank_id_str].get('deposit_rate', 3.0)
 
-                        # Бонус от улучшения "Маркетинг" (Ур. 1-5, по +20% за уровень)
-                        lvl_market = b_data.get('upgrade_marketing', 0)
-                        market_mult = 1.0 + (lvl_market * 0.20)
+                                # Лояльность (бонус за дни)
+                                deposit_start_time = u_data.get('deposit_start_time', time.time())
+                                days_held = (time.time() - deposit_start_time) // 86400
+                                loyalty_bonus = min(5.0, days_held * 0.5) 
 
-                        subsidy = int(base_subsidy * market_mult)
+                                final_rate = base_rate + loyalty_bonus
+                                profit = int(deposit * (final_rate / 100))
 
-                        # Ежедневный налог на лицензию: 5.000.000
-                        license_tax = 5000000
+                                if profit > 0:
+                                    if banks_data[bank_id_str].get('capital', 0) >= profit:
+                                        banks_data[bank_id_str]['capital'] -= profit
+                                        new_dep = deposit + profit
+                                        
+                                        if u_data.get('is_offshore', False):
+                                            fee = int(new_dep * 0.005)
+                                            new_dep -= fee
+                                        
+                                        await update_user_field(chat_id, int(user_doc.id), 'bank_deposit', max(0, new_dep))
 
-                        new_capital = current_cap - license_tax
+                        # 3. Обновляем капитал банков и проверяем банкротство
+                        for b_id, b_data in banks_data.items():
+                            current_cap = b_data.get('capital', 0)
 
-                        msg_text = f"📄 С банка <b>{b_data.get('name')}</b> списан ежедневный налог на лицензию: <b>{license_tax}</b> сыр.\n"
+                            # Банкротство
+                            if current_cap < 0:
+                                # Оптимизация: ищем только вкладчиков этого конкретного банка
+                                bankrupt_vips = await users_ref.where('bank_name', '==', b_id).get()
+                                count_refunded = 0
+                                for v_doc in bankrupt_vips:
+                                    dep = v_doc.to_dict().get('bank_deposit', 0)
+                                    refund = int(dep * 0.5)
+                                    await update_user_field(chat_id, int(v_doc.id), 'bank_deposit', 0)
+                                    await update_user_balance(chat_id, int(v_doc.id), refund)
+                                    await update_user_field(chat_id, int(v_doc.id), 'bank_name', None)
+                                    count_refunded += 1
 
-                        if banker_rep < 0:
-                            msg_text += "🚫 <b>ЦБ отказал в субсидии</b> из-за отрицательной репутации банкира!"
-                        else:
-                            new_capital += subsidy
-                            msg_text += f"🏦 ЦентроЖБРОМ выдал субсидию в размере <b>{subsidy}</b> сыр. (Кредитов: {total_loans_given})."
+                                await banks_ref.document(b_id).delete()
+                                await update_user_field(chat_id, int(b_id), 'is_banker', False)
+                                try:
+                                    await bot.send_message(chat_id, f"💥 <b>ДЕФОЛТ!</b> Банк <b>{b_data.get('name')}</b> признан банкротом и закрыт. ЦБ компенсировал 50% вкладов для {count_refunded} чел.")
+                                except Exception: pass
+                                continue
 
-                        # Жесткая инфляция: Налог на роскошь (сверхприбыль > 500 млн) - 20%
-                        if new_capital > 500000000:
-                            luxury_tax = int((new_capital - 500000000) * 0.20) # 20% с суммы превышающей 500 млн
-                            new_capital -= luxury_tax
-                            msg_text += f"\n💸 <b>Налог на излишки:</b> списано <b>{luxury_tax}</b> сыр. (20% от суммы свыше 500м)."
+                            # Проверяем репутацию банкира (если меньше 0, субсидии не будет)
+                            banker_doc = await users_ref.document(b_id).get()
+                            banker_data = banker_doc.to_dict() if banker_doc.exists else {}
+                            banker_rep = banker_data.get('reputation', 0)
 
-                        await banks_ref.document(b_id).update({'capital': new_capital})
+                            # Подсчет выданных кредитов для мультипликатора субсидии
+                            total_loans_given = 0
+                            debt_users = await users_ref.where('debts', '!=', {}).get()
+                            for user_doc in debt_users:
+                                u_data = user_doc.to_dict()
+                                debts = u_data.get('debts', {})
+                                for k, v in debts.items():
+                                    if k.startswith(f"bank_{b_id}_") and v > 0:
+                                        total_loans_given += 1
 
-                        try:
-                            await bot.send_message(chat_id, msg_text)
-                        except Exception: pass
+                            # Базовая субсидия 10 лямов + бонус за кредиты (допустим 1 лям за каждый выданный кредит)
+                            base_subsidy = 10000000 + (total_loans_given * 1000000)
 
-                except Exception as e:
-                    print(f"Ошибка ежедневных банковских операций в чате {chat_id}: {e}")
+                            # Бонус от улучшения "Маркетинг" (Ур. 1-5, по +20% за уровень)
+                            lvl_market = b_data.get('upgrade_marketing', 0)
+                            market_mult = 1.0 + (lvl_market * 0.20)
 
-            await asyncio.sleep(60) # Чтобы не сработало дважды
-            continue
+                            subsidy = int(base_subsidy * market_mult)
 
-        # Проверяем, является ли день воскресеньем (6) и время 23:59
-        if current_time.tm_wday == 6 and current_time.tm_hour == 23 and current_time.tm_min == 59:
-            from whitelist import get_whitelist
-            from user_manager import update_user_balance
-            db = get_db()
-            whitelist = await get_whitelist()
+                            # Ежедневный налог на лицензию: 5.000.000
+                            license_tax = 5000000
 
-            for chat_id in whitelist.keys():
-                try:
-                    stats_ref = db.collection('chats').document(str(chat_id)).collection('stats')
-                    # Находим победителя недели
-                    docs = await stats_ref.order_by('week', direction='DESCENDING').limit(1).get()
-                    if docs:
-                        winner_doc = docs[0]
-                        winner_id = int(winner_doc.id)
-                        winner_data = winner_doc.to_dict()
-                        winner_name = winner_data.get('full_name', 'Unknown')
-                        msg_count = winner_data.get('week', 0)
+                            new_capital = current_cap - license_tax
 
-                        if msg_count > 0:
-                            # Выдаем 1500 сыроежек
-                            await update_user_balance(chat_id, winner_id, 1500)
-                            
-                            from seasons import get_season_string, get_glitch_text
-                            seasonal_reward_title = await get_season_string("top_winner", "Самый активный участник")
-                            seasonal_reward_title = await get_glitch_text(seasonal_reward_title)
-                            winner_name = await get_glitch_text(winner_name)
+                            msg_text = f"📄 С банка <b>{b_data.get('name')}</b> списан ежедневный налог на лицензию: <b>{license_tax}</b> сыр.\n"
+
+                            if banker_rep < 0:
+                                msg_text += "🚫 <b>ЦБ отказал в субсидии</b> из-за отрицательной репутации банкира!"
+                            else:
+                                new_capital += subsidy
+                                msg_text += f"🏦 ЦентроЖБРОМ выдал субсидию в размере <b>{subsidy}</b> сыр. (Кредитов: {total_loans_given})."
+
+                            # Жесткая инфляция: Налог на роскошь (сверхприбыль > 500 млн) - 20%
+                            if new_capital > 500000000:
+                                luxury_tax = int((new_capital - 500000000) * 0.20) # 20% с суммы превышающей 500 млн
+                                new_capital -= luxury_tax
+                                msg_text += f"\n💸 <b>Налог на излишки:</b> списано <b>{luxury_tax}</b> сыр. (20% от суммы свыше 500м)."
+
+                            await banks_ref.document(b_id).update({'capital': new_capital})
 
                             try:
-                                await bot.send_message(
-                                    chat_id=chat_id,
-                                    text=f"🎉 <b>Итоги недели!</b>\n\n{seasonal_reward_title}: <b>{escape_html(winner_name)}</b> ({msg_count} сообщений).\nОн получает премию: <b>1500</b> сыроежек! 💰"
-                                )
-                            except Exception:
-                                pass
+                                await bot.send_message(chat_id, msg_text)
+                            except Exception: pass
 
-                    # Обнуляем счетчики недели для всех
-                    all_docs = await stats_ref.get()
-                    for d in all_docs:
-                        await stats_ref.document(d.id).update({'week': 0})
-                except Exception as e:
-                    print(f"Weekly reset error for chat {chat_id}: {e}")
+                    except Exception as e:
+                        print(f"Ошибка ежедневных банковских операций в чате {chat_id}: {e}")
 
-            # Ждем 60 секунд, чтобы не сработало дважды
-            await asyncio.sleep(60)
+                await asyncio.sleep(60) # Чтобы не сработало дважды
+                continue
+
+            # Проверяем, является ли день воскресеньем (6) и время 23:59
+            if current_time.tm_wday == 6 and current_time.tm_hour == 23 and current_time.tm_min == 59:
+                from whitelist import get_whitelist
+                from user_manager import update_user_balance
+                db = get_db()
+                whitelist = await get_whitelist()
+
+                for chat_id in whitelist.keys():
+                    try:
+                        stats_ref = db.collection('chats').document(str(chat_id)).collection('stats')
+                        # Находим победителя недели
+                        docs = await stats_ref.order_by('week', direction='DESCENDING').limit(1).get()
+                        if docs:
+                            winner_doc = docs[0]
+                            winner_id = int(winner_doc.id)
+                            winner_data = winner_doc.to_dict()
+                            winner_name = winner_data.get('full_name', 'Unknown')
+                            msg_count = winner_data.get('week', 0)
+
+                            if msg_count > 0:
+                                # Выдаем 1500 сыроежек
+                                await update_user_balance(chat_id, winner_id, 1500)
+                                
+                                from seasons import get_season_string, get_glitch_text
+                                seasonal_reward_title = await get_season_string("top_winner", "Самый активный участник")
+                                seasonal_reward_title = await get_glitch_text(seasonal_reward_title)
+                                winner_name = await get_glitch_text(winner_name)
+
+                                try:
+                                    await bot.send_message(
+                                        chat_id=chat_id,
+                                        text=f"🎉 <b>Итоги недели!</b>\n\n{seasonal_reward_title}: <b>{escape_html(winner_name)}</b> ({msg_count} сообщений).\nОн получает премию: <b>1500</b> сыроежек! 💰"
+                                    )
+                                except Exception:
+                                    pass
+
+                        # Обнуляем счетчики недели для всех
+                        all_docs = await stats_ref.get()
+                        for d in all_docs:
+                            await stats_ref.document(d.id).update({'week': 0})
+                    except Exception as e:
+                        print(f"Weekly reset error for chat {chat_id}: {e}")
+
+                # Ждем 60 секунд, чтобы не сработало дважды
+                await asyncio.sleep(60)
+        except Exception as e:
+            print(f"Ошибка в цикле weekly_reset_task: {e}")

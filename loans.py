@@ -160,17 +160,14 @@ async def process_bank_loan(callback: types.CallbackQuery):
         }
         transaction.update(user_ref, updates)
 
-        # Синхронизация кэша
-        user_data.update(updates)
-        set_in_cache(chat_id, borrower_id, user_data)
-        mark_dirty(chat_id, borrower_id)
         return True
 
     try:
-        from user_manager import get_user_lock
+        from user_manager import get_user_lock, invalidate_user_cache
         lock = get_user_lock(chat_id, borrower_id)
         async with lock:
             await issue_loan_tx(db.transaction(), chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id)
+            invalidate_user_cache(chat_id, borrower_id)
         await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
     except ValueError as ve:
         await callback.message.edit_text(f"❌ Ошибка: {ve}")
