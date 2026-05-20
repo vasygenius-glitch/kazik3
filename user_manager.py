@@ -618,7 +618,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
 
         total = base_bonus + extra_income - tax_amt
         if total <= 0:
-            return False, {}
+            total = 0
 
         data['balance'] = int(data.get('balance', 0) or 0) + total
         data['last_bonus_time'] = current_time
