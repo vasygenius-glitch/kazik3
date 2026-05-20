@@ -891,6 +891,11 @@ async def cmd_cr_delcoin(message: types.Message):
                                 'balance': firestore_async.Increment(refund_amount),
                                 'crypto_portfolio': port
                             })
+                            from user_manager import invalidate_user_cache
+                            try:
+                                invalidate_user_cache(int(chat_id), int(user_doc.id))
+                            except Exception:
+                                pass
 
                             refunded_count += 1
                             total_refund += refund_amount
