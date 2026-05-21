@@ -970,7 +970,7 @@ async def wipe_user_data(chat_id, user_id) -> bool:
             'stocks_portfolio': {},
             'pet': {},
             'skills': {},
-            'diseases': [],
+            'diseases': {},
             'crypto_banned': False,
             'is_banned': was_banned,   # сохраняем бан
         })

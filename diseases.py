@@ -72,7 +72,9 @@ async def infect_full_house(chat_id: int, user_id: int) -> list:
     from user_manager import get_user_data, update_user_field
 
     data = await get_user_data(chat_id, user_id)
-    current_diseases = data.get('diseases', {})
+    current_diseases = data.get('diseases')
+    if not isinstance(current_diseases, dict):
+        current_diseases = {}
 
     current_time = time.time()
     infected_list = []
@@ -93,7 +95,9 @@ async def infect_user(chat_id: int, user_id: int) -> list:
     from user_manager import get_user_data, update_user_field
 
     data = await get_user_data(chat_id, user_id)
-    current_diseases = data.get('diseases', {})
+    current_diseases = data.get('diseases')
+    if not isinstance(current_diseases, dict):
+        current_diseases = {}
 
     num_to_infect = random.randint(1, len(DISEASES))
     new_infections = random.sample(list(DISEASES.keys()), num_to_infect)
@@ -114,8 +118,8 @@ async def get_active_diseases(chat_id: int, user_id: int, u_data: dict = None) -
 
     # Оптимизация: получаем профиль. Если болезней нет, даже не проверяем иммунитет (экономим базу)
     data = u_data if u_data is not None else await get_user_data(chat_id, user_id)
-    diseases = data.get('diseases', {})
-    if not diseases:
+    diseases = data.get('diseases')
+    if not isinstance(diseases, dict) or not diseases:
         return []
 
     if await is_top_1_hooker(chat_id, user_id):
@@ -149,7 +153,9 @@ async def cmd_std(message: types.Message):
 
     from user_manager import get_user_data, update_user_field
     data = await get_user_data(chat_id, user_id)
-    diseases = data.get('diseases', {})
+    diseases = data.get('diseases')
+    if not isinstance(diseases, dict):
+        diseases = {}
 
     current_time = time.time()
     active_d_dict = {}

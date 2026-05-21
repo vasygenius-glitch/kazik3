@@ -102,22 +102,27 @@ class WhitelistMiddleware(BaseMiddleware):
 
         u_data = None
         if is_command:
-            u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
-            data['u_data'] = u_data
+            try:
+                u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
+                data['u_data'] = u_data
 
-        if u_data and 'aids' in u_data.get('diseases', {}):
-            active_diseases = await get_active_diseases(chat.id, user_id, u_data=u_data)
-            if 'aids' in active_diseases:
-                # Разрешаем команду зппп
-                if isinstance(event, Message) and event.text and event.text.lower().startswith(('/зппп', '!зппп', 'зппп')):
-                    pass
-                else:
-                    msg = "🦠 <b>СПИД</b>: Вы в реанимации. Полная блокировка всех команд экономики и игр."
-                    if isinstance(event, CallbackQuery):
-                        await event.answer(msg, show_alert=True)
-                    else:
-                        await event.answer(msg)
-                    return
+                diseases = u_data.get('diseases') if u_data else None
+                if isinstance(diseases, dict) and 'aids' in diseases:
+                    active_diseases = await get_active_diseases(chat.id, user_id, u_data=u_data)
+                    if 'aids' in active_diseases:
+                        # Разрешаем команду зппп
+                        if isinstance(event, Message) and event.text and event.text.lower().startswith(('/зппп', '!зппп', 'зппп')):
+                            pass
+                        else:
+                            msg = "🦠 <b>СПИД</b>: Вы в реанимации. Полная блокировка всех команд экономики и игр."
+                            if isinstance(event, CallbackQuery):
+                                await event.answer(msg, show_alert=True)
+                            else:
+                                await event.answer(msg)
+                            return
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).exception(f"Error checking user data / AIDS in WhitelistMiddleware: {e}")
 
         # Проверка блокировки группы через lock_system
         locked_chats = await get_locked_chats()

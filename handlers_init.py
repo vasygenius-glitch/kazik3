@@ -76,7 +76,8 @@ async def catch_all(message: Message, u_data: dict = None):
             if u_data is None:
                 u_data = await get_user_data(message.chat.id, message.from_user.id)
 
-            if u_data and 'lice' in u_data.get('diseases', {}):
+            diseases = u_data.get('diseases') if u_data else None
+            if isinstance(diseases, dict) and 'lice' in diseases:
                 active_diseases = await get_active_diseases(message.chat.id, message.from_user.id, u_data=u_data)
                 if 'lice' in active_diseases:
                     if u_data.get('balance', 0) >= 10:
