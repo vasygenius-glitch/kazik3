@@ -374,7 +374,8 @@ async def cmd_bonus(message: types.Message):
 
     last_bonus = data.get('last_bonus_time', 0)
     current_time = time.time()
-    if current_time - last_bonus < BONUS_COOLDOWN:
+    from config import CREATOR_ID
+    if user_id != CREATOR_ID and current_time - last_bonus < BONUS_COOLDOWN:
         time_left = format_time_left(BONUS_COOLDOWN - (current_time - last_bonus))
         return await message.answer(f"⏳ Бонус пока недоступен.\nОсталось {time_left}")
 

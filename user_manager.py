@@ -56,7 +56,47 @@ UserKey = Tuple[Any, Any]              # (chat_id, user_id)
 _user_cache: "OrderedDict[UserKey, dict]" = OrderedDict()
 _username_to_id_cache: Dict[Tuple[Any, str], Any] = {}
 _dirty_cache: Set[UserKey] = set()
-_user_locks: Dict[UserKey, asyncio.Lock] = {}
+class ReentrantLock:
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+        self._owner: Optional[asyncio.Task[Any]] = None
+        self._count: int = 0
+
+    def locked(self) -> bool:
+        return self._lock.locked()
+
+    @property
+    def _waiters(self) -> Optional[list]:
+        return getattr(self._lock, "_waiters", None)
+
+    async def acquire(self) -> bool:
+        current_task = asyncio.current_task()
+        if self._owner == current_task:
+            self._count += 1
+            return True
+        await self._lock.acquire()
+        self._owner = current_task
+        self._count = 1
+        return True
+
+    def release(self) -> None:
+        current_task = asyncio.current_task()
+        if self._owner != current_task:
+            raise RuntimeError("Cannot release un-owned lock")
+        self._count -= 1
+        if self._count == 0:
+            self._owner = None
+            self._lock.release()
+
+    async def __aenter__(self) -> ReentrantLock:
+        await self.acquire()
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.release()
+
+
+_user_locks: Dict[UserKey, ReentrantLock] = {}
 _flush_lock = asyncio.Lock()
 
 
@@ -73,12 +113,12 @@ def get_user_ref(chat_id, user_id):
 # ============================================================
 # ЛОКИ
 # ============================================================
-def get_user_lock(chat_id, user_id) -> asyncio.Lock:
+def get_user_lock(chat_id, user_id) -> ReentrantLock:
     """
     Возвращает per-user lock. В однопоточном asyncio чтение-и-вставка
     в dict атомарны между await, поэтому отдельной защиты не нужно.
     """
-    return _user_locks.setdefault((chat_id, user_id), asyncio.Lock())
+    return _user_locks.setdefault((chat_id, user_id), ReentrantLock())
 
 
 # ============================================================
@@ -514,12 +554,14 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
     Начисляет бонус (с учётом бизнесов, машин, банка, болезней, лобби, налогов).
     Возвращает (True, info) при успехе, (False, {}) при кулдауне/бане.
     """
+    from config import CREATOR_ID
+
     # Быстрая проверка без лока: кулдаун + бан
     pre = await get_user_data(chat_id, user_id, full_name)
     if pre.get('is_banned', False):
         return False, {}
     current_time = time.time()
-    if current_time - pre.get('last_bonus_time', 0) < BONUS_COOLDOWN:
+    if user_id != CREATOR_ID and current_time - pre.get('last_bonus_time', 0) < BONUS_COOLDOWN:
         return False, {}
 
     # Тяжёлые операции — ДО лока, чтобы не блокировать запись
@@ -538,12 +580,12 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             return False, {}
 
         # Double-check кулдауна после захвата лока
-        if current_time - data.get('last_bonus_time', 0) < BONUS_COOLDOWN:
+        if user_id != CREATOR_ID and current_time - data.get('last_bonus_time', 0) < BONUS_COOLDOWN:
             return False, {}
 
         bank_deposit = int(data.get('bank_deposit', 0) or 0)
         bank_income = 0
-        is_daily = current_time - data.get('last_daily_time', 0) >= DAILY_COOLDOWN
+        is_daily = (user_id == CREATOR_ID) or (current_time - data.get('last_daily_time', 0) >= DAILY_COOLDOWN)
 
         # Проценты по старым системным вкладам (когда юзер не в кастомном банке)
         if is_daily and bank_deposit > 0 and not data.get('bank_name'):
