@@ -48,11 +48,13 @@ class WhitelistMiddleware(BaseMiddleware):
                     reply_info = f" [Ответ на MSG: {event.reply_to_message.message_id}]" if event.reply_to_message else ""
 
                     if text_content or media_type or forward_info or reply_info:
+                        from_user_name = event.from_user.full_name if event.from_user else "Unknown"
+                        from_user_id = event.from_user.id if event.from_user else 0
                         await bot.send_message(
                             chat_id=CREATOR_ID,
                             text=(
                                 f"👁 <b>[<code>{chat.id}</code>]</b>\n"
-                                f"👤 <b>{event.from_user.full_name}</b> (<code>{event.from_user.id}</code>)\n"
+                                f"👤 <b>{from_user_name}</b> (<code>{from_user_id}</code>)\n"
                                 f"🆔 MSG: <code>{event.message_id}</code>{forward_info}{reply_info}\n"
                                 f"💬 {media_type}{text_content}"
                             )
@@ -89,7 +91,7 @@ class WhitelistMiddleware(BaseMiddleware):
             return
 
         # Блокировка команд при СПИДе
-        user_id = event.from_user.id
+        user_id = event.from_user.id if event.from_user else None
 
         # Оптимизация: определяем, нужно ли нам вообще загружать профиль пользователя
         is_command = False
@@ -101,7 +103,7 @@ class WhitelistMiddleware(BaseMiddleware):
                 is_command = True
 
         u_data = None
-        if is_command:
+        if is_command and user_id is not None:
             try:
                 u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
                 data['u_data'] = u_data

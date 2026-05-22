@@ -64,11 +64,18 @@ async def catch_all(message: Message, u_data: dict = None):
 
         full_text = f"{media_type}{text}"
         if full_text.strip():
-            log_message(message.chat.id, message.chat.title or "Unknown", message.from_user.id, message.from_user.full_name, full_text)
-            asyncio.create_task(increment_message_count(message.chat.id, message.from_user.id, message.from_user.full_name))
+            from_user_id = message.from_user.id if message.from_user else 0
+            from_user_name = message.from_user.full_name if message.from_user else "Unknown"
+
+            log_message(message.chat.id, message.chat.title or "Unknown", from_user_id, from_user_name, full_text)
+            if from_user_id:
+                asyncio.create_task(increment_message_count(message.chat.id, from_user_id, from_user_name))
 
             # Проверка является ли сообщение командой ПЕРЕД запросом к БД
             if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
+                return
+
+            if not message.from_user:
                 return
 
             # --- Логика болезни "Лобковые вши" ---

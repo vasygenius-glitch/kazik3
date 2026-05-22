@@ -259,5 +259,43 @@ class TestDiseasesRobustness(unittest.IsolatedAsyncioTestCase):
                 handler.assert_called_once_with(event, data)
                 event.answer.assert_not_called()
 
+    async def test_middleware_none_from_user(self):
+        with patch.dict(sys.modules, {
+            'diseases': real_diseases,
+            'config': real_config,
+            'user_manager': real_user_manager,
+            'whitelist_middleware': real_whitelist_middleware
+        }):
+            with patch('whitelist_middleware.get_whitelist', new_callable=AsyncMock) as mock_whitelist, \
+                 patch('whitelist_middleware.get_spy_chats', new_callable=AsyncMock) as mock_spy_chats, \
+                 patch('whitelist_middleware.get_locked_chats', new_callable=AsyncMock) as mock_locked_chats:
+                
+                # Whitelist contains the chat
+                mock_whitelist.return_value = [123]
+                mock_spy_chats.return_value = []
+                mock_locked_chats.return_value = []
+                
+                # Setup middleware
+                mw = real_whitelist_middleware.WhitelistMiddleware()
+                
+                # Handler mock
+                handler = AsyncMock()
+                
+                # Event mock (Message) with from_user = None
+                event = MagicMock(spec=aiogram_types.Message)
+                event.chat = MagicMock()
+                event.chat.type = "group"
+                event.chat.id = 123
+                event.from_user = None
+                event.text = "/balance"
+                event.caption = None
+                event.reply_to_message = None
+                event.answer = AsyncMock()
+                
+                data = {'bot': MagicMock()}
+                
+                await mw(handler, event, data)
+                handler.assert_called_once_with(event, data)
+
 if __name__ == '__main__':
     unittest.main()
