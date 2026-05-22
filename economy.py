@@ -284,6 +284,9 @@ async def cmd_pay(message: types.Message):
                 if per > 0:
                     for aid in human_admins:
                         await update_user_balance(chat_id, aid, per)
+    except ValueError as ve:
+        logger.warning(f"Контролируемая ошибка перевода {sender_id}->{target_user.id}: {ve}")
+        return await message.answer(f"❌ Перевод не выполнен: {ve}.")
     except Exception as e:
         logger.exception(f"Ошибка перевода {sender_id}->{target_user.id}: {e}")
         return await message.answer(f"❌ Ошибка перевода. Попробуй позже.")
@@ -314,15 +317,20 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id,
                               total_cost, amount, human_admins, commission):
     """Атомарный перевод с защитой от отрицательного баланса."""
     # 1. Снимаем у отправителя (с проверкой баланса)
-    await update_user_balance(
+    sender_bal = await update_user_balance(
         chat_id, sender_id, -total_cost,
         min_balance=0, transaction=transaction, action="Transfer Send"
     )
+    if sender_bal is None:
+        raise ValueError("Недостаточно средств для перевода")
+
     # 2. Зачисляем получателю
-    await update_user_balance(
+    target_bal = await update_user_balance(
         chat_id, target_id, amount,
         transaction=transaction, action="Transfer Receive"
     )
+    if target_bal is None:
+        raise ValueError("Получатель не найден")
 
     if commission <= 0:
         return

@@ -142,3 +142,40 @@ class TestUserManager(unittest.IsolatedAsyncioTestCase):
         success, info = await check_and_give_bonus(chat_id=111, user_id=CREATOR_ID, full_name="Creator")
         self.assertTrue(success)
         self.assertGreater(info.get('total', 0), 0)
+
+    async def test_cache_ttl_behavior(self):
+        import user_manager
+        import time
+
+        chat_id = 99999
+        user_id = 88888
+        key = (chat_id, user_id)
+
+        # Ensure clean state
+        user_manager._user_cache.pop(key, None)
+        user_manager._dirty_cache.discard(key)
+
+        # 1. Test non-dirty entry TTL expiration
+        user_manager._user_cache[key] = {
+            "data": {"balance": 100, "full_name": "Test"},
+            "timestamp": time.time() - (user_manager.CACHE_TTL + 10)
+        }
+        res = user_manager.get_from_cache(chat_id, user_id)
+        self.assertIsNone(res)
+        self.assertNotIn(key, user_manager._user_cache)
+
+        # 2. Test dirty entry TTL expiration (should NOT be dropped and should return data)
+        user_manager._user_cache[key] = {
+            "data": {"balance": 200, "full_name": "Test Dirty"},
+            "timestamp": time.time() - (user_manager.CACHE_TTL + 10)
+        }
+        user_manager._dirty_cache.add(key)
+        
+        res = user_manager.get_from_cache(chat_id, user_id)
+        self.assertIsNotNone(res)
+        self.assertEqual(res["balance"], 200)
+        self.assertIn(key, user_manager._user_cache)
+
+        # Clean up
+        user_manager._user_cache.pop(key, None)
+        user_manager._dirty_cache.discard(key)

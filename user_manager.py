@@ -154,10 +154,13 @@ def get_from_cache(chat_id, user_id) -> Optional[dict]:
         return None
 
     if time.time() - entry["timestamp"] >= CACHE_TTL:
-        # Если запись грязная — НЕ удаляем (теряем несохранённые изменения),
-        # просто считаем устаревшей для чтения.
-        if key not in _dirty_cache:
-            _drop_cache_entry(key)
+        if key in _dirty_cache:
+            # Если запись грязная — НЕ удаляем и НЕ возвращаем None (чтобы
+            # не перетереть актуальные локальные данные устаревшими из БД).
+            _user_cache.move_to_end(key)  # LRU
+            return copy.deepcopy(entry["data"])
+        
+        _drop_cache_entry(key)
         return None
 
     _user_cache.move_to_end(key)  # LRU
