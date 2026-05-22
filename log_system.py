@@ -1,4 +1,6 @@
+import asyncio
 from aiogram import Router, types, F, Bot, BaseMiddleware
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from config import CREATOR_ID
 from escape import escape_html
