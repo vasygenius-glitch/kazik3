@@ -1,14 +1,32 @@
 from aiogram import types
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
+from aiogram.exceptions import TelegramBadRequest
 from aiogram import Router, F
 
 router = Router()
 
+_processing_confirms = set()
+
+def try_acquire_confirm_lock(chat_id: int, message_id: int) -> bool:
+    key = (chat_id, message_id)
+    if key in _processing_confirms:
+        return False
+    _processing_confirms.add(key)
+    return True
+
+def release_confirm_lock(chat_id: int, message_id: int):
+    key = (chat_id, message_id)
+    _processing_confirms.discard(key)
+
 @router.callback_query(F.data == "cas_cancel")
 async def process_cas_cancel(callback: types.CallbackQuery):
     await callback.answer("Ставка отменена.")
-    await callback.message.delete()
+    try:
+        await callback.message.delete()
+    except TelegramBadRequest:
+        pass
+    except Exception:
+        pass
 
 async def ask_casino_confirmation(message: types.Message, game_name: str, bet: int, **kwargs):
     builder = InlineKeyboardBuilder()

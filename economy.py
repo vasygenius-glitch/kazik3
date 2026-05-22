@@ -569,7 +569,6 @@ async def cmd_work(message: types.Message):
             f"⏳ Ты устал. Отдохни ещё {mins} мин. {secs} сек."
         )
 
-    await update_user_field(chat_id, user_id, 'last_work_time', current_time)
 
     rand = secrets.SystemRandom()
     is_banker = data.get('is_banker', False)
@@ -630,6 +629,7 @@ async def cmd_work(message: types.Message):
     if final_earnings > 0:
         await update_user_balance(chat_id, user_id, final_earnings,
                                    is_debt_repayment=True)
+    await update_user_field(chat_id, user_id, 'last_work_time', current_time)
 
     # --- Название работы ---
     cfg = await get_season_config()
@@ -773,7 +773,6 @@ async def cmd_crime(message: types.Message):
             f"⏳ Копы ищут тебя. Заляг на дно ещё {mins} мин. {secs} сек."
         )
 
-    await update_user_field(chat_id, user_id, 'last_crime_time', current_time)
 
     rand = secrets.SystemRandom()
     stealth_level = data.get('skills', {}).get('stealth', 0)
@@ -816,6 +815,7 @@ async def cmd_crime(message: types.Message):
             msg = f"🚔 Тебя поймали! Суд выписал штраф в <b>{fine}</b> сыр."
         await update_user_balance(chat_id, user_id, -fine,
                                    min_balance=0, is_debt_repayment=True)
+        await update_user_field(chat_id, user_id, 'last_crime_time', current_time)
         return await message.answer(msg)
 
     # УСПЕХ
@@ -844,6 +844,7 @@ async def cmd_crime(message: types.Message):
     if final_earnings > 0:
         await update_user_balance(chat_id, user_id, final_earnings,
                                    is_debt_repayment=True)
+    await update_user_field(chat_id, user_id, 'last_crime_time', current_time)
 
     afk_text = (
         f"🥷 <b>Успешное проникновение!</b> Ты нашёл "

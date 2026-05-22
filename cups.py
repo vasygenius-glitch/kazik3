@@ -841,46 +841,63 @@ async def _process_casino_confirm(callback: types.CallbackQuery, diff: Difficult
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    full_name = escape_html(callback.from_user.full_name)
-
-    data = await get_user_data(chat_id, user_id, full_name)
-    if data.get("is_banned", False):
-        await callback.answer("Вы забанены.", show_alert=True)
-        return
-
-    new_balance = await update_user_balance(
-        chat_id, user_id, -bet, min_balance=CREDIT_LIMIT, action="Cups Bet"
-    )
-    if new_balance is None:
-        await callback.answer("Недостаточно средств!", show_alert=True)
-        return
-    await invalidate_user_cache_safe(chat_id, user_id)
-
-    with suppress(TelegramBadRequest):
-        await callback.message.delete()
-    await callback.answer()
-    await _spawn_game(callback.message, bet, diff, new_message=True,
-                       override_user=callback.from_user)
+    message_id = callback.message.message_id
+    
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
+        
+    try:
+        full_name = escape_html(callback.from_user.full_name)
+    
+        data = await get_user_data(chat_id, user_id, full_name)
+        if data.get("is_banned", False):
+            await callback.answer("Вы забанены.", show_alert=True)
+            return
+    
+        new_balance = await update_user_balance(
+            chat_id, user_id, -bet, min_balance=CREDIT_LIMIT, action="Cups Bet"
+        )
+        if new_balance is None:
+            await callback.answer("Недостаточно средств!", show_alert=True)
+            return
+        await invalidate_user_cache_safe(chat_id, user_id)
+    
+        with suppress(TelegramBadRequest):
+            await callback.message.delete()
+        await callback.answer()
+        await _spawn_game(callback.message, bet, diff, new_message=True,
+                           override_user=callback.from_user)
+    finally:
+        release_confirm_lock(chat_id, message_id)
 
 
 async def _process_casino_confirm_legacy(callback: types.CallbackQuery, bet: int):
     diff = DIFFICULTIES[DEFAULT_DIFFICULTY]
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-
-    new_balance = await update_user_balance(
-        chat_id, user_id, -bet, min_balance=CREDIT_LIMIT, action="Cups Bet"
-    )
-    if new_balance is None:
-        await callback.answer("Недостаточно средств!", show_alert=True)
-        return
-    await invalidate_user_cache_safe(chat_id, user_id)
-
-    with suppress(TelegramBadRequest):
-        await callback.message.delete()
-    await callback.answer()
-    await _spawn_game(callback.message, bet, diff, new_message=True,
-                       override_user=callback.from_user)
+    message_id = callback.message.message_id
+    
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
+        
+    try:
+        new_balance = await update_user_balance(
+            chat_id, user_id, -bet, min_balance=CREDIT_LIMIT, action="Cups Bet"
+        )
+        if new_balance is None:
+            await callback.answer("Недостаточно средств!", show_alert=True)
+            return
+        await invalidate_user_cache_safe(chat_id, user_id)
+    
+        with suppress(TelegramBadRequest):
+            await callback.message.delete()
+        await callback.answer()
+        await _spawn_game(callback.message, bet, diff, new_message=True,
+                           override_user=callback.from_user)
+    finally:
+        release_confirm_lock(chat_id, message_id)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

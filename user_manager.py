@@ -231,6 +231,25 @@ def mark_dirty(chat_id, user_id) -> None:
     _dirty_cache.add((chat_id, user_id))
 
 
+async def flush_user_cache_immediately(chat_id, user_id) -> None:
+    """Немедленно сбрасывает грязные данные конкретного пользователя в Firestore.
+    Используется перед транзакционным чтением, чтобы Firestore-транзакция
+    не прочитала устаревшие данные и не перезаписала свежий кэш."""
+    key = (chat_id, user_id)
+    if key not in _dirty_cache:
+        return
+    entry = _user_cache.get(key)
+    if not entry:
+        _dirty_cache.discard(key)
+        return
+    _dirty_cache.discard(key)
+    try:
+        await _flush_single_user(chat_id, user_id, entry["timestamp"])
+    except Exception as e:
+        logger.error("flush_user_cache_immediately error for %s: %s", key, e)
+        _dirty_cache.add(key)  # повторим позже
+
+
 async def _flush_single_user(chat_id, user_id, expected_timestamp) -> None:
     lock = get_user_lock(chat_id, user_id)
     async with lock:
@@ -396,7 +415,23 @@ async def safe_get_snapshot(transaction, ref):
     """
     Получает snapshot документа внутри транзакции, обходя различия
     версий google-cloud-firestore (sync/async, генератор и т.д.).
+
+    Перед чтением из Firestore проверяет, есть ли у данного пользователя
+    несброшенные (dirty) данные в кэше, и если да — немедленно сбрасывает их,
+    чтобы транзакция не прочитала устаревший документ.
     """
+    # --- Flush dirty cache for user documents before transactional read ---
+    try:
+        path = ref.path  # e.g. 'chats/123/users/456'
+        parts = path.split('/')
+        if len(parts) == 4 and parts[0] == 'chats' and parts[2] == 'users':
+            _chat_id = int(parts[1])
+            _user_id = int(parts[3])
+            if (_chat_id, _user_id) in _dirty_cache:
+                await flush_user_cache_immediately(_chat_id, _user_id)
+    except (ValueError, AttributeError, IndexError):
+        pass
+
     if not transaction:
         return await ref.get()
 

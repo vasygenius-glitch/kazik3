@@ -76,44 +76,56 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
-    full_name = escape_html(callback.from_user.full_name)
-    data = await get_user_data(chat_id, user_id, full_name)
+    message_id = callback.message.message_id
     
-    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
-    if new_balance is None:
-        return await callback.answer("Недостаточно средств!", show_alert=True)
-
-    await callback.message.delete()
-
-    game_id = f"{chat_id}_{user_id}_{callback.message.message_id}"
-    player_cards = [get_random_card(), get_random_card()]
-    dealer_cards = [get_random_card(), get_random_card()]
-
-    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
-        player_cards = [{'rank': 'A', 'suit': '♠'}, {'rank': 'K', 'suit': '♠'}]
-
-    p_score = calculate_score(player_cards)
-    d_score = calculate_score(dealer_cards)
-
-    from seasons import get_season_string
-    title = await get_season_string("bj_start", "БЛЭКДЖЕК: LEVEL 0")
-
-    if p_score == 21:
-        profit = int(bet * 1.5)
-        if data.get('is_banker'): profit = int(profit * 0.5)
-        elif data.get('is_vip'): profit += int(profit * 0.1)
-        await update_user_balance(chat_id, user_id, bet + profit, action="Blackjack Win")
-        text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
-        msg = await callback.message.answer(text)
-        asyncio.create_task(schedule_delete(msg, callback.message))
-        return
-
-    await state.set_state(BlackjackState.playing)
-    await state.update_data(game_id=game_id, user_id=user_id, chat_id=chat_id, full_name=full_name, bet=bet, player_cards=player_cards, dealer_cards=dealer_cards, title=title)
-
-    text = get_bj_frame(player_cards, dealer_cards, p_score, d_score, "Ваш ход...", full_name, bet, title)
-    await callback.message.answer(text, reply_markup=get_bj_keyboard(game_id))
-    asyncio.create_task(schedule_delete(callback.message))
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
+        
+    try:
+        full_name = escape_html(callback.from_user.full_name)
+        data = await get_user_data(chat_id, user_id, full_name)
+        
+        new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+        if new_balance is None:
+            return await callback.answer("Недостаточно средств!", show_alert=True)
+    
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+    
+        game_id = f"{chat_id}_{user_id}_{callback.message.message_id}"
+        player_cards = [get_random_card(), get_random_card()]
+        dealer_cards = [get_random_card(), get_random_card()]
+    
+        if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+            player_cards = [{'rank': 'A', 'suit': '♠'}, {'rank': 'K', 'suit': '♠'}]
+    
+        p_score = calculate_score(player_cards)
+        d_score = calculate_score(dealer_cards)
+    
+        from seasons import get_season_string
+        title = await get_season_string("bj_start", "БЛЭКДЖЕК: LEVEL 0")
+    
+        if p_score == 21:
+            profit = int(bet * 1.5)
+            if data.get('is_banker'): profit = int(profit * 0.5)
+            elif data.get('is_vip'): profit += int(profit * 0.1)
+            await update_user_balance(chat_id, user_id, bet + profit, action="Blackjack Win")
+            text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
+            msg = await callback.message.answer(text)
+            asyncio.create_task(schedule_delete(msg, callback.message))
+            return
+    
+        await state.set_state(BlackjackState.playing)
+        await state.update_data(game_id=game_id, user_id=user_id, chat_id=chat_id, full_name=full_name, bet=bet, player_cards=player_cards, dealer_cards=dealer_cards, title=title)
+    
+        text = get_bj_frame(player_cards, dealer_cards, p_score, d_score, "Ваш ход...", full_name, bet, title)
+        await callback.message.answer(text, reply_markup=get_bj_keyboard(game_id))
+        asyncio.create_task(schedule_delete(callback.message))
+    finally:
+        release_confirm_lock(chat_id, message_id)
 
 @router.callback_query(F.data.startswith("bj_hit_"))
 async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):

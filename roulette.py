@@ -60,72 +60,84 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
-    full_name = escape_html(callback.from_user.full_name)
-    data = await get_user_data(chat_id, user_id, full_name)
+    message_id = callback.message.message_id
     
-    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
-    if new_balance is None:
-        return await callback.answer("Недостаточно средств!", show_alert=True)
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
         
-    await callback.message.delete()
-
-    from seasons import get_season_string, get_glitch_text
-    title = await get_season_string("roulette_start", "ВИХРЬ СУДЬБЫ")
-
-    msg = await callback.message.answer(get_roulette_frame(-1, "??", bet, title, guess))
-    
-    # Оптимизированная анимация: 4 шага вместо 8
-    for i in range(4):
-        await asyncio.sleep(0.5)
-        try:
-            await msg.edit_text(get_roulette_frame(i * 2, secure_random.randint(1,36), bet, title, guess))
-        except Exception: break
-
-    chance = await get_game_chance('roulette')
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
-
-    if is_creator: result_number = guess
-    elif chance != -1:
-        if secure_random.randint(1, 100) <= chance:
-            result_number = guess + secure_random.choice([-1, 0, 1])
-            result_number = max(1, min(36, result_number))
-        else:
-            result_number = secure_random.randint(1, 36)
-            # Избегаем бесконечного цикла: максимум 50 попыток
-            attempts = 0
-            while abs(result_number - guess) <= 4 and attempts < 50:
-                result_number = secure_random.randint(1, 36)
-                attempts += 1
-    else: result_number = secure_random.randint(1, 36)
-
-    diff = abs(result_number - guess)
-    total_win, mult_text = 0, ""
-
-    if diff == 0: total_win, mult_text = bet * 3, "ТОЧНО! x3 🎯"
-    elif diff <= 2: total_win, mult_text = int(bet * 1.5), "РЯДОМ! x1.5 ✨"
-    elif diff <= 4: total_win, mult_text = int(bet * 1.1), "БЛИЗКО! x1.1 🔹"
-    else: mult_text = "МИМО 💨"
-
-    if total_win > 0:
-        profit = total_win - bet
-        if data.get('is_banker'): profit = int(profit * 0.5)
-        elif data.get('is_vip'): profit += int(profit * 0.1)
-        await update_user_balance(chat_id, user_id, bet + profit, action="Roulette Win")
-        res_text = f"✅ <b>ВЫИГРЫШ: +{profit}</b>\n{mult_text}"
-    else:
-        res_text = f"❌ <b>ПРОИГРЫШ: -{bet}</b>\n{mult_text}"
-
-    final_text = (
-        f"🌀 <b>{title}</b> 🌀\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"  🌟 🌟 🌟 🌟 🌟 🌟 🌟 🌟\n"
-        f"  [ ВЫПАЛО: <b>{result_number}</b> ]\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"{res_text}"
-    )
-    final_text = await get_glitch_text(final_text)
-
     try:
-        await msg.edit_text(final_text)
-    except Exception: pass
-    asyncio.create_task(schedule_delete(msg, callback.message))
+        full_name = escape_html(callback.from_user.full_name)
+        data = await get_user_data(chat_id, user_id, full_name)
+        
+        new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+        if new_balance is None:
+            return await callback.answer("Недостаточно средств!", show_alert=True)
+            
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+    
+        from seasons import get_season_string, get_glitch_text
+        title = await get_season_string("roulette_start", "ВИХРЬ СУДЬБЫ")
+    
+        msg = await callback.message.answer(get_roulette_frame(-1, "??", bet, title, guess))
+        
+        # Оптимизированная анимация: 4 шага вместо 8
+        for i in range(4):
+            await asyncio.sleep(0.5)
+            try:
+                await msg.edit_text(get_roulette_frame(i * 2, secure_random.randint(1,36), bet, title, guess))
+            except Exception: break
+    
+        chance = await get_game_chance('roulette')
+        is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    
+        if is_creator: result_number = guess
+        elif chance != -1:
+            if secure_random.randint(1, 100) <= chance:
+                result_number = guess + secure_random.choice([-1, 0, 1])
+                result_number = max(1, min(36, result_number))
+            else:
+                result_number = secure_random.randint(1, 36)
+                # Избегаем бесконечного цикла: максимум 50 попыток
+                attempts = 0
+                while abs(result_number - guess) <= 4 and attempts < 50:
+                    result_number = secure_random.randint(1, 36)
+                    attempts += 1
+        else: result_number = secure_random.randint(1, 36)
+    
+        diff = abs(result_number - guess)
+        total_win, mult_text = 0, ""
+    
+        if diff == 0: total_win, mult_text = bet * 3, "ТОЧНО! x3 🎯"
+        elif diff <= 2: total_win, mult_text = int(bet * 1.5), "РЯДОМ! x1.5 ✨"
+        elif diff <= 4: total_win, mult_text = int(bet * 1.1), "БЛИЗКО! x1.1 🔹"
+        else: mult_text = "МИМО 💨"
+    
+        if total_win > 0:
+            profit = total_win - bet
+            if data.get('is_banker'): profit = int(profit * 0.5)
+            elif data.get('is_vip'): profit += int(profit * 0.1)
+            await update_user_balance(chat_id, user_id, bet + profit, action="Roulette Win")
+            res_text = f"✅ <b>ВЫИГРЫШ: +{profit}</b>\n{mult_text}"
+        else:
+            res_text = f"❌ <b>ПРОИГРЫШ: -{bet}</b>\n{mult_text}"
+    
+        final_text = (
+            f"🌀 <b>{title}</b> 🌀\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"  🌟 🌟 🌟 🌟 🌟 🌟 🌟 🌟\n"
+            f"  [ ВЫПАЛО: <b>{result_number}</b> ]\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"{res_text}"
+        )
+        final_text = await get_glitch_text(final_text)
+    
+        try:
+            await msg.edit_text(final_text)
+        except Exception: pass
+        asyncio.create_task(schedule_delete(msg, callback.message))
+    finally:
+        release_confirm_lock(chat_id, message_id)

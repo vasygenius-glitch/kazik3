@@ -1863,50 +1863,59 @@ async def process_crash_confirm(callback: types.CallbackQuery, state: FSMContext
         return
 
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
-    full_name = escape_html(callback.from_user.full_name)
-
-    new_balance = await update_user_balance(
-        chat_id, user_id, -bet, min_balance=CREDIT_LIMIT, action="Crash Bet",
-    )
-    if new_balance is None:
-        return await callback.answer("Недостаточно средств!", show_alert=True)
-
+    message_id = callback.message.message_id
+    
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
+        
     try:
-        await callback.message.delete()
-    except Exception:
-        pass
-
-    theme = pick_theme_for(user_id)
-    st = stats_manager.get(user_id)
-    auto = st.auto_default
-    crash_point = generate_crash_point()
-    game_id = f"{chat_id}_{user_id}_{int(time.time() * 1000)}"
-
-    session = GameSession(
-        game_id=game_id, chat_id=chat_id, user_id=user_id, full_name=full_name,
-        bet=bet, crash_point=crash_point, theme=theme, auto_cashout=auto,
-    )
-    _active_games[game_id] = session
-
-    await state.set_state(CrashState.playing)
-    await state.update_data(game_id=game_id)
-
-    image = await render_chart(session, status="🛫 ВЗЛЕТ")
-    caption = format_inflight(session)
-    keyboard = get_crash_keyboard(game_id, 1.00, auto)
-
-    try:
-        msg = await callback.message.answer_photo(
-            photo=BufferedInputFile(image, filename="crash.png"),
-            caption=caption, reply_markup=keyboard,
+        full_name = escape_html(callback.from_user.full_name)
+    
+        new_balance = await update_user_balance(
+            chat_id, user_id, -bet, min_balance=CREDIT_LIMIT, action="Crash Bet",
         )
-        session.message_id = msg.message_id
-    except Exception as exc:
-        logger.error("Failed to send crash photo: %s", exc)
-        msg = await callback.message.answer(caption, reply_markup=keyboard)
-        session.message_id = msg.message_id
-
-    asyncio.create_task(run_crash_loop(msg, state, game_id))
+        if new_balance is None:
+            return await callback.answer("Недостаточно средств!", show_alert=True)
+    
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+    
+        theme = pick_theme_for(user_id)
+        st = stats_manager.get(user_id)
+        auto = st.auto_default
+        crash_point = generate_crash_point()
+        game_id = f"{chat_id}_{user_id}_{int(time.time() * 1000)}"
+    
+        session = GameSession(
+            game_id=game_id, chat_id=chat_id, user_id=user_id, full_name=full_name,
+            bet=bet, crash_point=crash_point, theme=theme, auto_cashout=auto,
+        )
+        _active_games[game_id] = session
+    
+        await state.set_state(CrashState.playing)
+        await state.update_data(game_id=game_id)
+    
+        image = await render_chart(session, status="🛫 ВЗЛЕТ")
+        caption = format_inflight(session)
+        keyboard = get_crash_keyboard(game_id, 1.00, auto)
+    
+        try:
+            msg = await callback.message.answer_photo(
+                photo=BufferedInputFile(image, filename="crash.png"),
+                caption=caption, reply_markup=keyboard,
+            )
+            session.message_id = msg.message_id
+        except Exception as exc:
+            logger.error("Failed to send crash photo: %s", exc)
+            msg = await callback.message.answer(caption, reply_markup=keyboard)
+            session.message_id = msg.message_id
+    
+        asyncio.create_task(run_crash_loop(msg, state, game_id))
+    finally:
+        release_confirm_lock(chat_id, message_id)
 
 
 async def run_crash_loop(message: types.Message, state: FSMContext, game_id: str):

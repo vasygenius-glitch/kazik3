@@ -43,65 +43,77 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
-    data = await get_user_data(chat_id, user_id)
+    message_id = callback.message.message_id
     
-    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
-    if new_balance is None:
-        return await callback.answer("Недостаточно средств!", show_alert=True)
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
         
-    await callback.message.delete()
-    
-    secure_random = secrets.SystemRandom()
-    from config import CREATOR_ID
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    try:
+        data = await get_user_data(chat_id, user_id)
+        
+        new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+        if new_balance is None:
+            return await callback.answer("Недостаточно средств!", show_alert=True)
+            
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        
+        secure_random = secrets.SystemRandom()
+        from config import CREATOR_ID
+        is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-    is_win = (secure_random.randint(1, 100) <= 35) or is_creator
+        is_win = (secure_random.randint(1, 100) <= 35) or is_creator
 
-    while True:
-        p_cards = [get_random_card(), get_random_card()]
-        b_cards = [get_random_card(), get_random_card()]
+        while True:
+            p_cards = [get_random_card(), get_random_card()]
+            b_cards = [get_random_card(), get_random_card()]
 
-        p_score = get_baccarat_score(p_cards)
-        b_score = get_baccarat_score(b_cards)
-
-        # Draw third card logic
-        if p_score < 6:
-            p_cards.append(get_random_card())
             p_score = get_baccarat_score(p_cards)
-
-        if b_score < 6:
-            b_cards.append(get_random_card())
             b_score = get_baccarat_score(b_cards)
 
-        if is_win and p_score > b_score:
-            break
-        elif not is_win and b_score > p_score:
-            break
-        elif not is_win and p_score == b_score:
-             break # Tie is also not a player win
-    
-    text = (
-        f"🃏 <b>Баккара</b>\n\n"
-        f"Игрок: {format_cards(p_cards)} (<b>{p_score}</b>)\n"
-        f"Банкир: {format_cards(b_cards)} (<b>{b_score}</b>)\n\n"
-    )
+            # Draw third card logic
+            if p_score < 6:
+                p_cards.append(get_random_card())
+                p_score = get_baccarat_score(p_cards)
 
-    if p_score > b_score:
-        profit = bet
-        is_banker = data.get('is_banker', False)
-        vip_bonus_text = ""
+            if b_score < 6:
+                b_cards.append(get_random_card())
+                b_score = get_baccarat_score(b_cards)
 
-        if is_banker:
-            profit = int(profit * 0.5)
-            vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
+            if is_win and p_score > b_score:
+                break
+            elif not is_win and b_score > p_score:
+                break
+            elif not is_win and p_score == b_score:
+                 break # Tie is also not a player win
+        
+        text = (
+            f"🃏 <b>Баккара</b>\n\n"
+            f"Игрок: {format_cards(p_cards)} (<b>{p_score}</b>)\n"
+            f"Банкир: {format_cards(b_cards)} (<b>{b_score}</b>)\n\n"
+        )
 
-        await update_user_balance(chat_id, user_id, bet + profit, action="Baccarat Win")
-        text += f"🎉 Игрок побеждает! Вы выиграли <b>{profit}</b> сыроежек.{vip_bonus_text}"
-    elif b_score > p_score:
-        text += f"❌ Банкир побеждает! Вы проиграли <b>{bet}</b> сыроежек."
-    else:
-        await update_user_balance(chat_id, user_id, bet)
-        text += "🤝 Ничья! Ваша ставка возвращена."
+        if p_score > b_score:
+            profit = bet
+            is_banker = data.get('is_banker', False)
+            vip_bonus_text = ""
 
-    msg = await callback.message.answer(text)
-    asyncio.create_task(schedule_delete(msg, callback.message))
+            if is_banker:
+                profit = int(profit * 0.5)
+                vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
+
+            await update_user_balance(chat_id, user_id, bet + profit, action="Baccarat Win")
+            text += f"🎉 Игрок побеждает! Вы выиграли <b>{profit}</b> сыроежек.{vip_bonus_text}"
+        elif b_score > p_score:
+            text += f"❌ Банкир побеждает! Вы проиграли <b>{bet}</b> сыроежек."
+        else:
+            await update_user_balance(chat_id, user_id, bet)
+            text += "🤝 Ничья! Ваша ставка возвращена."
+
+        msg = await callback.message.answer(text)
+        asyncio.create_task(schedule_delete(msg, callback.message))
+    finally:
+        release_confirm_lock(chat_id, message_id)

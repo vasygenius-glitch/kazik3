@@ -42,55 +42,67 @@ async def process_dice_confirm(callback: types.CallbackQuery):
     except: return
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
-    data = await get_user_data(chat_id, user_id)
+    message_id = callback.message.message_id
     
-    new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
-    if new_balance is None:
-        return await callback.answer("Недостаточно средств!", show_alert=True)
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
         
-    await callback.message.delete()
+    try:
+        data = await get_user_data(chat_id, user_id)
+        
+        new_balance = await update_user_balance(chat_id, user_id, -bet, min_balance=-5000)
+        if new_balance is None:
+            return await callback.answer("Недостаточно средств!", show_alert=True)
+            
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        
+        from escape import escape_html
+        full_name = escape_html(callback.from_user.full_name)
+        
+        rand = secrets.SystemRandom()
+        from config import CREATOR_ID
+        is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
     
-    from escape import escape_html
-    full_name = escape_html(callback.from_user.full_name)
-    
-    rand = secrets.SystemRandom()
-    from config import CREATOR_ID
-    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
-
-    if is_creator:
-        is_forced_win = True
-    else:
-        is_forced_win = (rand.randint(1, 100) <= 35)
-
-    while True:
-        player_roll = rand.randint(1, 6)
-        bot_roll = rand.randint(1, 6)
-
-        if is_forced_win:
-            if player_roll > bot_roll:
-                break
+        if is_creator:
+            is_forced_win = True
         else:
-            if bot_roll > player_roll: # Forcing absolute loss (not even a tie) for forced_loss
-                break
+            is_forced_win = (rand.randint(1, 100) <= 35)
     
-    text = f"🎲 <b>Игра в кости</b>\n\nВы бросили: <b>{player_roll}</b>\nБот бросил: <b>{bot_roll}</b>\n\n"
-
-    if player_roll > bot_roll:
-        profit = bet
-        is_banker = data.get('is_banker', False)
-        vip_bonus_text = ""
-        if is_banker:
-            profit = int(profit * 0.5)
-            vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
-
-        await update_user_balance(chat_id, user_id, bet + profit, action="Dice Win")
-        text += f"🎉 Вы победили! Выиграно: <b>{profit}</b> сыроежек.{vip_bonus_text}"
-    elif player_roll < bot_roll:
-        text += f"❌ Вы проиграли <b>{bet}</b> сыроежек."
-    else:
-        await update_user_balance(chat_id, user_id, bet)
-        text += "🤝 Ничья! Ставка возвращена."
-
-    msg = await callback.message.answer(text)
-    from utils import schedule_delete
-    asyncio.create_task(schedule_delete(msg, callback.message))
+        while True:
+            player_roll = rand.randint(1, 6)
+            bot_roll = rand.randint(1, 6)
+    
+            if is_forced_win:
+                if player_roll > bot_roll:
+                    break
+            else:
+                if bot_roll > player_roll: # Forcing absolute loss (not even a tie) for forced_loss
+                    break
+        
+        text = f"🎲 <b>Игра в кости</b>\n\nВы бросили: <b>{player_roll}</b>\nБот бросил: <b>{bot_roll}</b>\n\n"
+    
+        if player_roll > bot_roll:
+            profit = bet
+            is_banker = data.get('is_banker', False)
+            vip_bonus_text = ""
+            if is_banker:
+                profit = int(profit * 0.5)
+                vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
+    
+            await update_user_balance(chat_id, user_id, bet + profit, action="Dice Win")
+            text += f"🎉 Вы победили! Выиграно: <b>{profit}</b> сыроежек.{vip_bonus_text}"
+        elif player_roll < bot_roll:
+            text += f"❌ Вы проиграли <b>{bet}</b> сыроежек."
+        else:
+            await update_user_balance(chat_id, user_id, bet)
+            text += "🤝 Ничья! Ставка возвращена."
+    
+        msg = await callback.message.answer(text)
+        from utils import schedule_delete
+        asyncio.create_task(schedule_delete(msg, callback.message))
+    finally:
+        release_confirm_lock(chat_id, message_id)

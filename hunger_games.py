@@ -116,6 +116,8 @@ async def cmd_hg_create(message: types.Message):
     
     builder = InlineKeyboardBuilder()
     builder.button(text="Вступить в игру 🗡", callback_data=f"hg_join_{chat_id}")
+    builder.button(text="НАЧАТЬ ЖАТВУ 🩸", callback_data=f"hg_start_{chat_id}")
+    builder.adjust(1)
     
     await message.answer(
         f"🏆 <b>ГОЛОДНЫЕ ИГРЫ НАЧИНАЮТСЯ!</b>\n\n"
@@ -237,8 +239,7 @@ async def cb_hg_join(callback: types.CallbackQuery):
 
         builder = InlineKeyboardBuilder()
         builder.button(text="Вступить в игру 🗡", callback_data=f"hg_join_{chat_id}")
-        if user_id == game['host_id']:
-            builder.button(text="НАЧАТЬ ЖАТВУ 🩸", callback_data=f"hg_start_{chat_id}")
+        builder.button(text="НАЧАТЬ ЖАТВУ 🩸", callback_data=f"hg_start_{chat_id}")
         builder.adjust(1)
 
         await callback.message.edit_text(

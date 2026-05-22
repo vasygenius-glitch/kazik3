@@ -1145,53 +1145,62 @@ async def process_poker_confirm(callback: types.CallbackQuery, state: FSMContext
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    full_name = escape_html(callback.from_user.full_name)
-    await get_user_data(chat_id, user_id, full_name)
-
-    new_balance = await update_user_balance(
-        chat_id,
-        user_id,
-        -bet,
-        min_balance=CREDIT_LIMIT,
-        action="VideoPoker Bet",
-    )
-    if new_balance is None:
-        return await callback.answer(
-            "💸 Недостаточно средств для ставки!",
-            show_alert=True,
+    message_id = callback.message.message_id
+    
+    from casino_utils import try_acquire_confirm_lock, release_confirm_lock
+    if not try_acquire_confirm_lock(chat_id, message_id):
+        return await callback.answer("Ваша ставка уже обрабатывается...", show_alert=True)
+        
+    try:
+        full_name = escape_html(callback.from_user.full_name)
+        await get_user_data(chat_id, user_id, full_name)
+    
+        new_balance = await update_user_balance(
+            chat_id,
+            user_id,
+            -bet,
+            min_balance=CREDIT_LIMIT,
+            action="VideoPoker Bet",
         )
-
-    await safe_delete_message(callback.message)
-
-    game_id = build_game_id(chat_id, user_id, callback.message.message_id)
-    cards = deal_initial_hand()
-
-    await state.set_state(PokerState.playing)
-    await state.update_data(
-        game_id=game_id,
-        user_id=user_id,
-        chat_id=chat_id,
-        full_name=full_name,
-        bet=bet,
-        cards=cards,
-        held_indices=[],
-        original_cards=list(cards),
-    )
-
-    deal_msg = await play_deal_animation(callback.message)
-
-    text = get_game_screen(
-        cards,
-        [],
-        full_name,
-        bet,
-        status_text=get_initial_status_text(),
-        show_hint=True,
-    )
-    keyboard = get_poker_keyboard(game_id, [])
-    edited = await safe_edit_message(deal_msg, text, reply_markup=keyboard)
-    if not edited:
-        await safe_send_message(callback.message, text, reply_markup=keyboard)
+        if new_balance is None:
+            return await callback.answer(
+                "💸 Недостаточно средств для ставки!",
+                show_alert=True,
+            )
+    
+        await safe_delete_message(callback.message)
+    
+        game_id = build_game_id(chat_id, user_id, callback.message.message_id)
+        cards = deal_initial_hand()
+    
+        await state.set_state(PokerState.playing)
+        await state.update_data(
+            game_id=game_id,
+            user_id=user_id,
+            chat_id=chat_id,
+            full_name=full_name,
+            bet=bet,
+            cards=cards,
+            held_indices=[],
+            original_cards=list(cards),
+        )
+    
+        deal_msg = await play_deal_animation(callback.message)
+    
+        text = get_game_screen(
+            cards,
+            [],
+            full_name,
+            bet,
+            status_text=get_initial_status_text(),
+            show_hint=True,
+        )
+        keyboard = get_poker_keyboard(game_id, [])
+        edited = await safe_edit_message(deal_msg, text, reply_markup=keyboard)
+        if not edited:
+            await safe_send_message(callback.message, text, reply_markup=keyboard)
+    finally:
+        release_confirm_lock(chat_id, message_id)
 
 
 @router.callback_query(F.data.startswith("poker_hold_"))
