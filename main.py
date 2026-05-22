@@ -74,8 +74,11 @@ async def main():
     )
 
     from cooldown_middleware import CooldownMiddleware
+    from log_system import LoggingMiddleware
     dp.message.outer_middleware(WhitelistMiddleware())
+    dp.message.outer_middleware(LoggingMiddleware())
     dp.callback_query.outer_middleware(WhitelistMiddleware())
+    dp.callback_query.outer_middleware(LoggingMiddleware())
     dp.callback_query.middleware(CooldownMiddleware())
     register_all_handlers(dp)
 

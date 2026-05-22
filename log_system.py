@@ -1,5 +1,4 @@
-import asyncio
-from aiogram import Router, types, F, Bot
+from aiogram import Router, types, F, Bot, BaseMiddleware
 from aiogram.filters import Command
 from config import CREATOR_ID
 from escape import escape_html
@@ -22,14 +21,53 @@ async def cmd_setlogchat(message: types.Message):
     if CREATOR_ID and int(message.from_user.id) != int(CREATOR_ID):
         return
 
-    chat_id = message.chat.id
+    args = message.text.split()
+    if len(args) > 1:
+        try:
+            chat_id = int(args[1])
+        except ValueError:
+            await message.answer("❌ Неверный формат ID чата.")
+            return
+    else:
+        chat_id = message.chat.id
+
     db = get_db()
     from utils import fire_and_forget
     fire_and_forget(db.collection('bot_settings').document('logchat').set({'chat_id': chat_id}, merge=True))
-    await message.answer("✅ Этот чат успешно назначен глобальным Лог-Чатом.")
+    await message.answer(f"✅ Чат {chat_id} успешно назначен глобальным Лог-Чатом.")
 
-async def log_action(text: str):
+def log_action(text: str):
     log_buffer.append(f"[{time.strftime('%H:%M:%S')}] {text}")
+
+class LoggingMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        if isinstance(event, Message):
+            text = event.text or event.caption or ""
+            from utils import is_valid_command
+            if is_valid_command(text):
+                from_user = event.from_user
+                user_id = from_user.id if from_user else 0
+                username = f"@{from_user.username}" if from_user and from_user.username else ""
+                full_name = escape_html(from_user.full_name) if from_user else "Unknown"
+                chat_title = escape_html(event.chat.title) if event.chat.title else "Private"
+                chat_id = event.chat.id
+                
+                log_text = f"💬 Команда: <b>{full_name}</b> ({user_id}) {username} в чате «{chat_title}» ({chat_id}): <code>{escape_html(text)}</code>"
+                log_action(log_text)
+                
+        elif isinstance(event, CallbackQuery):
+            from_user = event.from_user
+            user_id = from_user.id if from_user else 0
+            username = f"@{from_user.username}" if from_user and from_user.username else ""
+            full_name = escape_html(from_user.full_name) if from_user else "Unknown"
+            chat_title = escape_html(event.message.chat.title) if event.message and event.message.chat and event.message.chat.title else "Private"
+            chat_id = event.message.chat.id if event.message and event.message.chat else 0
+            data_str = event.data or ""
+            
+            log_text = f"🔘 Кнопка: <b>{full_name}</b> ({user_id}) {username} в чате «{chat_title}» ({chat_id}): <code>{escape_html(data_str)}</code>"
+            log_action(log_text)
+            
+        return await handler(event, data)
 
 async def flush_logs(bot: Bot):
     while True:
@@ -52,3 +90,4 @@ async def flush_logs(bot: Bot):
                 await bot.send_message(chat_id=log_chat_id, text=f"📜 <b>Логи за минуту:</b>\n\n{chunk}")
             except Exception as e:
                 print(f"Failed to send logs: {e}")
+

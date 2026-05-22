@@ -37,6 +37,8 @@ async def cmd_setbanker(message: types.Message):
     await update_user_field(chat_id, target_id, 'is_banker', True)
     
     await message.answer(f"💼 Пользователь <b>{target_name}</b> назначен официальным <b>Банкиром</b>!\nТеперь у него нет доступа к казино и работам, но он получает 50.000.000 в день и может кредитовать игроков.")
+    from log_system import log_action
+    log_action(f"💼 <b>Назначен банкир:</b> {message.from_user.full_name} ({message.from_user.id}) назначил {target_name} ({target_id}) банкиром в чате {chat_id}")
 
 @router.message(Command("delbanker"))
 async def cmd_delbanker(message: types.Message):
@@ -54,6 +56,8 @@ async def cmd_delbanker(message: types.Message):
     await update_user_field(chat_id, target_id, 'is_banker', False)
     
     await message.answer(f"❌ Пользователь <b>{target_name}</b> снят с должности Банкира и возвращен к обычной жизни.")
+    from log_system import log_action
+    log_action(f"❌ <b>Снят банкир:</b> {message.from_user.full_name} ({message.from_user.id}) снял {target_name} ({target_id}) с должности банкира в чате {chat_id}")
 
 @router.message(Command("wipe_balances"))
 async def cmd_wipe_balances(message: types.Message):
@@ -109,6 +113,8 @@ async def cmd_wipe_balances(message: types.Message):
             print(f"Ошибка при софт-вайпе чата {chat_id}: {e}")
 
     await status_msg.edit_text(f"✅ <b>БАЛАНСЫ УСПЕШНО СБРОШЕНЫ!</b>\n\n👤 Обнулено денег у игроков: <b>{users_wiped}</b>.\nИмущество и инвентари сохранены.")
+    from log_system import log_action
+    log_action(f"🚨🚨🚨 <b>Софт-вайп балансов:</b> {message.from_user.full_name} ({message.from_user.id}) сбросил балансы {users_wiped} игроков")
 
 # ================= СТАРЫЕ КОМАНДЫ СОЗДАТЕЛЯ =================
 
@@ -135,6 +141,8 @@ async def cmd_addmoney(message: types.Message):
         await get_user_data(chat_id, target_id, target_name)
         await update_user_balance(chat_id, target_id, amount)
         await message.answer(f"Выдано {amount} сыроежек пользователю {target_name}.")
+        from log_system import log_action
+        log_action(f"💰 <b>Выдача денег:</b> {message.from_user.full_name} ({message.from_user.id}) выдал <code>{amount:,}</code> сыроежек пользователю {target_name} ({target_id}) в чате {chat_id}")
     except ValueError:
         pass
 
@@ -162,6 +170,8 @@ async def cmd_setmoney(message: types.Message):
         await get_user_data(chat_id, target_id, target_name)
         await update_user_field(chat_id, target_id, 'balance', amount)
         await message.answer(f"Баланс пользователя {target_name} установлен в {amount} сыроежек.")
+        from log_system import log_action
+        log_action(f"💵 <b>Установка баланса:</b> {message.from_user.full_name} ({message.from_user.id}) установил баланс {target_name} ({target_id}) в <code>{amount:,}</code> сыроежек в чате {chat_id}")
     except ValueError:
         pass
 
@@ -182,6 +192,8 @@ async def cmd_ban(message: types.Message):
     await update_user_field(chat_id, target_id, 'is_banned', True)
     invalidate_user_cache(chat_id, target_id)
     await message.answer(f"Пользователь забанен в боте.")
+    from log_system import log_action
+    log_action(f"🔨 <b>Бан в боте:</b> {message.from_user.full_name} ({message.from_user.id}) забанил {target_name} ({target_id}) в чате {chat_id}")
 
 @router.message(Command("unban"))
 async def cmd_unban(message: types.Message):
@@ -200,6 +212,8 @@ async def cmd_unban(message: types.Message):
     await update_user_field(chat_id, target_id, 'is_banned', False)
     invalidate_user_cache(chat_id, target_id)
     await message.answer(f"Пользователь разбанен в боте.")
+    from log_system import log_action
+    log_action(f"🔓 <b>Разбан в боте:</b> {message.from_user.full_name} ({message.from_user.id}) разбанил {target_name} ({target_id}) в чате {chat_id}")
 
 @router.message(Command("hide"))
 async def cmd_hide(message: types.Message):

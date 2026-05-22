@@ -28,6 +28,9 @@ async def log_transaction(who_id, who_name, to_id, to_name, action, amount):
     }
     # Используем fire_and_forget чтобы не блокировать основной поток
     fire_and_forget(ref.set(data))
+    
+    from log_system import log_action
+    log_action(f"💸 <b>Крупный перевод:</b> {who_name} ({who_id}) ➡️ {to_name} ({to_id if to_id else 'нет'}): <code>{amount:,}</code> ({action})")
 
 async def check_balance_alert(chat_id, user_id, full_name, balance):
     """
@@ -42,6 +45,8 @@ async def check_balance_alert(chat_id, user_id, full_name, balance):
                 'full_name': full_name,
                 'balance': balance
             })
+            from log_system import log_action
+            log_action(f"🚨 <b>Аномалия баланса:</b> {full_name} ({user_id}) в чате <code>{chat_id}</code>. Баланс: <code>{balance:,}</code>")
 
 async def admin_alert_worker(bot: Bot):
     """
