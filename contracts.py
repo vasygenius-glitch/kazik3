@@ -166,6 +166,37 @@ async def process_all_deals(callback: types.CallbackQuery):
             await update_user_balance(chat_id, buyer_id, -price)
             await update_user_balance(chat_id, seller_id, price)
             await add_item_to_inventory(chat_id, buyer_id, item)
+
+            # --- Логирование сделки ---
+            try:
+                seller_data_after = await get_user_data(chat_id, seller_id)
+                buyer_data_after = await get_user_data(chat_id, buyer_id)
+                seller_name = seller_data_after.get('full_name', 'Unknown')
+                seller_username = seller_data_after.get('username', '')
+                buyer_name = buyer_data_after.get('full_name', 'Unknown')
+                buyer_username = buyer_data_after.get('username', '')
+                try:
+                    message_link = callback.message.link or ""
+                except Exception:
+                    message_link = ""
+                
+                from log_system import log_trade
+                log_trade(
+                    chat_id=chat_id,
+                    chat_title=callback.message.chat.title or "Unknown",
+                    seller_id=seller_id,
+                    seller_name=seller_name,
+                    seller_username=seller_username,
+                    buyer_id=buyer_id,
+                    buyer_name=buyer_name,
+                    buyer_username=buyer_username,
+                    item_name=item,
+                    price=price,
+                    message_link=message_link
+                )
+            except Exception as log_e:
+                print(f"Error logging trade: {log_e}")
+
             await callback.message.edit_text(f"✅ <b>Сделка завершена!</b>\nПредмет <b>{item}</b> перешел к новому владельцу за <b>{price}</b> сыр.")
         else:
             await callback.message.edit_text("❌ Произошла ошибка: предмета больше нет у продавца.")
@@ -199,8 +230,10 @@ async def process_all_deals(callback: types.CallbackQuery):
                 # Перенос инвентаря получателю
                 inv = s_data.get('inventory', {})
                 target_inv = dict(t_data.get('inventory', {}))
-                for item, count in inv.items():
-                    target_inv[item] = target_inv.get(item, 0) + count
+                items_transferred = []
+                for item_name, count in inv.items():
+                    target_inv[item_name] = target_inv.get(item_name, 0) + count
+                    items_transferred.append(f"{item_name} (x{count})")
                 t_data['inventory'] = target_inv
                 
                 # Обнуление отправителя
@@ -214,5 +247,34 @@ async def process_all_deals(callback: types.CallbackQuery):
                 
                 set_in_cache(chat_id, sender_id, s_data)
                 mark_dirty(chat_id, sender_id)
+
+                # --- Логирование наследства ---
+                try:
+                    sender_name = s_data.get('full_name', 'Unknown')
+                    sender_username = s_data.get('username', '')
+                    recipient_name = t_data.get('full_name', 'Unknown')
+                    recipient_username = t_data.get('username', '')
+                    try:
+                        message_link = callback.message.link or ""
+                    except Exception:
+                        message_link = ""
+                    
+                    from log_system import log_inheritance
+                    log_inheritance(
+                        chat_id=chat_id,
+                        chat_title=callback.message.chat.title or "Unknown",
+                        sender_id=sender_id,
+                        sender_name=sender_name,
+                        sender_username=sender_username,
+                        recipient_id=target_id,
+                        recipient_name=recipient_name,
+                        recipient_username=recipient_username,
+                        amount=total_cash,
+                        bank_deposit=total_bank,
+                        items_list=items_transferred,
+                        message_link=message_link
+                    )
+                except Exception as log_e:
+                    print(f"Error logging inheritance: {log_e}")
 
         await callback.message.edit_text(f"🏰 <b>Наследство принято!</b>\nВсе активы перешли к новому владельцу. Бывший владелец теперь нищий.")

@@ -342,7 +342,7 @@ async def flush_user_data_task() -> None:
 # ============================================================
 # CRUD
 # ============================================================
-async def get_user_data(chat_id, user_id, full_name: Optional[str] = None) -> dict:
+async def get_user_data(chat_id, user_id, full_name: Optional[str] = None, username: Optional[str] = None) -> dict:
     """
     Возвращает данные пользователя (создаёт дефолт, если нет).
     Защищено от гонок — конкурентные вызовы для одного юзера сериализуются.
@@ -350,8 +350,14 @@ async def get_user_data(chat_id, user_id, full_name: Optional[str] = None) -> di
     # 1. Быстрая проверка кэша без лока
     cached = get_from_cache(chat_id, user_id)
     if cached is not None:
+        updated = False
         if full_name and cached.get('full_name') != full_name:
             cached['full_name'] = full_name
+            updated = True
+        if username is not None and cached.get('username') != username:
+            cached['username'] = username
+            updated = True
+        if updated:
             set_in_cache(chat_id, user_id, cached)
             mark_dirty(chat_id, user_id)
         return cached
@@ -362,8 +368,14 @@ async def get_user_data(chat_id, user_id, full_name: Optional[str] = None) -> di
         # double-check после захвата лока
         cached = get_from_cache(chat_id, user_id)
         if cached is not None:
+            updated = False
             if full_name and cached.get('full_name') != full_name:
                 cached['full_name'] = full_name
+                updated = True
+            if username is not None and cached.get('username') != username:
+                cached['username'] = username
+                updated = True
+            if updated:
                 set_in_cache(chat_id, user_id, cached)
                 mark_dirty(chat_id, user_id)
             return cached
@@ -377,16 +389,28 @@ async def get_user_data(chat_id, user_id, full_name: Optional[str] = None) -> di
 
         if doc.exists:
             data = doc.to_dict() or {}
+            updated = False
+            updates_dict = {}
             if full_name and data.get('full_name') != full_name:
                 data['full_name'] = full_name
-                fire_and_forget(ref.update({'full_name': full_name}))
+                updates_dict['full_name'] = full_name
+                updated = True
+            if username is not None and data.get('username') != username:
+                data['username'] = username
+                updates_dict['username'] = username
+                updated = True
+            if updated:
+                fire_and_forget(ref.update(updates_dict))
             set_in_cache(chat_id, user_id, data)
             return copy.deepcopy(data)
 
         default_data = _default_user_data(full_name or "Игрок")
+        if username is not None:
+            default_data['username'] = username
         set_in_cache(chat_id, user_id, default_data)
         mark_dirty(chat_id, user_id)
         return copy.deepcopy(default_data)
+
 
 
 def _default_user_data(full_name: str) -> dict:

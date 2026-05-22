@@ -113,7 +113,7 @@ class TestUserManager(unittest.IsolatedAsyncioTestCase):
     @patch('user_manager.set_in_cache')
     @patch('user_manager.mark_dirty')
     @patch('user_manager._fetch_active_lobby_type')
-    @patch('economy_utils.get_global_tax')
+    @patch('economy_utils.get_global_tax', new_callable=AsyncMock)
     @patch('diseases.get_active_diseases')
     async def test_creator_bonus_cooldown_bypass(self, mock_diseases, mock_tax, mock_lobby_type, mock_mark_dirty, mock_set_in_cache, mock_get_user_data):
         from user_manager import check_and_give_bonus

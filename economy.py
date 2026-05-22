@@ -236,7 +236,7 @@ async def cmd_pay(message: types.Message):
         )
 
     # --- Гарантируем существование получателя ---
-    await get_user_data(chat_id, target_user.id, target_name)
+    await get_user_data(chat_id, target_user.id, target_name, target_user.username)
 
     # --- Получаем список админов для распределения комиссии ---
     try:
@@ -290,6 +290,37 @@ async def cmd_pay(message: types.Message):
     except Exception as e:
         logger.exception(f"Ошибка перевода {sender_id}->{target_user.id}: {e}")
         return await message.answer(f"❌ Ошибка перевода. Попробуй позже.")
+
+    # --- Логирование перевода ---
+    try:
+        sender_data_after = await get_user_data(chat_id, sender_id)
+        recipient_data_after = await get_user_data(chat_id, target_user.id)
+        sender_bal_after = sender_data_after.get('balance')
+        recipient_bal_after = recipient_data_after.get('balance')
+        try:
+            message_link = message.link or ""
+        except Exception:
+            message_link = ""
+        
+        from log_system import log_financial_transaction
+        log_financial_transaction(
+            action_type="pay",
+            sender_id=sender_id,
+            sender_name=sender_name,
+            sender_username=message.from_user.username or "",
+            recipient_id=target_user.id,
+            recipient_name=target_name,
+            recipient_username=target_user.username or "",
+            amount=amount,
+            commission=commission,
+            chat_id=chat_id,
+            chat_title=message.chat.title or "Unknown",
+            message_link=message_link,
+            sender_balance=sender_bal_after,
+            recipient_balance=recipient_bal_after
+        )
+    except Exception as e:
+        logger.error(f"Ошибка логирования перевода: {e}")
 
     # --- Сообщение об успехе ---
     if commission > 0:

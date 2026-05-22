@@ -93,3 +93,172 @@ async def flush_logs(bot: Bot):
             except Exception as e:
                 print(f"Failed to send logs: {e}")
 
+
+def log_financial_transaction(
+    action_type: str,
+    sender_id: int,
+    sender_name: str,
+    sender_username: str,
+    recipient_id: int,
+    recipient_name: str,
+    recipient_username: str,
+    amount: int,
+    commission: int,
+    chat_id: int,
+    chat_title: str,
+    message_link: str,
+    sender_balance: int = None,
+    recipient_balance: int = None
+):
+    sender_user = f"@{sender_username}" if sender_username else "нет"
+    recipient_user = f"@{recipient_username}" if recipient_username else "нет"
+    msg_link_html = f' <a href="{message_link}">[Ссылка]</a>' if message_link else ""
+    
+    if action_type == "pay":
+        text = (
+            f"💸 <b>[ПЕРЕВОД] /pay</b>\n"
+            f"👤 <b>Отправитель:</b> {escape_html(sender_name)} (ID: <code>{sender_id}</code>, {sender_user})\n"
+            f"👥 <b>Получатель:</b> {escape_html(recipient_name)} (ID: <code>{recipient_id}</code>, {recipient_user})\n"
+            f"💰 <b>Сумма:</b> <code>{amount:,}</code> сыр.\n"
+            f"⚡ <b>Комиссия:</b> <code>{commission:,}</code> сыр.\n"
+            f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+        )
+        if sender_balance is not None:
+            text += f"📉 Баланс отправителя после: <code>{sender_balance:,}</code> сыр.\n"
+        if recipient_balance is not None:
+            text += f"📈 Баланс получателя после: <code>{recipient_balance:,}</code> сыр.\n"
+            
+    elif action_type == "deposit":
+        text = (
+            f"🏦 <b>[ДЕПОЗИТ] /bank deposit</b>\n"
+            f"👤 <b>Игрок:</b> {escape_html(sender_name)} (ID: <code>{sender_id}</code>, {sender_user})\n"
+            f"🏛 <b>Банкир:</b> ID <code>{recipient_id}</code>\n"
+            f"💰 <b>Сумма пополнения:</b> <code>{amount:,}</code> сыр.\n"
+            f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+        )
+        if sender_balance is not None:
+            text += f"📉 Баланс игрока после: <code>{sender_balance:,}</code> сыр.\n"
+        if recipient_balance is not None:
+            text += f"🏛 Вклад игрока после: <code>{recipient_balance:,}</code> сыр.\n"
+            
+    elif action_type == "withdraw":
+        text = (
+            f"💰 <b>[СНЯТИЕ] /bank withdraw</b>\n"
+            f"👤 <b>Игрок:</b> {escape_html(sender_name)} (ID: <code>{sender_id}</code>, {sender_user})\n"
+            f"🏛 <b>Банкир:</b> ID <code>{recipient_id}</code>\n"
+            f"💰 <b>Сумма снятия:</b> <code>{amount:,}</code> сыр.\n"
+            f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+        )
+        if sender_balance is not None:
+            text += f"📈 Баланс игрока после: <code>{sender_balance:,}</code> сыр.\n"
+        if recipient_balance is not None:
+            text += f"🏛 Вклад игрока после: <code>{recipient_balance:,}</code> сыр.\n"
+    else:
+        text = f"🔄 Финансовая транзакция: {action_type} - {amount} сыр."
+        
+    log_action(text)
+
+
+def log_trade(
+    chat_id: int,
+    chat_title: str,
+    seller_id: int,
+    seller_name: str,
+    seller_username: str,
+    buyer_id: int,
+    buyer_name: str,
+    buyer_username: str,
+    item_name: str,
+    price: int,
+    message_link: str
+):
+    seller_user = f"@{seller_username}" if seller_username else "нет"
+    buyer_user = f"@{buyer_username}" if buyer_username else "нет"
+    msg_link_html = f' <a href="{message_link}">[Ссылка]</a>' if message_link else ""
+    
+    text = (
+        f"🤝 <b>[СДЕЛКА] /deal</b>\n"
+        f"👤 <b>Продавец:</b> {escape_html(seller_name)} (ID: <code>{seller_id}</code>, {seller_user})\n"
+        f"👤 <b>Покупатель:</b> {escape_html(buyer_name)} (ID: <code>{buyer_id}</code>, {buyer_user})\n"
+        f"📦 <b>Предмет:</b> <code>{escape_html(item_name)}</code>\n"
+        f"💰 <b>Цена:</b> <code>{price:,}</code> сыр.\n"
+        f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+    )
+    log_action(text)
+
+
+def log_inheritance(
+    chat_id: int,
+    chat_title: str,
+    sender_id: int,
+    sender_name: str,
+    sender_username: str,
+    recipient_id: int,
+    recipient_name: str,
+    recipient_username: str,
+    amount: int,
+    bank_deposit: int,
+    items_list: list,
+    message_link: str
+):
+    sender_user = f"@{sender_username}" if sender_username else "нет"
+    recipient_user = f"@{recipient_username}" if recipient_username else "нет"
+    msg_link_html = f' <a href="{message_link}">[Ссылка]</a>' if message_link else ""
+    
+    items_str = ", ".join(items_list) if items_list else "нет"
+    
+    text = (
+        f"⚰️ <b>[НАСЛЕДСТВО] /will</b>\n"
+        f"👤 <b>Завещатель:</b> {escape_html(sender_name)} (ID: <code>{sender_id}</code>, {sender_user})\n"
+        f"👤 <b>Наследник:</b> {escape_html(recipient_name)} (ID: <code>{recipient_id}</code>, {recipient_user})\n"
+        f"💰 <b>Баланс:</b> <code>{amount:,}</code> сыр.\n"
+        f"🏦 <b>Банковский вклад:</b> <code>{bank_deposit:,}</code> сыр.\n"
+        f"📦 <b>Предметы:</b> <code>{escape_html(items_str)}</code>\n"
+        f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+    )
+    log_action(text)
+
+
+def log_loan(
+    action_type: str,
+    chat_id: int,
+    chat_title: str,
+    lender_id: int,
+    lender_name: str,
+    lender_username: str,
+    borrower_id: int,
+    borrower_name: str,
+    borrower_username: str,
+    amount: int,
+    total_debt: int,
+    term_days: int = 0,
+    guarantor_id: int = None,
+    message_link: str = ""
+):
+    lender_user = f"@{lender_username}" if lender_username else "нет"
+    borrower_user = f"@{borrower_username}" if borrower_username else "нет"
+    msg_link_html = f' <a href="{message_link}">[Ссылка]</a>' if message_link else ""
+    
+    if action_type == "issue":
+        guarantor_str = f" (Поручитель: <code>{guarantor_id}</code>)" if guarantor_id else ""
+        text = (
+            f"🤝 <b>[ВЫДАЧА КРЕДИТА] /credit</b>\n"
+            f"🏦 <b>Банкир:</b> {escape_html(lender_name)} (ID: <code>{lender_id}</code>, {lender_user})\n"
+            f"👤 <b>Заемщик:</b> {escape_html(borrower_name)} (ID: <code>{borrower_id}</code>, {borrower_user}){guarantor_str}\n"
+            f"💰 <b>Сумма:</b> <code>{amount:,}</code> сыр.\n"
+            f"📈 <b>Долг к возврату:</b> <code>{total_debt:,}</code> сыр.\n"
+            f"⏳ <b>Срок:</b> {term_days} дней\n"
+            f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+        )
+    else:
+        text = (
+            f"✅ <b>[ПОГАШЕНИЕ КРЕДИТА] /repay</b>\n"
+            f"👤 <b>Заемщик:</b> {escape_html(borrower_name)} (ID: <code>{borrower_id}</code>, {borrower_user})\n"
+            f"👤 <b>Кредитор:</b> {escape_html(lender_name)} (ID: <code>{lender_id}</code>, {lender_user})\n"
+            f"💰 <b>Выплачено:</b> <code>{amount:,}</code> сыр.\n"
+            f"📉 <b>Остаток долга:</b> <code>{total_debt:,}</code> сыр.\n"
+            f"📍 <b>Группа:</b> «{escape_html(chat_title)}» (ID: <code>{chat_id}</code>){msg_link_html}\n"
+        )
+    log_action(text)
+
+
