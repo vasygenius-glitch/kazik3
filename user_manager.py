@@ -100,7 +100,20 @@ _user_locks: Dict[UserKey, ReentrantLock] = {}
 _flush_lock = asyncio.Lock()
 
 
+def _normalize_ids(chat_id, user_id):
+    try:
+        chat_id = int(chat_id)
+    except (ValueError, TypeError):
+        pass
+    try:
+        user_id = int(user_id)
+    except (ValueError, TypeError):
+        pass
+    return chat_id, user_id
+
+
 def get_user_ref(chat_id, user_id):
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     db = get_db()
     return (
         db.collection('chats')
@@ -118,6 +131,7 @@ def get_user_lock(chat_id, user_id) -> ReentrantLock:
     Возвращает per-user lock. В однопоточном asyncio чтение-и-вставка
     в dict атомарны между await, поэтому отдельной защиты не нужно.
     """
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     return _user_locks.setdefault((chat_id, user_id), ReentrantLock())
 
 
@@ -148,6 +162,7 @@ def _drop_cache_entry(key: UserKey) -> None:
 
 
 def get_from_cache(chat_id, user_id) -> Optional[dict]:
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     key = (chat_id, user_id)
     entry = _user_cache.get(key)
     if entry is None:
@@ -168,6 +183,7 @@ def get_from_cache(chat_id, user_id) -> Optional[dict]:
 
 
 def set_in_cache(chat_id, user_id, data: dict) -> None:
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     key = (chat_id, user_id)
 
     # Сняли старый username из индекса
@@ -198,6 +214,7 @@ def invalidate_user_cache(chat_id, user_id) -> None:
     чтобы гарантировать, что следующее чтение пойдёт в БД и подтянет
     актуальные данные.
     """
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     _drop_cache_entry((chat_id, user_id))
 
     redis_url = os.environ.get("REDIS_URL")
@@ -228,6 +245,7 @@ def invalidate_user_cache(chat_id, user_id) -> None:
 
 
 def mark_dirty(chat_id, user_id) -> None:
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     _dirty_cache.add((chat_id, user_id))
 
 
@@ -235,6 +253,7 @@ async def flush_user_cache_immediately(chat_id, user_id) -> None:
     """Немедленно сбрасывает грязные данные конкретного пользователя в Firestore.
     Используется перед транзакционным чтением, чтобы Firestore-транзакция
     не прочитала устаревшие данные и не перезаписала свежий кэш."""
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     key = (chat_id, user_id)
     if key not in _dirty_cache:
         return
@@ -343,6 +362,7 @@ async def flush_user_data_task() -> None:
 # CRUD
 # ============================================================
 async def get_user_data(chat_id, user_id, full_name: Optional[str] = None) -> dict:
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     """
     Возвращает данные пользователя (создаёт дефолт, если нет).
     Защищено от гонок — конкурентные вызовы для одного юзера сериализуются.
@@ -485,6 +505,7 @@ async def update_user_balance(
     action: str = "Balance Update",
     transaction=None,
 ) -> Optional[int]:
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     """
     Универсальное обновление баланса.
     Возвращает новый баланс или None, если min_balance нарушен / юзера нет.
@@ -545,6 +566,7 @@ async def update_user_balance_tr(transaction, chat_id, user_id, amount,
 
 
 async def update_user_field(chat_id, user_id, field: str, value: Any) -> None:
+    chat_id, user_id = _normalize_ids(chat_id, user_id)
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
