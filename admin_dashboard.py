@@ -19,7 +19,8 @@ from user_manager import (
     get_user_by_username_or_id,
     get_user_ref,
     safe_get_snapshot,
-    _user_cache
+    _user_cache,
+    flush_user_cache_immediately
 )
 from whitelist import get_whitelist, add_to_whitelist, remove_from_whitelist
 from chances import get_game_chance, set_game_chance
@@ -524,12 +525,12 @@ async def process_bank_owner_input(message: types.Message, state: FSMContext):
         for doc in dep_docs:
             uid = int(doc.id) if doc.id.isdigit() else doc.id
             await update_user_field(chat_id, uid, 'bank_name', target_id)
-            invalidate_user_cache(chat_id, uid)
+            await flush_user_cache_immediately(chat_id, uid)
             updated_depositors_count += 1
             
-        # Инвалидируем кэш старого банкира, нового и банка
-        invalidate_user_cache(chat_id, old_banker_id)
-        invalidate_user_cache(chat_id, target_id)
+        # Записываем изменения банкиров в базу данных немедленно
+        await flush_user_cache_immediately(chat_id, old_banker_id)
+        await flush_user_cache_immediately(chat_id, target_id)
         invalidate_bank_cache(chat_id, old_banker_id, bank_data.get('name'))
         invalidate_bank_cache(chat_id, target_id, bank_data.get('name'))
         
@@ -617,12 +618,12 @@ async def cb_perform_bank_delete(callback: types.CallbackQuery, state: FSMContex
         await update_user_field(chat_id, uid, 'bank_deposit', 0)
         await update_user_field(chat_id, uid, 'bank_name', None)
         await update_user_field(chat_id, uid, 'deposit_start_time', 0)
-        invalidate_user_cache(chat_id, uid)
+        await flush_user_cache_immediately(chat_id, uid)
         depositors_count += 1
         
     # Снимаем статус банкира
     await update_user_field(chat_id, banker_id, 'is_banker', False)
-    invalidate_user_cache(chat_id, banker_id)
+    await flush_user_cache_immediately(chat_id, banker_id)
     
     # Удаляем документ банка
     bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(banker_id))
@@ -714,7 +715,7 @@ async def process_bank_create_name_input(message: types.Message, state: FSMConte
     
     # Делаем банкиром в профиле
     await update_user_field(chat_id, target_id, 'is_banker', True)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     # Создаем банк
     await create_or_update_bank(chat_id, target_id, {
@@ -866,7 +867,7 @@ async def cb_toggle_vip(callback: types.CallbackQuery, state: FSMContext):
     data = await get_user_data(chat_id, target_id)
     new_val = not data.get('is_vip', False)
     await update_user_field(chat_id, target_id, 'is_vip', new_val)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     await callback.answer(f"VIP-статус установлен: {new_val}")
     await show_player_details_screen(callback, state, chat_id, target_id, edit=True)
@@ -881,7 +882,7 @@ async def cb_toggle_banker_role(callback: types.CallbackQuery, state: FSMContext
     data = await get_user_data(chat_id, target_id)
     new_val = not data.get('is_banker', False)
     await update_user_field(chat_id, target_id, 'is_banker', new_val)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     await callback.answer(f"Статус банкира установлен: {new_val}")
     await show_player_details_screen(callback, state, chat_id, target_id, edit=True)
@@ -896,7 +897,7 @@ async def cb_toggle_user_ban(callback: types.CallbackQuery, state: FSMContext):
     data = await get_user_data(chat_id, target_id)
     new_val = not data.get('is_banned', False)
     await update_user_field(chat_id, target_id, 'is_banned', new_val)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     await callback.answer(f"Бан-статус в боте установлен: {new_val}")
     await show_player_details_screen(callback, state, chat_id, target_id, edit=True)
@@ -911,7 +912,7 @@ async def cb_toggle_user_top_hide(callback: types.CallbackQuery, state: FSMConte
     data = await get_user_data(chat_id, target_id)
     new_val = not data.get('hide_in_top', False)
     await update_user_field(chat_id, target_id, 'hide_in_top', new_val)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     await callback.answer(f"Скрытность в топе установлена: {new_val}")
     await show_player_details_screen(callback, state, chat_id, target_id, edit=True)
@@ -932,10 +933,11 @@ async def cb_add_user_warn(callback: types.CallbackQuery, state: FSMContext):
     })
     
     await update_user_field(chat_id, target_id, 'warns', warns)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     if len(warns) >= 3:
         await update_user_field(chat_id, target_id, 'is_banned', True)
+        await flush_user_cache_immediately(chat_id, target_id)
         try:
             await callback.bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
         except Exception:
@@ -958,7 +960,7 @@ async def cb_remove_user_warn(callback: types.CallbackQuery, state: FSMContext):
     if warns:
         warns.pop()
         await update_user_field(chat_id, target_id, 'warns', warns)
-        invalidate_user_cache(chat_id, target_id)
+        await flush_user_cache_immediately(chat_id, target_id)
         await callback.answer(f"Один варн успешно снят. Осталось: {len(warns)}/3")
     else:
         await callback.answer("У этого игрока нет предупреждений.", show_alert=True)
@@ -1038,7 +1040,7 @@ async def process_player_money_add(message: types.Message, state: FSMContext):
         return
         
     await update_user_balance(chat_id, target_id, val, action="Creator Panel Give")
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     await message.answer(f"✅ Баланс успешно изменен на {val:+,} сыроежек.")
     await show_player_details_screen(message, state, chat_id, target_id)
@@ -1082,7 +1084,7 @@ async def process_player_money_set(message: types.Message, state: FSMContext):
         return
         
     await update_user_field(chat_id, target_id, 'balance', val)
-    invalidate_user_cache(chat_id, target_id)
+    await flush_user_cache_immediately(chat_id, target_id)
     
     await message.answer(f"✅ Установлен точный баланс: {val:,} сыроежек.")
     await show_player_details_screen(message, state, chat_id, target_id)
