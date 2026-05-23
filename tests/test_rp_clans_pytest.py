@@ -192,3 +192,100 @@ async def test_clan_promote_demote():
         mock_clan_data['deputy_ids'] = [member_id]
         await rp_clans.cmd_clan(message)
         mock_ref.update.assert_called_with({'deputy_ids': []})
+
+
+@pytest.mark.asyncio
+async def test_clan_create_enforces_min_balance():
+    chat_id = 123
+    user_id = 999
+    
+    message = AsyncMock()
+    message.chat.id = chat_id
+    message.from_user.id = user_id
+    message.text = "/clan create NewClan"
+    
+    mock_doc = MagicMock()
+    mock_doc.exists = False
+    
+    mock_ref = AsyncMock()
+    mock_ref.get.return_value = mock_doc
+    
+    with patch("rp_clans.get_user_data", new_callable=AsyncMock) as mock_get_user, \
+         patch("rp_clans.get_clan_ref", new_callable=AsyncMock) as mock_get_clan_ref, \
+         patch("rp_clans.update_user_balance", new_callable=AsyncMock) as mock_update:
+         
+        mock_get_user.return_value = {'clan': None, 'balance': 60000}
+        mock_get_clan_ref.return_value = mock_ref
+        
+        # When update_user_balance returns None (e.g. min_balance check failed due to concurrent spend)
+        mock_update.return_value = None
+        
+        await rp_clans.cmd_clan(message)
+        
+        mock_update.assert_called_once_with(chat_id, user_id, -50000, min_balance=0)
+        message.answer.assert_called_once_with("Для создания клана нужно 50.000 сыроежек.")
+
+
+@pytest.mark.asyncio
+async def test_clan_deposit_enforces_min_balance():
+    chat_id = 123
+    user_id = 999
+    
+    message = AsyncMock()
+    message.chat.id = chat_id
+    message.from_user.id = user_id
+    message.text = "/clan deposit 1000"
+    
+    mock_doc = MagicMock()
+    mock_doc.to_dict.return_value = {'treasury': 5000}
+    
+    mock_ref = AsyncMock()
+    mock_ref.get.return_value = mock_doc
+    
+    with patch("rp_clans.get_user_data", new_callable=AsyncMock) as mock_get_user, \
+         patch("rp_clans.get_clan_ref", new_callable=AsyncMock) as mock_get_clan_ref, \
+         patch("rp_clans.update_user_balance", new_callable=AsyncMock) as mock_update:
+         
+        mock_get_user.return_value = {'clan': 'SomeClan', 'balance': 2000}
+        mock_get_clan_ref.return_value = mock_ref
+        
+        mock_update.return_value = None
+        
+        await rp_clans.cmd_clan(message)
+        
+        mock_update.assert_called_once_with(chat_id, user_id, -1000, min_balance=0)
+        message.answer.assert_called_once_with("Недостаточно средств.")
+
+
+@pytest.mark.asyncio
+async def test_wedding_gift_enforces_min_balance():
+    chat_id = 123
+    user_id = 999
+    
+    message = AsyncMock()
+    message.chat.id = chat_id
+    message.from_user.id = user_id
+    message.text = "подарок 1000"
+    
+    message.reply_to_message = MagicMock()
+    btn = MagicMock()
+    btn.callback_data = "marry_yes_m1"
+    message.reply_to_message.reply_markup = MagicMock()
+    message.reply_to_message.reply_markup.inline_keyboard = [[btn]]
+    
+    rp_clans.active_marriages["m1"] = {
+        'amount': 0,
+        'from_id': user_id,
+        'to_id': 888
+    }
+    
+    with patch("rp_clans.get_user_data", new_callable=AsyncMock) as mock_get_user, \
+         patch("rp_clans.update_user_balance", new_callable=AsyncMock) as mock_update:
+         
+        mock_get_user.return_value = {'balance': 2000}
+        mock_update.return_value = None  # min_balance failure
+        
+        await rp_clans.cmd_gift(message)
+        
+        mock_update.assert_called_once_with(chat_id, user_id, -1000, min_balance=0)
+        message.answer.assert_called_once_with("У вас недостаточно сыроежек для такого подарка.")

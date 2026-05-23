@@ -751,10 +751,10 @@ async def cb_trade_execute(callback: types.CallbackQuery):
         if amount <= 0:
             return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
             
-        if user_balance < price * amount: 
-            return await callback.answer("❌ Мало денег для такого количества.", show_alert=True)
+        res = await update_user_balance(callback.message.chat.id, callback.from_user.id, -(price * amount), min_balance=0)
+        if res is None:
+            return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
             
-        await update_user_balance(callback.message.chat.id, callback.from_user.id, -(price * amount))
         port[cid] = port.get(cid, 0) + amount
         
         await callback.answer(f"✅ Успешно куплено {amount} шт. {coin['ticker']}!")

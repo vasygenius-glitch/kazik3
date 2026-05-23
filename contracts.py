@@ -155,15 +155,14 @@ async def process_all_deals(callback: types.CallbackQuery):
         price = info['price']
         item = info['item']
 
-        buyer_data = await get_user_data(chat_id, buyer_id)
-        if buyer_data.get('balance', 0) < price:
+        # Сначала списываем деньги у покупателя с защитой от ухода в минус
+        res = await update_user_balance(chat_id, buyer_id, -price, min_balance=0)
+        if res is None:
             return await callback.message.edit_text("❌ У покупателя не хватило денег!")
 
         # Передача предмета
         from user_manager import remove_item_from_inventory, add_item_to_inventory
         if await remove_item_from_inventory(chat_id, seller_id, item):
-            # Передача денег только ПОСЛЕ успешного изъятия предмета
-            await update_user_balance(chat_id, buyer_id, -price)
             await update_user_balance(chat_id, seller_id, price)
             await add_item_to_inventory(chat_id, buyer_id, item)
 
@@ -199,6 +198,8 @@ async def process_all_deals(callback: types.CallbackQuery):
 
             await callback.message.edit_text(f"✅ <b>Сделка завершена!</b>\nПредмет <b>{item}</b> перешел к новому владельцу за <b>{price}</b> сыр.")
         else:
+            # Возвращаем деньги покупателю
+            await update_user_balance(chat_id, buyer_id, price)
             await callback.message.edit_text("❌ Произошла ошибка: предмета больше нет у продавца.")
 
     elif info['type'] == 'inheritance':

@@ -85,7 +85,9 @@ async def cmd_gift(message: types.Message):
     if user_data.get('balance', 0) < amount:
         return await message.answer("У вас недостаточно сыроежек для такого подарка.")
 
-    await update_user_balance(chat_id, user_id, -amount)
+    res = await update_user_balance(chat_id, user_id, -amount, min_balance=0)
+    if res is None:
+        return await message.answer("У вас недостаточно сыроежек для такого подарка.")
     active_marriages[marriage_id]['amount'] += amount
     await message.answer(f"🎁 <b>{escape_html(message.from_user.full_name)}</b> вложил <b>{amount}</b> сыроежек в свадебный бюджет!")
 
@@ -310,15 +312,17 @@ async def callback_duel_invitation(callback: types.CallbackQuery):
     bet = duel_info['bet']
     proposer_id = duel_info['proposer_id']
 
-    user_data = await get_user_data(chat_id, proposer_id)
-    target_data = await get_user_data(chat_id, target_id)
-
-    if user_data.get('balance', 0) < bet or target_data.get('balance', 0) < bet:
+    res_prop = await update_user_balance(chat_id, proposer_id, -bet, min_balance=0)
+    if res_prop is None:
         del active_duels[duel_id]
-        return await callback.message.edit_text("❌ Один из стрелков оказался на мели. Дуэль отменяется.")
+        return await callback.message.edit_text("❌ У зачинщика дуэли недостаточно средств. Дуэль отменяется.")
 
-    await update_user_balance(chat_id, proposer_id, -bet)
-    await update_user_balance(chat_id, target_id, -bet)
+    res_targ = await update_user_balance(chat_id, target_id, -bet, min_balance=0)
+    if res_targ is None:
+        # Возвращаем ставку proposer
+        await update_user_balance(chat_id, proposer_id, bet)
+        del active_duels[duel_id]
+        return await callback.message.edit_text("❌ У защитника дуэли недостаточно средств. Дуэль отменяется.")
 
     duel_info['state'] = 'active'
     duel_info['p1'] = {'id': proposer_id, 'name': duel_info['proposer_name'], 'acc': 10, 'cover': False}
@@ -573,15 +577,14 @@ async def cmd_clan(message: types.Message):
             return await message.answer("Укажите название: <code>/clan create Название</code>")
 
         new_clan_name = args[2]
-        if data.get('balance', 0) < 50000:
-            return await message.answer("Для создания клана нужно 50.000 сыроежек.")
-
         clan_ref = await get_clan_ref(chat_id, new_clan_name)
         doc = await clan_ref.get()
         if doc.exists:
             return await message.answer("Клан с таким названием уже существует.")
 
-        await update_user_balance(chat_id, user_id, -50000)
+        res = await update_user_balance(chat_id, user_id, -50000, min_balance=0)
+        if res is None:
+            return await message.answer("Для создания клана нужно 50.000 сыроежек.")
         await clan_ref.set({
             'leader_id': user_id,
             'deputy_ids': [],
@@ -788,9 +791,11 @@ async def cmd_clan(message: types.Message):
             except ValueError: return await message.answer("Сумма должна быть числом или 'all'.")
 
         if amount <= 0: return
-        if balance < amount: return await message.answer("Недостаточно средств.")
 
-        await update_user_balance(chat_id, user_id, -amount)
+        res = await update_user_balance(chat_id, user_id, -amount, min_balance=0)
+        if res is None:
+            return await message.answer("Недостаточно средств.")
+
         clan_ref = await get_clan_ref(chat_id, clan_name)
         doc = await clan_ref.get()
         new_treasury = doc.to_dict().get('treasury', 0) + amount

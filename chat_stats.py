@@ -152,7 +152,7 @@ async def weekly_reset_task(bot: Bot):
                             active_diseases = await get_active_diseases(chat_id, user_id)
                             if 'scabies' in active_diseases:
                                 if data.get('balance', 0) >= 50:
-                                    await update_user_balance(chat_id, user_id, -50)
+                                    await update_user_balance(chat_id, user_id, -50, min_balance=0)
                 except Exception as e:
                     print(f"Ошибка в 10-минутной таске (Чесотка): {e}")
 

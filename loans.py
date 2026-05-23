@@ -277,7 +277,9 @@ async def cmd_repay(message: types.Message):
                     banker_commission = int(profit_margin * 0.1)
 
     repay_amount = min(amount, current_debt)
-    await update_user_balance(chat_id, borrower_id, -repay_amount)
+    res = await update_user_balance(chat_id, borrower_id, -repay_amount, min_balance=0)
+    if res is None:
+        return await message.answer("У тебя нет столько денег на балансе.")
 
     if target_debt_key.startswith("bank_"):
         # Возврат банку в капитал

@@ -117,11 +117,9 @@ async def callback_escort(callback: types.CallbackQuery):
     if action == "no":
         return await callback.message.edit_text("❌ Сделка сорвалась. Стороны не сошлись в цене.")
 
-    client_data = await get_user_data(chat_id, client_id)
-    if client_data.get('balance', 0) < amount:
+    res = await update_user_balance(chat_id, client_id, -amount, min_balance=0)
+    if res is None:
         return await callback.message.edit_text("❌ У клиента не хватило денег на оплату!")
-
-    await update_user_balance(chat_id, client_id, -amount)
     
     try:
         from economy_utils import get_global_tax
@@ -200,12 +198,12 @@ async def callback_escort(callback: types.CallbackQuery):
 
         if new_infections_client:
             penalty_client = int(max(0, client_data.get('balance', 0)) * 0.1) # теряет 10% на врачей (только положительный баланс)
-            await update_user_balance(chat_id, client_id, -penalty_client)
+            await update_user_balance(chat_id, client_id, -penalty_client, min_balance=0)
             result_msg += f"👨‍💼 Клиент подцепил: {', '.join(new_infections_client)}. (Потерял {penalty_client} сыр. на лечение)\n"
 
         if new_infections_hooker:
             penalty_hooker = int(max(0, hooker_data.get('balance', 0)) * 0.1)
-            await update_user_balance(chat_id, hooker_id, -penalty_hooker)
+            await update_user_balance(chat_id, hooker_id, -penalty_hooker, min_balance=0)
             result_msg += f"💃 Путана подцепила: {', '.join(new_infections_hooker)}. (Потеряла {penalty_hooker} сыр. на лечение)\n"
 
         result_msg += "<i>Проверьте свой статус: /зппп</i>"
