@@ -33,11 +33,11 @@ from admin_pm import router as admin_pm_router
 from casino_utils import router as casino_utils_router
 from poker import router as poker_router
 from crash import router as crash_router
+from admin_dashboard import router as admin_dashboard_router
 
 import asyncio
 from user_manager import get_user_data, update_user_balance
 from diseases import get_active_diseases
-
 from aiogram import Router
 from aiogram.types import Message
 from logger import log_message
@@ -128,4 +128,5 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(crash_router)
     dp.include_router(admin_pm_router)
     dp.include_router(hunger_games_router)
+    dp.include_router(admin_dashboard_router)
     dp.include_router(catch_all_router)
