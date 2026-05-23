@@ -118,8 +118,7 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     
         if total_win > 0:
             profit = total_win - bet
-            if data.get('is_banker'): profit = int(profit * 0.5)
-            elif data.get('is_vip'): profit += int(profit * 0.1)
+            if data.get('is_vip'): profit += int(profit * 0.1)
             await update_user_balance(chat_id, user_id, bet + profit, action="Roulette Win")
             res_text = f"✅ <b>ВЫИГРЫШ: +{profit}</b>\n{mult_text}"
         else:

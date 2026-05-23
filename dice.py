@@ -87,14 +87,8 @@ async def process_dice_confirm(callback: types.CallbackQuery):
     
         if player_roll > bot_roll:
             profit = bet
-            is_banker = data.get('is_banker', False)
-            vip_bonus_text = ""
-            if is_banker:
-                profit = int(profit * 0.5)
-                vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
-    
             await update_user_balance(chat_id, user_id, bet + profit, action="Dice Win")
-            text += f"🎉 Вы победили! Выиграно: <b>{profit}</b> сыроежек.{vip_bonus_text}"
+            text += f"🎉 Вы победили! Выиграно: <b>{profit}</b> сыроежек."
         elif player_roll < bot_roll:
             text += f"❌ Вы проиграли <b>{bet}</b> сыроежек."
         else:

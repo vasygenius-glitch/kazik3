@@ -110,8 +110,7 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
     
         if p_score == 21:
             profit = int(bet * 1.5)
-            if data.get('is_banker'): profit = int(profit * 0.5)
-            elif data.get('is_vip'): profit += int(profit * 0.1)
+            if data.get('is_vip'): profit += int(profit * 0.1)
             await update_user_balance(chat_id, user_id, bet + profit, action="Blackjack Win")
             text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
             msg = await callback.message.answer(text)
@@ -227,8 +226,7 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
 
     if d_score > 21 or p_score > d_score:
         profit = bet
-        if data.get('is_banker'): profit = int(profit * 0.5)
-        elif data.get('is_vip'): profit += int(profit * 0.1)
+        if data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(game['chat_id'], game['user_id'], bet + profit, action="Blackjack Win")
         res = f"✅ <b>ПОБЕДА! +{profit}</b>"
     elif p_score < d_score:

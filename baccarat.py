@@ -98,15 +98,8 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
 
         if p_score > b_score:
             profit = bet
-            is_banker = data.get('is_banker', False)
-            vip_bonus_text = ""
-
-            if is_banker:
-                profit = int(profit * 0.5)
-                vip_bonus_text = f"\n<i>(🏦 Банкирам выплачивается только 50% от прибыли)</i>"
-
             await update_user_balance(chat_id, user_id, bet + profit, action="Baccarat Win")
-            text += f"🎉 Игрок побеждает! Вы выиграли <b>{profit}</b> сыроежек.{vip_bonus_text}"
+            text += f"🎉 Игрок побеждает! Вы выиграли <b>{profit}</b> сыроежек."
         elif b_score > p_score:
             text += f"❌ Банкир побеждает! Вы проиграли <b>{bet}</b> сыроежек."
         else:

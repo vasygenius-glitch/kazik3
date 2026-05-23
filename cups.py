@@ -1167,13 +1167,7 @@ def _calculate_payout(*, bet: int, multiplier: float, won: bool,
     banker_tax = 0
     modifiers: List[str] = []
 
-    if is_banker:
-        banker_tax = int(round(profit * BANKER_PROFIT_TAX_PCT))
-        profit -= banker_tax
-        modifiers.append(
-            f"{BANK_EMOJI} Налог банкира: −{_format_money(banker_tax)} (50% с прибыли)"
-        )
-    elif is_vip:
+    if is_vip:
         vip_bonus = int(round(profit * VIP_PROFIT_BONUS_PCT))
         profit += vip_bonus
         modifiers.append(

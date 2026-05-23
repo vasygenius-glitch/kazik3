@@ -152,8 +152,7 @@ async def process_slots_confirm(callback: types.CallbackQuery):
             status = f"💀 <b>ПРОИГРЫШ</b>\n  -{bet} сыр."
     
         if profit > 0:
-            if data.get('is_banker'): profit = int(profit * 0.5)
-            elif data.get('is_vip'): profit += int(profit * 0.1)
+            if data.get('is_vip'): profit += int(profit * 0.1)
             await update_user_balance(chat_id, user_id, bet + profit, action="Slots Win")
     
         final_text = get_slots_frame(final_slots, status, bet, casino_title)
