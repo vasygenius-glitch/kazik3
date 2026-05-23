@@ -169,6 +169,41 @@ async def process_bank_loan(callback: types.CallbackQuery):
             await issue_loan_tx(db.transaction(), chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id)
             invalidate_user_cache(chat_id, borrower_id)
         await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
+
+        # --- Логирование выдачи кредита ---
+        try:
+            borrower_data = await get_user_data(chat_id, borrower_id)
+            borrower_name = borrower_data.get('full_name') or "Unknown"
+            borrower_username = borrower_data.get('username') or ""
+
+            lender_data = await get_user_data(chat_id, lender_id)
+            lender_name = lender_data.get('full_name') or "Unknown"
+            lender_username = lender_data.get('username') or ""
+
+            try:
+                message_link = callback.message.link or ""
+            except Exception:
+                message_link = ""
+
+            from log_system import log_loan
+            log_loan(
+                action_type="issue",
+                chat_id=chat_id,
+                chat_title=callback.message.chat.title or "Unknown",
+                lender_id=lender_id,
+                lender_name=lender_name,
+                lender_username=lender_username,
+                borrower_id=borrower_id,
+                borrower_name=borrower_name,
+                borrower_username=borrower_username,
+                amount=amount,
+                total_debt=total_debt,
+                term_days=term_days,
+                guarantor_id=guarantor_id,
+                message_link=message_link
+            )
+        except Exception as log_e:
+            print(f"Error logging loan issue: {log_e}")
     except ValueError as ve:
         await callback.message.edit_text(f"❌ Ошибка: {ve}")
     except Exception as e:
@@ -271,3 +306,35 @@ async def cmd_repay(message: types.Message):
 
     await update_user_field(chat_id, borrower_id, 'debts', debts)
     await message.answer(f"✅ Ты вернул <b>{repay_amount}</b> сыроежек кредитору.{discount_msg}\nОстаток долга: <b>{debts.get(target_debt_key, 0)}</b> сыроежек.{rating_msg}")
+
+    # --- Логирование возврата кредита ---
+    try:
+        lender_data = await get_user_data(chat_id, lender_id)
+        lender_name = lender_data.get('full_name') or message.reply_to_message.from_user.full_name or "Unknown"
+        lender_username = lender_data.get('username') or message.reply_to_message.from_user.username or ""
+
+        borrower_name = borrower_data.get('full_name') or message.from_user.full_name or "Unknown"
+        borrower_username = borrower_data.get('username') or message.from_user.username or ""
+
+        try:
+            message_link = message.link or ""
+        except Exception:
+            message_link = ""
+
+        from log_system import log_loan
+        log_loan(
+            action_type="repay",
+            chat_id=chat_id,
+            chat_title=message.chat.title or "Unknown",
+            lender_id=lender_id,
+            lender_name=lender_name,
+            lender_username=lender_username,
+            borrower_id=borrower_id,
+            borrower_name=borrower_name,
+            borrower_username=borrower_username,
+            amount=repay_amount,
+            total_debt=debts.get(target_debt_key, 0),
+            message_link=message_link
+        )
+    except Exception as log_e:
+        print(f"Error logging loan repay: {log_e}")

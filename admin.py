@@ -48,6 +48,8 @@ async def cmd_ban_only_creator(message: types.Message, bot: Bot):
         if reason:
             text += f"Причина: <i>{escape_html(reason)}</i>"
         await message.answer(text)
+        from log_system import log_action
+        log_action(f"🔨 <b>Бан:</b> {message.from_user.full_name} ({message.from_user.id}) забанил {target.full_name} ({target.id}) в чате {chat_id}. Причина: {reason or 'Не указана'}")
     except Exception as e:
         await message.answer(f"Не удалось забанить: {e}")
 
@@ -69,6 +71,8 @@ async def cmd_wipe_only_creator(message: types.Message, bot: Bot):
         from user_manager import wipe_user_data
         await wipe_user_data(chat_id, target.id)
         await message.answer(f"🧹 Данные пользователя <b>{escape_html(target.full_name)}</b> полностью обнулены.")
+        from log_system import log_action
+        log_action(f"🧹 <b>Вайп игрока:</b> {message.from_user.full_name} ({message.from_user.id}) вайпнул {target.full_name} ({target.id}) в чате {chat_id}")
     except Exception as e:
         await message.answer(f"Ошибка при вайпе: {e}")
 
@@ -102,6 +106,8 @@ async def cmd_mute(message: types.Message, bot: Bot):
             until_date=until_date
         )
         await message.answer(f"🔇 Пользователь <b>{escape_html(target.full_name)}</b> отправлен в мут на {minutes} мин.")
+        from log_system import log_action
+        log_action(f"🔇 <b>Мут:</b> {message.from_user.full_name} ({message.from_user.id}) замутил {target.full_name} ({target.id}) на {minutes} мин. в чате {message.chat.id}")
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
 
@@ -126,6 +132,8 @@ async def cmd_unmute(message: types.Message, bot: Bot):
             )
         )
         await message.answer(f"🔊 С пользователя <b>{escape_html(target.full_name)}</b> сняты ограничения.")
+        from log_system import log_action
+        log_action(f"🔊 <b>Размут:</b> {message.from_user.full_name} ({message.from_user.id}) размутил {target.full_name} ({target.id}) в чате {message.chat.id}")
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
 
@@ -157,10 +165,14 @@ async def cmd_warn(message: types.Message, bot: Bot):
             invalidate_user_cache(message.chat.id, target.id)
             await bot.ban_chat_member(chat_id=message.chat.id, user_id=target.id)
             await message.answer(f"🔨 Пользователь <b>{escape_html(target.full_name)}</b> получил 3/3 варна и был забанен.")
+            from log_system import log_action
+            log_action(f"🔨 <b>Авто-бан за варны:</b> {target.full_name} ({target.id}) получил 3/3 варна и был забанен в чате {message.chat.id}")
         except Exception as e:
             await message.answer(f"Ошибка при авто-бане: {e}")
     else:
         await message.answer(f"⚠️ Пользователь <b>{escape_html(target.full_name)}</b> получил варн ({count}/3).\nПричина: <i>{escape_html(reason or 'Не указана')}</i>")
+        from log_system import log_action
+        log_action(f"⚠️ <b>Варн:</b> {message.from_user.full_name} ({message.from_user.id}) выдал варн ({count}/3) {target.full_name} ({target.id}) в чате {message.chat.id}. Причина: {reason or 'Не указана'}")
 
 @router.message(F.text.regexp(r"^[!/]+снять варн(\s|$)"))
 async def cmd_unwarn(message: types.Message):
@@ -181,3 +193,5 @@ async def cmd_unwarn(message: types.Message):
     warns.pop()
     await update_user_field(message.chat.id, target.id, 'warns', warns)
     await message.answer(f"✅ У пользователя <b>{escape_html(target.full_name)}</b> снят один варн (осталось {len(warns)}/3).")
+    from log_system import log_action
+    log_action(f"✅ <b>Снятие варна:</b> {message.from_user.full_name} ({message.from_user.id}) снял варн с {target.full_name} ({target.id}) в чате {message.chat.id} (осталось {len(warns)}/3)")

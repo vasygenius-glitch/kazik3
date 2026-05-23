@@ -105,7 +105,7 @@ class WhitelistMiddleware(BaseMiddleware):
         u_data = None
         if is_command and user_id is not None:
             try:
-                u_data = await get_user_data(chat.id, user_id, event.from_user.full_name)
+                u_data = await get_user_data(chat.id, user_id, event.from_user.full_name, event.from_user.username)
                 data['u_data'] = u_data
 
                 diseases = u_data.get('diseases') if u_data else None

@@ -526,6 +526,35 @@ async def cmd_bank(message: types.Message):
 
                 invalidate_bank_cache(chat_id, target_banker_id, bank_data.get('name'))
 
+                # --- Логирование депозита ---
+                try:
+                    sender_data_after = await get_user_data(chat_id, user_id)
+                    sender_bal_after = sender_data_after.get('balance')
+                    try:
+                        message_link = message.link or ""
+                    except Exception:
+                        message_link = ""
+                    
+                    from log_system import log_financial_transaction
+                    log_financial_transaction(
+                        action_type="deposit",
+                        sender_id=user_id,
+                        sender_name=data.get('full_name') or message.from_user.full_name,
+                        sender_username=message.from_user.username or "",
+                        recipient_id=target_banker_id,
+                        recipient_name=bank_data.get('banker_name') or f"Banker {target_banker_id}",
+                        recipient_username="",
+                        amount=actual_amount,
+                        commission=0,
+                        chat_id=chat_id,
+                        chat_title=message.chat.title or "Unknown",
+                        message_link=message_link,
+                        sender_balance=sender_bal_after,
+                        recipient_balance=total_dep
+                    )
+                except Exception as log_e:
+                    print(f"Error logging deposit: {log_e}")
+
                 await message.answer(
                     f"✅ Депозит пополнен на {actual_amount} сыр. "
                     f"в банке <b>{escape_html(bank_data.get('name', 'Банк'))}</b>.\n"
@@ -552,6 +581,37 @@ async def cmd_bank(message: types.Message):
                 actual_withdraw = min(current_deposit if is_all else amount, current_deposit)
                 await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - actual_withdraw)
                 await update_user_balance(chat_id, user_id, actual_withdraw)
+
+                # --- Логирование снятия со старого системного счета ---
+                try:
+                    sender_data_after = await get_user_data(chat_id, user_id)
+                    sender_bal_after = sender_data_after.get('balance')
+                    total_dep_after = sender_data_after.get('bank_deposit', 0)
+                    try:
+                        message_link = message.link or ""
+                    except Exception:
+                        message_link = ""
+                    
+                    from log_system import log_financial_transaction
+                    log_financial_transaction(
+                        action_type="withdraw",
+                        sender_id=user_id,
+                        sender_name=data.get('full_name') or message.from_user.full_name,
+                        sender_username=message.from_user.username or "",
+                        recipient_id=0,
+                        recipient_name="Системный Банк",
+                        recipient_username="",
+                        amount=actual_withdraw,
+                        commission=0,
+                        chat_id=chat_id,
+                        chat_title=message.chat.title or "Unknown",
+                        message_link=message_link,
+                        sender_balance=sender_bal_after,
+                        recipient_balance=total_dep_after
+                    )
+                except Exception as log_e:
+                    print(f"Error logging withdraw system: {log_e}")
+
                 return await message.answer(f"💸 Снято {actual_withdraw} сыроежек со старого системного счета.")
 
             db = get_db()
@@ -566,6 +626,39 @@ async def cmd_bank(message: types.Message):
                     invalidate_user_cache(chat_id, user_id)
 
                 invalidate_bank_cache(chat_id, current_banker_id)
+
+                # --- Логирование снятия со счета ---
+                try:
+                    sender_data_after = await get_user_data(chat_id, user_id)
+                    sender_bal_after = sender_data_after.get('balance')
+                    total_dep_after = sender_data_after.get('bank_deposit', 0)
+                    try:
+                        message_link = message.link or ""
+                    except Exception:
+                        message_link = ""
+                    
+                    b_info = await get_bank_info(chat_id, current_banker_id)
+                    banker_name = b_info.get('banker_name') if b_info else f"Banker {current_banker_id}"
+
+                    from log_system import log_financial_transaction
+                    log_financial_transaction(
+                        action_type="withdraw",
+                        sender_id=user_id,
+                        sender_name=data.get('full_name') or message.from_user.full_name,
+                        sender_username=message.from_user.username or "",
+                        recipient_id=current_banker_id,
+                        recipient_name=banker_name,
+                        recipient_username="",
+                        amount=actual_withdrawn,
+                        commission=0,
+                        chat_id=chat_id,
+                        chat_title=message.chat.title or "Unknown",
+                        message_link=message_link,
+                        sender_balance=sender_bal_after,
+                        recipient_balance=total_dep_after
+                    )
+                except Exception as log_e:
+                    print(f"Error logging withdraw bank: {log_e}")
 
                 await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")
             except ValueError as ve:
