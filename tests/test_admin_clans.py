@@ -149,3 +149,53 @@ async def test_cb_clan_kick():
         mock_update_field.assert_called_once_with(12345, 77777, 'clan', None)
         mock_flush.assert_called_once_with(12345, 77777)
         mock_list.assert_called_once_with(callback, state)
+
+
+@pytest.mark.asyncio
+async def test_parse_clan_callback_compatibility():
+    from admin_dashboard import parse_clan_callback, get_clan_hash
+    
+    clan_name = "My_Special_Clan"
+    clan_hash = get_clan_hash(clan_name)
+    
+    # Mock get_clan_name_by_hash to resolve clan_hash to clan_name
+    with patch("admin_dashboard.get_clan_name_by_hash", return_value=clan_name) as mock_hash:
+        # Test new format (hashed)
+        chat_id, resolved_name, member_id = await parse_clan_callback(f"db_clan_view_12345_{clan_hash}")
+        assert chat_id == 12345
+        assert resolved_name == clan_name
+        assert member_id is None
+        
+        chat_id, resolved_name, member_id = await parse_clan_callback(f"db_clan_mem_12345_77777_{clan_hash}")
+        assert chat_id == 12345
+        assert resolved_name == clan_name
+        assert member_id == 77777
+        
+        chat_id, resolved_name, member_id = await parse_clan_callback(f"db_clan_kck_12345_77777_{clan_hash}")
+        assert chat_id == 12345
+        assert resolved_name == clan_name
+        assert member_id == 77777
+
+    # Mock get_clan_name_by_hash to return None (meaning hash not found, or it's old format)
+    with patch("admin_dashboard.get_clan_name_by_hash", return_value=None):
+        # Test old format (raw name with underscores/spaces)
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_view_12345_My_Special_Clan")
+        assert chat_id == 12345
+        assert resolved_name == "My_Special_Clan"
+        assert member_id is None
+        
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_members_list_12345_My_Special_Clan")
+        assert chat_id == 12345
+        assert resolved_name == "My_Special_Clan"
+        assert member_id is None
+
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_member_12345_77777_My_Special_Clan")
+        assert chat_id == 12345
+        assert resolved_name == "My_Special_Clan"
+        assert member_id == 77777
+
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_kick_12345_77777_My_Special_Clan")
+        assert chat_id == 12345
+        assert resolved_name == "My_Special_Clan"
+        assert member_id == 77777
+
