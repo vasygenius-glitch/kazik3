@@ -4,6 +4,7 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance
 from utils import schedule_delete
+from chances import get_game_chance
 
 router = Router()
 
@@ -65,10 +66,12 @@ async def process_craps_confirm(callback: types.CallbackQuery):
         from config import CREATOR_ID
         is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
     
+        chance = await get_game_chance('craps')
+        target_chance = 35 if chance == -1 else chance
         if is_creator:
             is_forced_win = True
         else:
-            is_forced_win = (secure_random.randint(1, 100) <= 35)
+            is_forced_win = (secure_random.randint(1, 100) <= target_chance)
     
         while True:
             die1 = secure_random.randint(1, 6)

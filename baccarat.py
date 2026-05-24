@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance
 from utils import schedule_delete
 from cards import get_random_card, get_baccarat_score, format_cards
+from chances import get_game_chance
 
 router = Router()
 
@@ -65,7 +66,9 @@ async def process_baccarat_confirm(callback: types.CallbackQuery):
         from config import CREATOR_ID
         is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
 
-        is_win = (secure_random.randint(1, 100) <= 35) or is_creator
+        chance = await get_game_chance('baccarat')
+        target_chance = 35 if chance == -1 else chance
+        is_win = (secure_random.randint(1, 100) <= target_chance) or is_creator
 
         while True:
             p_cards = [get_random_card(), get_random_card()]

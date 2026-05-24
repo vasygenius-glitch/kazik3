@@ -76,6 +76,41 @@ class AdminPanelState(StatesGroup):
     waiting_for_debt_creditor = State()
     waiting_for_debt_amount = State()
 
+# Helper to simulate callback from a text message handler
+class MockCallback:
+    def __init__(self, message: types.Message, menu_message_id: int, callback_data: str):
+        class MockMessage:
+            def __init__(self):
+                self.chat = message.chat
+                self.from_user = message.from_user
+                self.message_id = menu_message_id
+            async def edit_text(self, text, reply_markup=None):
+                try:
+                    await message.bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=menu_message_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    await message.answer(text, reply_markup=reply_markup, parse_mode="HTML")
+            async def delete(self):
+                try:
+                    await message.bot.delete_message(chat_id=message.chat.id, message_id=menu_message_id)
+                except Exception:
+                    pass
+        self.message = MockMessage()
+        self.bot = message.bot
+        self.data = callback_data
+
+    async def answer(self, text=None, show_alert=False):
+        if text:
+            try:
+                await self.bot.send_message(chat_id=self.message.chat.id, text=text)
+            except Exception:
+                pass
+
 # ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====================
 def is_creator(message_or_callback) -> bool:
     user = message_or_callback.from_user
@@ -1276,6 +1311,17 @@ async def process_group_say_text(message: types.Message, state: FSMContext):
 
 # ===================== РАЗДЕЛ: ГЛОБАЛЬНЫЕ НАСТРОЙКИ =====================
 
+GAMES_CHANCE_LIST = [
+    ('slots', '🎰 Slots (Слоты)'),
+    ('cups', '🥤 Cups (Стаканчики)'),
+    ('roulette', '🎡 Roulette (Рулетка)'),
+    ('blackjack', '🃏 Blackjack (Блэкджек)'),
+    ('baccarat', '🃏 Baccarat (Баккара)'),
+    ('craps', '🎲 Craps (Кости)'),
+    ('poker', '🃏 Poker (Видеопокер)'),
+    ('crash', '🚀 Crash (Авиатор)'),
+]
+
 @router.callback_query(F.data.startswith("db_glob_"))
 async def cb_global_settings_view(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
@@ -1283,25 +1329,26 @@ async def cb_global_settings_view(callback: types.CallbackQuery, state: FSMConte
     
     tax = await get_global_tax()
     
-    chance_slots = await get_game_chance('slots')
-    chance_cups = await get_game_chance('cups')
-    chance_roulette = await get_game_chance('roulette')
-    
+    def format_chance(ch):
+        return f"{ch}%" if ch != -1 else "Честный рандом"
+
+    chances_text = ""
+    for game_id, game_title in GAMES_CHANCE_LIST:
+        ch = await get_game_chance(game_id)
+        if game_id == 'crash':
+            chances_text += f"  • {game_title}: <b>{format_chance(ch)}</b> (Ист. краш: {f'{100 - ch}%' if ch != -1 else '10%'})\n"
+        else:
+            chances_text += f"  • {game_title}: <b>{format_chance(ch)}</b>\n"
+            
     from utils import check_maintenance
     maint_mode = await check_maintenance()
     maint_status = "🔴 ВКЛЮЧЕН (Тех. работы)" if maint_mode else "🟢 ВЫКЛЮЧЕН (Штатная работа)"
     
-    def format_chance(ch):
-        return f"{ch}%" if ch != -1 else "Честный рандом"
-        
     text = (
         f"🌍 <b>Глобальные настройки бота</b>\n\n"
         f"🛠 Режим тех. работ: <b>{maint_status}</b>\n"
         f"💸 Базовый налог на переводы: <b>{tax}%</b>\n\n"
-        f"🎰 Установленные шансы побед:\n"
-        f"  • Игровые автоматы (Slots): <b>{format_chance(chance_slots)}</b>\n"
-        f"  • Стаканы (Cups): <b>{format_chance(chance_cups)}</b>\n"
-        f"  • Рулетка (Roulette): <b>{format_chance(chance_roulette)}</b>"
+        f"🎰 Установленные шансы побед:\n{chances_text}"
     )
     
     builder = InlineKeyboardBuilder()
@@ -1387,27 +1434,35 @@ async def cb_game_chances_menu(callback: types.CallbackQuery, state: FSMContext)
     if not is_creator(callback): return await callback.answer()
     chat_id = int(callback.data.split("_")[2])
     
-    chance_slots = await get_game_chance('slots')
-    chance_cups = await get_game_chance('cups')
-    chance_roulette = await get_game_chance('roulette')
-    
     def fmt(ch):
         return f"{ch}%" if ch != -1 else "Честный рандом"
+        
+    chances_text = ""
+    builder = InlineKeyboardBuilder()
+    for game_id, game_title in GAMES_CHANCE_LIST:
+        ch = await get_game_chance(game_id)
+        if game_id == 'crash':
+            ch_str = f"{ch}% (Ист. краш: {100 - ch}%)" if ch != -1 else "Честный рандом"
+        else:
+            ch_str = f"{ch}%" if ch != -1 else "Честный рандом"
+        chances_text += f"  • {game_title}: <b>{ch_str}</b>\n"
+        # Extract the pure title without emojis and parentheses for the button
+        btn_label = game_title.split("(")[0].strip()
+        # strip emojis
+        btn_label = "".join([c for c in btn_label if ord(c) < 127 or ord(c) > 255]).strip()
+        if not btn_label:
+            # Fallback if stripping emojis leaves it empty
+            btn_label = game_id.upper()
+        builder.button(text=btn_label, callback_data=f"db_gsc_{chat_id}_{game_id}")
         
     text = (
         f"🎰 <b>Настройка принудительных шансов победы</b>\n\n"
         f"Укажите игру для изменения шанса:\n\n"
-        f"🎰 Slots: <b>{fmt(chance_slots)}</b>\n"
-        f"🥤 Cups: <b>{fmt(chance_cups)}</b>\n"
-        f"🎡 Roulette: <b>{fmt(chance_roulette)}</b>"
+        f"{chances_text}"
     )
     
-    builder = InlineKeyboardBuilder()
-    builder.button(text="🎰 Slots", callback_data=f"db_gsc_{chat_id}_slots")
-    builder.button(text="🥤 Cups", callback_data=f"db_gsc_{chat_id}_cups")
-    builder.button(text="🎡 Roulette", callback_data=f"db_gsc_{chat_id}_roulette")
     builder.button(text="⬅️ Назад к настройкам", callback_data=f"db_glob_{chat_id}")
-    builder.adjust(3, 1)
+    builder.adjust(2, 2, 2, 2, 1)
     
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
@@ -1454,17 +1509,7 @@ async def process_game_chance_input(message: types.Message, state: FSMContext):
     await state.clear()
     # Возвращаемся в меню шансов
     bot = message.bot
-    # Симулируем callback-вызов
-    class MockCallback:
-        def __init__(self):
-            self.message = message
-            self.bot = bot
-            self.data = f"db_gch_{chat_id}"
-            
-        async def answer(self):
-            pass
-            
-    await cb_game_chances_menu(MockCallback(), state)
+    await cb_game_chances_menu(MockCallback(message, state_data.get("menu_message_id"), f"db_gch_{chat_id}"), state)
     try:
         await message.delete()
     except Exception:
@@ -1569,18 +1614,7 @@ async def process_whitelist_title_input(message: types.Message, state: FSMContex
     
     await state.clear()
     
-    # Возвращаемся в whitelist view
-    bot = message.bot
-    class MockCallback:
-        def __init__(self):
-            self.message = message
-            self.bot = bot
-            self.data = f"db_gwl_{chat_id}"
-            
-        async def answer(self):
-            pass
-            
-    await cb_whitelist_view(MockCallback(), state)
+    await cb_whitelist_view(MockCallback(message, state_data.get("menu_message_id"), f"db_gwl_{chat_id}"), state)
     try:
         await message.delete()
     except Exception:
@@ -2607,16 +2641,7 @@ async def process_global_broadcast_input(message: types.Message, state: FSMConte
     
     await state.clear()
     
-    bot = message.bot
-    class MockCallback:
-        def __init__(self):
-            self.message = message
-            self.bot = bot
-            self.data = f"db_glob_{chat_id}"
-        async def answer(self):
-            pass
-            
-    await cb_global_settings_view(MockCallback(), state)
+    await cb_global_settings_view(MockCallback(message, state_data.get("menu_message_id"), f"db_glob_{chat_id}"), state)
     try:
         await message.delete()
     except Exception:
@@ -2758,17 +2783,35 @@ async def show_clan_detail_screen(callback_or_message, state: FSMContext, chat_i
     except Exception:
         pass
 
+    member_names = []
+    for m_id in members:
+        try:
+            m_data = await get_user_data(chat_id, m_id)
+            m_name = m_data.get('full_name', f"ID: {m_id}")
+        except Exception:
+            m_name = f"ID: {m_id}"
+        role = ""
+        if m_id == leader_id:
+            role = "👑 Лидер"
+        elif m_id in deputies:
+            role = "⭐ Зам"
+        else:
+            role = "👤 Участник"
+        member_names.append(f"• <b>{escape_html(m_name)}</b> ({role})")
+    
+    members_str = "\n".join(member_names) if member_names else "<i>Нет участников</i>"
+
     text = (
         f"🛡 <b>Клан: {escape_html(clan_name)}</b>\n\n"
         f"👑 Лидер: <b>{escape_html(leader_name)}</b> (<code>{leader_id}</code>)\n"
-        f"💰 Казна клана: <b>{treasury:,}</b> сыр.\n"
-        f"👥 Всего участников: <b>{len(members)}</b>\n"
-        f"🎗 Заместители: <b>{len(deputies)}</b>"
+        f"💰 Казна клана: <b>{treasury:,}</b> сыр.\n\n"
+        f"👥 <b>Состав клана ({len(members)}):</b>\n{members_str}"
     )
     
     builder = InlineKeyboardBuilder()
     builder.button(text="💰 Установить казну", callback_data=f"db_clan_treasury_{chat_id}_{clan_name}")
     builder.button(text="👑 Назначить Лидера", callback_data=f"db_clan_leader_{chat_id}_{clan_name}")
+    builder.button(text="👥 Управление составом", callback_data=f"db_clan_members_list_{chat_id}_{clan_name}")
     builder.button(text="💥 Распустить клан", callback_data=f"db_clan_del_ask_{chat_id}_{clan_name}")
     builder.button(text="⬅️ К списку кланов", callback_data=f"db_clans_list_{chat_id}")
     builder.adjust(1)
@@ -2784,7 +2827,7 @@ async def cb_clan_view(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    clan_name = parts[4]
+    clan_name = "_".join(parts[4:])
     
     await show_clan_detail_screen(callback, state, chat_id, clan_name)
     await callback.answer()
@@ -2795,7 +2838,7 @@ async def cb_clan_treasury_prompt(callback: types.CallbackQuery, state: FSMConte
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    clan_name = parts[4]
+    clan_name = "_".join(parts[4:])
     
     await state.set_state(AdminPanelState.waiting_for_clan_treasury)
     await state.update_data(chat_id=chat_id, clan_name=clan_name, menu_message_id=callback.message.message_id)
@@ -2844,7 +2887,7 @@ async def cb_clan_leader_prompt(callback: types.CallbackQuery, state: FSMContext
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    clan_name = parts[4]
+    clan_name = "_".join(parts[4:])
     
     await state.set_state(AdminPanelState.waiting_for_clan_leader)
     await state.update_data(chat_id=chat_id, clan_name=clan_name, menu_message_id=callback.message.message_id)
@@ -2869,13 +2912,11 @@ async def process_clan_leader_input(message: types.Message, state: FSMContext):
     
     identifier = message.text.strip()
     
-    target_user = await get_user_by_username_or_id(chat_id, identifier)
-    if not target_user:
+    target_id, target_data = await get_user_by_username_or_id(chat_id, identifier)
+    if not target_id:
         await message.answer("❌ Пользователь не найден в кэше/базе этого чата. Попробуйте еще раз:")
         return
         
-    target_id = target_user['id']
-    
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -2900,7 +2941,7 @@ async def process_clan_leader_input(message: types.Message, state: FSMContext):
     await update_user_field(chat_id, target_id, 'clan', clan_name)
     await flush_user_cache_immediately(chat_id, target_id)
     
-    await message.answer(f"✅ Лидером клана <b>{escape_html(clan_name)}</b> назначен {target_user.get('full_name')} ({target_id}).")
+    await message.answer(f"✅ Лидером клана <b>{escape_html(clan_name)}</b> назначен {target_data.get('full_name', 'Игрок')} ({target_id}).")
     
     await state.clear()
     await show_clan_detail_screen(message, state, chat_id, clan_name)
@@ -2915,7 +2956,7 @@ async def cb_clan_del_ask_screen(callback: types.CallbackQuery, state: FSMContex
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[4])
-    clan_name = parts[5]
+    clan_name = "_".join(parts[5:])
     
     text = (
         f"🚨 <b>ТРЕБУЕТСЯ ПОДТВЕРЖДЕНИЕ!</b> 🚨\n\n"
@@ -2938,7 +2979,7 @@ async def cb_perform_clan_delete(callback: types.CallbackQuery, state: FSMContex
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[4])
-    clan_name = parts[5]
+    clan_name = "_".join(parts[5:])
     
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
@@ -2956,6 +2997,227 @@ async def cb_perform_clan_delete(callback: types.CallbackQuery, state: FSMContex
         await callback.answer("Клан не найден.")
         
     await cb_clans_list(callback, state)
+
+
+# ===================== РАЗДЕЛ: УПРАВЛЕНИЕ СОСТАВОМ КЛАНА =====================
+
+@router.callback_query(F.data.startswith("db_clan_members_list_"))
+async def cb_clan_members_list(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[4])
+    clan_name = "_".join(parts[5:])
+    
+    db = get_db()
+    clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
+    doc = await clan_ref.get()
+    if not doc.exists:
+        return await callback.answer("Клан не найден.", show_alert=True)
+        
+    clan_data = doc.to_dict()
+    members = clan_data.get('members', [])
+    leader_id = clan_data.get('leader_id')
+    deputy_ids = clan_data.get('deputy_ids', [])
+    
+    text = f"👥 <b>Состав клана {escape_html(clan_name)}</b>\n\nВыберите участника для управления:"
+    builder = InlineKeyboardBuilder()
+    
+    for m_id in members:
+        try:
+            m_data = await get_user_data(chat_id, m_id)
+            m_name = m_data.get('full_name', f"ID: {m_id}")
+        except Exception:
+            m_name = f"ID: {m_id}"
+            
+        role = ""
+        if m_id == leader_id:
+            role = "👑"
+        elif m_id in deputy_ids:
+            role = "⭐"
+        else:
+            role = "👤"
+            
+        builder.button(text=f"{role} {m_name}", callback_data=f"db_clan_member_{chat_id}_{m_id}_{clan_name}")
+        
+    builder.button(text="⬅️ Назад к деталям клана", callback_data=f"db_clan_view_{chat_id}_{clan_name}")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("db_clan_member_"))
+async def cb_clan_member_view(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    member_id = int(parts[4])
+    clan_name = "_".join(parts[5:])
+    
+    db = get_db()
+    clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
+    doc = await clan_ref.get()
+    if not doc.exists:
+        return await callback.answer("Клан не найден.", show_alert=True)
+        
+    clan_data = doc.to_dict()
+    leader_id = clan_data.get('leader_id')
+    deputies = clan_data.get('deputy_ids', [])
+    
+    try:
+        m_data = await get_user_data(chat_id, member_id)
+        m_name = m_data.get('full_name', f"ID: {member_id}")
+    except Exception:
+        m_name = f"ID: {member_id}"
+        
+    if member_id == leader_id:
+        role_desc = "👑 Лидер (Нельзя исключить / сменить роль)"
+    elif member_id in deputies:
+        role_desc = "⭐ Заместитель"
+    else:
+        role_desc = "👤 Участник"
+        
+    text = (
+        f"👤 <b>Управление участником клана</b>\n\n"
+        f"Клан: <b>{escape_html(clan_name)}</b>\n"
+        f"Игрок: <b>{escape_html(m_name)}</b> (ID: <code>{member_id}</code>)\n"
+        f"Текущая роль: <b>{role_desc}</b>"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    
+    if member_id != leader_id:
+        if member_id in deputies:
+            builder.button(text="👤 Сделать Участником", callback_data=f"db_clan_demote_{chat_id}_{member_id}_{clan_name}")
+        else:
+            builder.button(text="⭐ Сделать Заместителем", callback_data=f"db_clan_promote_{chat_id}_{member_id}_{clan_name}")
+            
+        builder.button(text="👑 Сделать Лидером", callback_data=f"db_clan_leadtransfer_{chat_id}_{member_id}_{clan_name}")
+        builder.button(text="👞 Исключить из клана", callback_data=f"db_clan_kick_{chat_id}_{member_id}_{clan_name}")
+        
+    builder.button(text="⬅️ К списку участников", callback_data=f"db_clan_members_list_{chat_id}_{clan_name}")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("db_clan_promote_"))
+async def cb_clan_promote(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    member_id = int(parts[4])
+    clan_name = "_".join(parts[5:])
+    
+    db = get_db()
+    clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
+    doc = await clan_ref.get()
+    if not doc.exists:
+        return await callback.answer("Клан не найден.")
+        
+    clan_data = doc.to_dict()
+    deputies = list(clan_data.get('deputy_ids', []))
+    if member_id not in deputies:
+        deputies.append(member_id)
+        await clan_ref.update({'deputy_ids': deputies})
+        await callback.answer("Участник назначен Заместителем!", show_alert=True)
+        
+    await cb_clan_member_view(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_clan_demote_"))
+async def cb_clan_demote(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    member_id = int(parts[4])
+    clan_name = "_".join(parts[5:])
+    
+    db = get_db()
+    clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
+    doc = await clan_ref.get()
+    if not doc.exists:
+        return await callback.answer("Клан не найден.")
+        
+    clan_data = doc.to_dict()
+    deputies = list(clan_data.get('deputy_ids', []))
+    if member_id in deputies:
+        deputies.remove(member_id)
+        await clan_ref.update({'deputy_ids': deputies})
+        await callback.answer("Заместитель разжалован до участника!", show_alert=True)
+        
+    await cb_clan_member_view(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_clan_kick_"))
+async def cb_clan_kick(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    member_id = int(parts[4])
+    clan_name = "_".join(parts[5:])
+    
+    db = get_db()
+    clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
+    doc = await clan_ref.get()
+    if not doc.exists:
+        return await callback.answer("Клан не найден.")
+        
+    clan_data = doc.to_dict()
+    members = list(clan_data.get('members', []))
+    deputies = list(clan_data.get('deputy_ids', []))
+    
+    if member_id in members:
+        members.remove(member_id)
+    if member_id in deputies:
+        deputies.remove(member_id)
+        
+    await clan_ref.update({
+        'members': members,
+        'deputy_ids': deputies
+    })
+    
+    await update_user_field(chat_id, member_id, 'clan', None)
+    await flush_user_cache_immediately(chat_id, member_id)
+    
+    await callback.answer("Игрок успешно исключен из клана!", show_alert=True)
+    
+    # После кика возвращаем к списку участников
+    callback.data = f"db_clan_members_list_{chat_id}_{clan_name}"
+    await cb_clan_members_list(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_clan_leadtransfer_"))
+async def cb_clan_leadtransfer(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    member_id = int(parts[4])
+    clan_name = "_".join(parts[5:])
+    
+    db = get_db()
+    clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
+    doc = await clan_ref.get()
+    if not doc.exists:
+        return await callback.answer("Клан не найден.")
+        
+    clan_data = doc.to_dict()
+    deputies = list(clan_data.get('deputy_ids', []))
+    
+    if member_id in deputies:
+        deputies.remove(member_id)
+        
+    await clan_ref.update({
+        'leader_id': member_id,
+        'deputy_ids': deputies
+    })
+    
+    await update_user_field(chat_id, member_id, 'clan', clan_name)
+    await flush_user_cache_immediately(chat_id, member_id)
+    
+    await callback.answer("Лидерство успешно передано!", show_alert=True)
+    await cb_clan_member_view(callback, state)
 
 
 # ===================== РАЗДЕЛ: УПРАВЛЕНИЕ ПРОМОКОДАМИ =====================
@@ -2998,7 +3260,7 @@ async def cb_promo_del(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    code = parts[4]
+    code = "_".join(parts[4:])
     
     db = get_db()
     await db.collection('bot_settings').document('promocodes').collection('active').document(code).delete()
@@ -3113,18 +3375,7 @@ async def process_promo_max_uses_input(message: types.Message, state: FSMContext
     
     await state.clear()
     
-    # Имитируем callback для возврата
-    bot = message.bot
-    class MockCallback:
-        def __init__(self):
-            self.message = message
-            self.bot = bot
-            self.data = f"db_promos_list_{chat_id}"
-            
-        async def answer(self):
-            pass
-            
-    await cb_promos_list(MockCallback(), state)
+    await cb_promos_list(MockCallback(message, state_data.get("menu_message_id"), f"db_promos_list_{chat_id}"), state)
     try:
         await message.delete()
     except Exception:

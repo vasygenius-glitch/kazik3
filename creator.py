@@ -532,14 +532,14 @@ async def cmd_setchance(message: types.Message):
     if len(args) < 3:
         await message.answer(
             "Использование: <code>/setchance [игра] [процент]</code>\n"
-            "Доступные игры: <code>slots</code>, <code>cups</code>, <code>roulette</code>\n"
+            "Доступные игры: <code>slots</code>, <code>cups</code>, <code>roulette</code>, <code>blackjack</code>, <code>baccarat</code>, <code>craps</code>, <code>poker</code>, <code>crash</code>\n"
             "Процент: 0-100 (установите -1 для честного рандома).\n"
             "Пример: <code>/setchance slots 50</code>"
         )
         return
 
     game_name = args[1].lower()
-    valid_games =['slots', 'cups', 'roulette']
+    valid_games = ['slots', 'cups', 'roulette', 'blackjack', 'baccarat', 'craps', 'poker', 'crash']
 
     if game_name not in valid_games:
         await message.answer(f"Неизвестная игра. Доступные: {', '.join(valid_games)}")

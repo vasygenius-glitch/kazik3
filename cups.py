@@ -338,15 +338,10 @@ async def _resolve_win_chance(chat_id: int, user_id: int, difficulty: Difficulty
     """
     base = difficulty.base_win_chance
     try:
-        modifier = await get_game_chance(chat_id, user_id, "cups")
-        if modifier is None:
+        modifier = await get_game_chance("cups")
+        if modifier == -1:
             return base
-        # ожидается либо int/float процент, либо мультипликатор
-        if isinstance(modifier, (int, float)):
-            if 0 < modifier <= 2:
-                return max(1, min(95, int(round(base * modifier))))
-            if 1 < modifier <= 100:
-                return max(1, min(95, int(round(modifier))))
+        return max(1, min(95, modifier))
     except Exception as e:
         logger.debug(f"[cups] get_game_chance fallback: {e}")
     return base

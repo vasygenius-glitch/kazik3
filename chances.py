@@ -22,6 +22,10 @@ async def get_game_chance(game_name: str) -> int:
     _chances_cache_time = time.time()
     return _chances_cache.get(game_name, -1) # -1 означает честный рандом
 
+def get_game_chance_sync(game_name: str) -> int:
+    global _chances_cache
+    return _chances_cache.get(game_name, -1)
+
 async def set_game_chance(game_name: str, percentage: int):
     global _chances_cache
     _chances_cache[game_name] = percentage

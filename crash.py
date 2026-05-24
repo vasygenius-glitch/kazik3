@@ -36,6 +36,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from user_manager import get_user_data, update_user_balance, invalidate_user_cache
 from escape import escape_html
 from utils import schedule_delete
+from chances import get_game_chance_sync
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -1000,7 +1001,9 @@ history_manager = HistoryManager()
 #                              HELPERS
 # ═════════════════════════════════════════════════════════════════════
 def generate_crash_point() -> float:
-    if _rng.randint(1, 100) <= INSTANT_CRASH_CHANCE:
+    chance = get_game_chance_sync('crash')
+    inst_chance = INSTANT_CRASH_CHANCE if chance == -1 else (100 - chance)
+    if _rng.randint(1, 100) <= inst_chance:
         return 1.00
     u = _rng.random()
     if u < 0.5:

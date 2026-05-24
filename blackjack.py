@@ -11,6 +11,7 @@ from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
+from chances import get_game_chance
 
 router = Router()
 
@@ -177,10 +178,12 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
     secure_random = secrets.SystemRandom()
 
+    chance = await get_game_chance('blackjack')
+    target_chance = 35 if chance == -1 else chance
     if is_creator:
         target_win = True
     else:
-        target_win = secure_random.randint(1, 100) <= 35
+        target_win = secure_random.randint(1, 100) <= target_chance
 
     # Pre-calculate the outcome using a while loop to match the target_win condition
     # Keep only the first (face-up) card and reroll the rest

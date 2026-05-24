@@ -3,6 +3,8 @@ import secrets
 import logging
 from typing import Optional
 from collections import Counter
+from config import CREATOR_ID
+from chances import get_game_chance
 
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -1331,9 +1333,36 @@ async def process_poker_draw(callback: types.CallbackQuery, state: FSMContext):
 
     await play_change_cards_animation(callback.message, held_indices)
 
-    final_cards = redraw_cards(game['cards'], held_indices)
-    combination = evaluate_hand(final_cards)
-    multiplier = get_payout_multiplier(combination)
+    chance = await get_game_chance('poker')
+    target_chance = -1 if chance == -1 else chance
+    
+    is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+    
+    if is_creator:
+        target_win = True
+    elif target_chance != -1:
+        import secrets
+        secure_random = secrets.SystemRandom()
+        target_win = (secure_random.randint(1, 100) <= target_chance)
+    else:
+        target_win = None
+
+    if target_win is not None:
+        attempts = 0
+        while attempts < 100:
+            final_cards = redraw_cards(game['cards'], held_indices)
+            combination = evaluate_hand(final_cards)
+            multiplier = get_payout_multiplier(combination)
+            if target_win and multiplier > 0:
+                break
+            elif not target_win and multiplier == 0:
+                break
+            attempts += 1
+    else:
+        final_cards = redraw_cards(game['cards'], held_indices)
+        combination = evaluate_hand(final_cards)
+        multiplier = get_payout_multiplier(combination)
+
     highlight = get_winning_card_indices(final_cards, combination)
 
     win_amount = 0
