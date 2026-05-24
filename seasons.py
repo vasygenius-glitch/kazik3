@@ -66,6 +66,8 @@ async def get_season_config():
     if cached: return cached
     
     db = get_db()
+    if db is None:
+        return {"active": False}
     doc = await db.collection('bot_settings').document('season').get()
     if doc.exists:
         data = doc.to_dict()

@@ -11,6 +11,8 @@ async def get_game_chance(game_name: str) -> int:
         return _chances_cache.get(game_name, -1)
 
     db = get_db()
+    if db is None:
+        return _chances_cache.get(game_name, -1)
     ref = db.collection('bot_settings').document('chances')
     doc = await ref.get()
 
@@ -31,6 +33,9 @@ async def set_game_chance(game_name: str, percentage: int):
     _chances_cache[game_name] = percentage
 
     db = get_db()
+    if db is None:
+        return
     ref = db.collection('bot_settings').document('chances')
     from utils import fire_and_forget
     fire_and_forget(ref.set({game_name: percentage}, merge=True))
+

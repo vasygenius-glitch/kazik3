@@ -100,6 +100,8 @@ async def process_slots_confirm(callback: types.CallbackQuery):
     
         chance = await get_game_chance('slots')
         target_chance = 35 if chance == -1 else chance
+        is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
+        is_forced_win = False
         if is_creator:
             is_forced_win = True
         elif secure_random.randint(1, 100) <= target_chance:

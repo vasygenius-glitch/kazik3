@@ -2727,6 +2727,7 @@ async def cb_pmute_act(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("db_clans_list_"))
 async def cb_clans_list(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
+    await state.clear()
     chat_id = int(callback.data.split("_")[3])
     
     db = get_db()
@@ -2763,7 +2764,7 @@ async def show_clan_detail_screen(callback_or_message, state: FSMContext, chat_i
         builder = InlineKeyboardBuilder()
         builder.button(text="⬅️ Назад", callback_data=f"db_clans_list_{chat_id}")
         
-        if isinstance(callback_or_message, types.CallbackQuery):
+        if isinstance(callback_or_message, types.CallbackQuery) or hasattr(callback_or_message, 'message'):
             await callback_or_message.message.edit_text(text, reply_markup=builder.as_markup())
         else:
             await callback_or_message.answer(text, reply_markup=builder.as_markup())
@@ -2816,15 +2817,26 @@ async def show_clan_detail_screen(callback_or_message, state: FSMContext, chat_i
     builder.button(text="⬅️ К списку кланов", callback_data=f"db_clans_list_{chat_id}")
     builder.adjust(1)
     
-    if isinstance(callback_or_message, types.CallbackQuery):
+    if isinstance(callback_or_message, types.CallbackQuery) or hasattr(callback_or_message, 'message'):
         await callback_or_message.message.edit_text(text, reply_markup=builder.as_markup())
     else:
-        await callback_or_message.answer(text, reply_markup=builder.as_markup())
+        bot = callback_or_message.bot if hasattr(callback_or_message, 'bot') else callback_or_message.message.bot
+        state_data = await state.get_data()
+        msg_id = state_data.get("menu_message_id")
+        if msg_id:
+            try:
+                await bot.edit_message_text(chat_id=callback_or_message.chat.id, message_id=msg_id, text=text, reply_markup=builder.as_markup())
+                return
+            except Exception:
+                pass
+        msg = await callback_or_message.answer(text, reply_markup=builder.as_markup())
+        await state.update_data(menu_message_id=msg.message_id)
 
 
 @router.callback_query(F.data.startswith("db_clan_view_"))
 async def cb_clan_view(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
+    await state.clear()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     clan_name = "_".join(parts[4:])
@@ -2860,6 +2872,7 @@ async def process_clan_treasury_input(message: types.Message, state: FSMContext)
     state_data = await state.get_data()
     chat_id = state_data["chat_id"]
     clan_name = state_data["clan_name"]
+    menu_message_id = state_data.get("menu_message_id")
     
     try:
         val = int(message.text.replace(" ", "").replace(",", ""))
@@ -2875,7 +2888,9 @@ async def process_clan_treasury_input(message: types.Message, state: FSMContext)
     await message.answer(f"✅ Казна клана <b>{escape_html(clan_name)}</b> успешно изменена на {val:,} сыроежек.")
     
     await state.clear()
-    await show_clan_detail_screen(message, state, chat_id, clan_name)
+    
+    mock_cb = MockCallback(message, menu_message_id, f"db_clan_view_{chat_id}_{clan_name}")
+    await show_clan_detail_screen(mock_cb, state, chat_id, clan_name)
     try:
         await message.delete()
     except Exception:
@@ -2909,6 +2924,7 @@ async def process_clan_leader_input(message: types.Message, state: FSMContext):
     state_data = await state.get_data()
     chat_id = state_data["chat_id"]
     clan_name = state_data["clan_name"]
+    menu_message_id = state_data.get("menu_message_id")
     
     identifier = message.text.strip()
     
@@ -2944,7 +2960,9 @@ async def process_clan_leader_input(message: types.Message, state: FSMContext):
     await message.answer(f"✅ Лидером клана <b>{escape_html(clan_name)}</b> назначен {target_data.get('full_name', 'Игрок')} ({target_id}).")
     
     await state.clear()
-    await show_clan_detail_screen(message, state, chat_id, clan_name)
+    
+    mock_cb = MockCallback(message, menu_message_id, f"db_clan_view_{chat_id}_{clan_name}")
+    await show_clan_detail_screen(mock_cb, state, chat_id, clan_name)
     try:
         await message.delete()
     except Exception:
@@ -3004,6 +3022,7 @@ async def cb_perform_clan_delete(callback: types.CallbackQuery, state: FSMContex
 @router.callback_query(F.data.startswith("db_clan_members_list_"))
 async def cb_clan_members_list(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
+    await state.clear()
     parts = callback.data.split("_")
     chat_id = int(parts[4])
     clan_name = "_".join(parts[5:])
@@ -3049,6 +3068,7 @@ async def cb_clan_members_list(callback: types.CallbackQuery, state: FSMContext)
 @router.callback_query(F.data.startswith("db_clan_member_"))
 async def cb_clan_member_view(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
+    await state.clear()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     member_id = int(parts[4])
