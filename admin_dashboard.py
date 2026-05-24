@@ -2,6 +2,7 @@ import time
 import random
 import traceback
 import asyncio
+from typing import Optional
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -2724,6 +2725,23 @@ async def cb_pmute_act(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ===================== РАЗДЕЛ: УПРАВЛЕНИЕ КЛАНАМИ =====================
+# ===================== РАЗДЕЛ: УПРАВЛЕНИЕ КЛАНАМИ =====================
+
+import hashlib
+
+def get_clan_hash(clan_name: str) -> str:
+    return hashlib.md5(clan_name.encode('utf-8')).hexdigest()[:16]
+
+async def get_clan_name_by_hash(chat_id: int, clan_hash: str) -> Optional[str]:
+    db = get_db()
+    clans_ref = db.collection('chats').document(str(chat_id)).collection('clans')
+    clans_docs = await clans_ref.get()
+    for doc in clans_docs:
+        c_name = doc.id
+        if get_clan_hash(c_name) == clan_hash:
+            return c_name
+    return None
+
 @router.callback_query(F.data.startswith("db_clans_list_"))
 async def cb_clans_list(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
@@ -2742,7 +2760,8 @@ async def cb_clans_list(callback: types.CallbackQuery, state: FSMContext):
         c_name = doc.id
         c_data = doc.to_dict()
         treasury = c_data.get('treasury', 0)
-        builder.button(text=f"🛡 {c_name} ({treasury:,} сыр)", callback_data=f"db_clan_view_{chat_id}_{c_name}")
+        c_hash = get_clan_hash(c_name)
+        builder.button(text=f"🛡 {c_name} ({treasury:,} сыр)", callback_data=f"db_clan_view_{chat_id}_{c_hash}")
         has_clans = True
         
     if not has_clans:
@@ -2810,10 +2829,11 @@ async def show_clan_detail_screen(callback_or_message, state: FSMContext, chat_i
     )
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="💰 Установить казну", callback_data=f"db_clan_treasury_{chat_id}_{clan_name}")
-    builder.button(text="👑 Назначить Лидера", callback_data=f"db_clan_leader_{chat_id}_{clan_name}")
-    builder.button(text="👥 Управление составом", callback_data=f"db_clan_members_list_{chat_id}_{clan_name}")
-    builder.button(text="💥 Распустить клан", callback_data=f"db_clan_del_ask_{chat_id}_{clan_name}")
+    c_hash = get_clan_hash(clan_name)
+    builder.button(text="💰 Установить казну", callback_data=f"db_clan_treasury_{chat_id}_{c_hash}")
+    builder.button(text="👑 Назначить Лидера", callback_data=f"db_clan_leader_{chat_id}_{c_hash}")
+    builder.button(text="👥 Управление составом", callback_data=f"db_clan_mlist_{chat_id}_{c_hash}")
+    builder.button(text="💥 Распустить клан", callback_data=f"db_clan_dask_{chat_id}_{c_hash}")
     builder.button(text="⬅️ К списку кланов", callback_data=f"db_clans_list_{chat_id}")
     builder.adjust(1)
     
@@ -2839,8 +2859,12 @@ async def cb_clan_view(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    clan_name = "_".join(parts[4:])
+    clan_hash = parts[4]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     await show_clan_detail_screen(callback, state, chat_id, clan_name)
     await callback.answer()
 
@@ -2850,13 +2874,17 @@ async def cb_clan_treasury_prompt(callback: types.CallbackQuery, state: FSMConte
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    clan_name = "_".join(parts[4:])
+    clan_hash = parts[4]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     await state.set_state(AdminPanelState.waiting_for_clan_treasury)
     await state.update_data(chat_id=chat_id, clan_name=clan_name, menu_message_id=callback.message.message_id)
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{clan_name}")
+    builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{clan_hash}")
     
     await callback.message.edit_text(
         f"💰 <b>Изменение казны клана: {escape_html(clan_name)}</b>\n\n"
@@ -2889,7 +2917,8 @@ async def process_clan_treasury_input(message: types.Message, state: FSMContext)
     
     await state.clear()
     
-    mock_cb = MockCallback(message, menu_message_id, f"db_clan_view_{chat_id}_{clan_name}")
+    c_hash = get_clan_hash(clan_name)
+    mock_cb = MockCallback(message, menu_message_id, f"db_clan_view_{chat_id}_{c_hash}")
     await show_clan_detail_screen(mock_cb, state, chat_id, clan_name)
     try:
         await message.delete()
@@ -2902,13 +2931,17 @@ async def cb_clan_leader_prompt(callback: types.CallbackQuery, state: FSMContext
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
-    clan_name = "_".join(parts[4:])
+    clan_hash = parts[4]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     await state.set_state(AdminPanelState.waiting_for_clan_leader)
     await state.update_data(chat_id=chat_id, clan_name=clan_name, menu_message_id=callback.message.message_id)
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{clan_name}")
+    builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{clan_hash}")
     
     await callback.message.edit_text(
         f"👑 <b>Смена лидера клана: {escape_html(clan_name)}</b>\n\n"
@@ -2961,7 +2994,8 @@ async def process_clan_leader_input(message: types.Message, state: FSMContext):
     
     await state.clear()
     
-    mock_cb = MockCallback(message, menu_message_id, f"db_clan_view_{chat_id}_{clan_name}")
+    c_hash = get_clan_hash(clan_name)
+    mock_cb = MockCallback(message, menu_message_id, f"db_clan_view_{chat_id}_{c_hash}")
     await show_clan_detail_screen(mock_cb, state, chat_id, clan_name)
     try:
         await message.delete()
@@ -2969,13 +3003,17 @@ async def process_clan_leader_input(message: types.Message, state: FSMContext):
         pass
 
 
-@router.callback_query(F.data.startswith("db_clan_del_ask_"))
+@router.callback_query(F.data.startswith("db_clan_dask_"))
 async def cb_clan_del_ask_screen(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    chat_id = int(parts[3])
+    clan_hash = parts[4]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     text = (
         f"🚨 <b>ТРЕБУЕТСЯ ПОДТВЕРЖДЕНИЕ!</b> 🚨\n\n"
         f"Вы собираетесь распустить клан <b>{escape_html(clan_name)}</b>.\n"
@@ -2984,21 +3022,25 @@ async def cb_clan_del_ask_screen(callback: types.CallbackQuery, state: FSMContex
     )
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="💥 Да, распустить клан", callback_data=f"db_clan_del_confirm_{chat_id}_{clan_name}")
-    builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{clan_name}")
+    builder.button(text="💥 Да, распустить клан", callback_data=f"db_clan_dconf_{chat_id}_{clan_hash}")
+    builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{clan_hash}")
     builder.adjust(1)
     
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("db_clan_del_confirm_"))
+@router.callback_query(F.data.startswith("db_clan_dconf_"))
 async def cb_perform_clan_delete(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    chat_id = int(parts[3])
+    clan_hash = parts[4]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -3019,14 +3061,18 @@ async def cb_perform_clan_delete(callback: types.CallbackQuery, state: FSMContex
 
 # ===================== РАЗДЕЛ: УПРАВЛЕНИЕ СОСТАВОМ КЛАНА =====================
 
-@router.callback_query(F.data.startswith("db_clan_members_list_"))
+@router.callback_query(F.data.startswith("db_clan_mlist_"))
 async def cb_clan_members_list(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     await state.clear()
     parts = callback.data.split("_")
-    chat_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    chat_id = int(parts[3])
+    clan_hash = parts[4]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -3056,24 +3102,28 @@ async def cb_clan_members_list(callback: types.CallbackQuery, state: FSMContext)
         else:
             role = "👤"
             
-        builder.button(text=f"{role} {m_name}", callback_data=f"db_clan_member_{chat_id}_{m_id}_{clan_name}")
+        builder.button(text=f"{role} {m_name}", callback_data=f"db_clan_mem_{chat_id}_{m_id}_{clan_hash}")
         
-    builder.button(text="⬅️ Назад к деталям клана", callback_data=f"db_clan_view_{chat_id}_{clan_name}")
+    builder.button(text="⬅️ Назад к деталям клана", callback_data=f"db_clan_view_{chat_id}_{clan_hash}")
     builder.adjust(1)
     
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("db_clan_member_"))
+@router.callback_query(F.data.startswith("db_clan_mem_"))
 async def cb_clan_member_view(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     await state.clear()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     member_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    clan_hash = parts[5]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.", show_alert=True)
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -3108,28 +3158,32 @@ async def cb_clan_member_view(callback: types.CallbackQuery, state: FSMContext):
     
     if member_id != leader_id:
         if member_id in deputies:
-            builder.button(text="👤 Сделать Участником", callback_data=f"db_clan_demote_{chat_id}_{member_id}_{clan_name}")
+            builder.button(text="👤 Сделать Участником", callback_data=f"db_clan_dem_{chat_id}_{member_id}_{clan_hash}")
         else:
-            builder.button(text="⭐ Сделать Заместителем", callback_data=f"db_clan_promote_{chat_id}_{member_id}_{clan_name}")
+            builder.button(text="⭐ Сделать Заместителем", callback_data=f"db_clan_prom_{chat_id}_{member_id}_{clan_hash}")
             
-        builder.button(text="👑 Сделать Лидером", callback_data=f"db_clan_leadtransfer_{chat_id}_{member_id}_{clan_name}")
-        builder.button(text="👞 Исключить из клана", callback_data=f"db_clan_kick_{chat_id}_{member_id}_{clan_name}")
+        builder.button(text="👑 Сделать Лидером", callback_data=f"db_clan_ltr_{chat_id}_{member_id}_{clan_hash}")
+        builder.button(text="👞 Исключить из клана", callback_data=f"db_clan_kck_{chat_id}_{member_id}_{clan_hash}")
         
-    builder.button(text="⬅️ К списку участников", callback_data=f"db_clan_members_list_{chat_id}_{clan_name}")
+    builder.button(text="⬅️ К списку участников", callback_data=f"db_clan_mlist_{chat_id}_{clan_hash}")
     builder.adjust(1)
     
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("db_clan_promote_"))
+@router.callback_query(F.data.startswith("db_clan_prom_"))
 async def cb_clan_promote(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     member_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    clan_hash = parts[5]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.")
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -3146,14 +3200,18 @@ async def cb_clan_promote(callback: types.CallbackQuery, state: FSMContext):
     await cb_clan_member_view(callback, state)
 
 
-@router.callback_query(F.data.startswith("db_clan_demote_"))
+@router.callback_query(F.data.startswith("db_clan_dem_"))
 async def cb_clan_demote(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     member_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    clan_hash = parts[5]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.")
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -3170,14 +3228,18 @@ async def cb_clan_demote(callback: types.CallbackQuery, state: FSMContext):
     await cb_clan_member_view(callback, state)
 
 
-@router.callback_query(F.data.startswith("db_clan_kick_"))
+@router.callback_query(F.data.startswith("db_clan_kck_"))
 async def cb_clan_kick(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     member_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    clan_hash = parts[5]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.")
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()
@@ -3203,19 +3265,22 @@ async def cb_clan_kick(callback: types.CallbackQuery, state: FSMContext):
     
     await callback.answer("Игрок успешно исключен из клана!", show_alert=True)
     
-    # После кика возвращаем к списку участников
-    callback.data = f"db_clan_members_list_{chat_id}_{clan_name}"
+    callback.data = f"db_clan_mlist_{chat_id}_{clan_hash}"
     await cb_clan_members_list(callback, state)
 
 
-@router.callback_query(F.data.startswith("db_clan_leadtransfer_"))
+@router.callback_query(F.data.startswith("db_clan_ltr_"))
 async def cb_clan_leadtransfer(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
     chat_id = int(parts[3])
     member_id = int(parts[4])
-    clan_name = "_".join(parts[5:])
+    clan_hash = parts[5]
     
+    clan_name = await get_clan_name_by_hash(chat_id, clan_hash)
+    if not clan_name:
+        return await callback.answer("❌ Клан не найден.")
+        
     db = get_db()
     clan_ref = db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
     doc = await clan_ref.get()

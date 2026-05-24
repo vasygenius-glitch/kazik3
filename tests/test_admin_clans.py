@@ -1,5 +1,6 @@
 import pytest
 import sys
+import hashlib
 from unittest.mock import AsyncMock, patch, MagicMock
 
 # Mock external dependencies
@@ -31,36 +32,48 @@ async def test_get_game_chance_sync():
 
 @pytest.mark.asyncio
 async def test_cb_clan_view_parsing_with_underscores():
+    clan_name = "Awesome_Clan_Name"
+    clan_hash = hashlib.md5(clan_name.encode('utf-8')).hexdigest()[:16]
+    
     callback = AsyncMock()
-    callback.data = "db_clan_view_12345_Awesome_Clan_Name"
+    callback.data = f"db_clan_view_12345_{clan_hash}"
     callback.from_user.id = 999
     callback.from_user.username = 'admin_creator'
     callback.message.chat.id = 12345
     
     state = AsyncMock()
     
-    with patch("admin_dashboard.show_clan_detail_screen", new_callable=AsyncMock) as mock_show:
+    with patch("admin_dashboard.show_clan_detail_screen", new_callable=AsyncMock) as mock_show, \
+         patch("admin_dashboard.get_clan_name_by_hash", return_value="Awesome_Clan_Name") as mock_hash:
         await admin_dashboard.cb_clan_view(callback, state)
+        mock_hash.assert_called_once_with(12345, clan_hash)
         mock_show.assert_called_once_with(callback, state, 12345, "Awesome_Clan_Name")
 
 @pytest.mark.asyncio
 async def test_cb_clan_treasury_parsing_with_underscores():
+    clan_name = "My_New_Clan"
+    clan_hash = hashlib.md5(clan_name.encode('utf-8')).hexdigest()[:16]
+    
     callback = AsyncMock()
-    callback.data = "db_clan_treasury_12345_My_New_Clan"
+    callback.data = f"db_clan_treasury_12345_{clan_hash}"
     callback.from_user.id = 999
     callback.from_user.username = 'admin_creator'
     
     state = AsyncMock()
     
-    with patch("admin_dashboard.AdminPanelState.waiting_for_clan_treasury", new=MagicMock()) as mock_state:
+    with patch("admin_dashboard.AdminPanelState.waiting_for_clan_treasury", new=MagicMock()) as mock_state, \
+         patch("admin_dashboard.get_clan_name_by_hash", return_value="My_New_Clan") as mock_hash:
         await admin_dashboard.cb_clan_treasury_prompt(callback, state)
         state.set_state.assert_called_once()
         state.update_data.assert_called_once_with(chat_id=12345, clan_name="My_New_Clan", menu_message_id=callback.message.message_id)
 
 @pytest.mark.asyncio
 async def test_cb_clan_promote_demote():
+    clan_name = "Clan_A"
+    clan_hash = hashlib.md5(clan_name.encode('utf-8')).hexdigest()[:16]
+    
     callback = AsyncMock()
-    callback.data = "db_clan_promote_12345_77777_Clan_A"
+    callback.data = f"db_clan_prom_12345_77777_{clan_hash}"
     callback.from_user.id = 999
     callback.from_user.username = 'admin_creator'
     
@@ -86,16 +99,21 @@ async def test_cb_clan_promote_demote():
     mock_db.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_ref
     
     with patch("admin_dashboard.get_db", return_value=mock_db), \
+         patch("admin_dashboard.get_clan_name_by_hash", return_value="Clan_A") as mock_hash, \
          patch("admin_dashboard.cb_clan_member_view", new_callable=AsyncMock) as mock_view:
         
         await admin_dashboard.cb_clan_promote(callback, state)
+        mock_hash.assert_called_once_with(12345, clan_hash)
         mock_ref.update.assert_called_once_with({'deputy_ids': [77777]})
         mock_view.assert_called_once_with(callback, state)
 
 @pytest.mark.asyncio
 async def test_cb_clan_kick():
+    clan_name = "Clan_A"
+    clan_hash = hashlib.md5(clan_name.encode('utf-8')).hexdigest()[:16]
+    
     callback = AsyncMock()
-    callback.data = "db_clan_kick_12345_77777_Clan_A"
+    callback.data = f"db_clan_kck_12345_77777_{clan_hash}"
     callback.from_user.id = 999
     callback.from_user.username = 'admin_creator'
     
@@ -120,11 +138,13 @@ async def test_cb_clan_kick():
     mock_db.collection.return_value.document.return_value.collection.return_value.document.return_value = mock_ref
     
     with patch("admin_dashboard.get_db", return_value=mock_db), \
+         patch("admin_dashboard.get_clan_name_by_hash", return_value="Clan_A") as mock_hash, \
          patch("admin_dashboard.update_user_field", new_callable=AsyncMock) as mock_update_field, \
          patch("admin_dashboard.flush_user_cache_immediately", new_callable=AsyncMock) as mock_flush, \
          patch("admin_dashboard.cb_clan_members_list", new_callable=AsyncMock) as mock_list:
         
         await admin_dashboard.cb_clan_kick(callback, state)
+        mock_hash.assert_called_once_with(12345, clan_hash)
         mock_ref.update.assert_called_once_with({'members': [999], 'deputy_ids': []})
         mock_update_field.assert_called_once_with(12345, 77777, 'clan', None)
         mock_flush.assert_called_once_with(12345, 77777)
