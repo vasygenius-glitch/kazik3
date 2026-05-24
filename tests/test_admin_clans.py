@@ -184,9 +184,21 @@ async def test_parse_clan_callback_compatibility():
         assert resolved_name == "My_Special_Clan"
         assert member_id is None
         
+        # Test old format with spaces
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_view_12345_DICKторы Тайний Баний")
+        assert chat_id == 12345
+        assert resolved_name == "DICKторы Тайний Баний"
+        assert member_id is None
+        
         chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_members_list_12345_My_Special_Clan")
         assert chat_id == 12345
         assert resolved_name == "My_Special_Clan"
+        assert member_id is None
+        
+        # Test old format with spaces
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_members_list_12345_DICKторы Тайний Баний")
+        assert chat_id == 12345
+        assert resolved_name == "DICKторы Тайний Баний"
         assert member_id is None
 
         chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_member_12345_77777_My_Special_Clan")
@@ -194,8 +206,15 @@ async def test_parse_clan_callback_compatibility():
         assert resolved_name == "My_Special_Clan"
         assert member_id == 77777
 
+        # Test old format with spaces
+        chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_member_12345_77777_DICKторы Тайний Баний")
+        assert chat_id == 12345
+        assert resolved_name == "DICKторы Тайний Баний"
+        assert member_id == 77777
+
         chat_id, resolved_name, member_id = await parse_clan_callback("db_clan_kick_12345_77777_My_Special_Clan")
         assert chat_id == 12345
         assert resolved_name == "My_Special_Clan"
         assert member_id == 77777
+
 
