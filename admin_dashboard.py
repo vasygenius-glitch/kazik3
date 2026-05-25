@@ -917,7 +917,7 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
     builder.button(text="⚠️ Варн +", callback_data=f"db_pwa_{chat_id}_{target_id}")
     builder.button(text="🧼 Варн -", callback_data=f"db_pwr_{chat_id}_{target_id}")
     builder.button(text="🩺 ЗППП", callback_data=f"db_pdiseases_menu_{chat_id}_{target_id}")
-    builder.button(text="🎒 Вещи", callback_data=f"db_pinv_menu_{chat_id}_{target_id}")
+    builder.button(text="🎒 Вещи", callback_data=f"db_pim_{chat_id}_{target_id}")
     builder.button(text="🔇 Мут", callback_data=f"db_pmute_menu_{chat_id}_{target_id}")
     builder.button(text="🐾 Питомцы", callback_data=f"db_ppet_menu_{chat_id}_{target_id}")
     builder.button(text="🎯 Навыки", callback_data=f"db_pskills_menu_{chat_id}_{target_id}")
@@ -1897,12 +1897,12 @@ async def cb_pdis_inf(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ===================== УПРАВЛЕНИЕ ИНВЕНТАРЕМ ИГРОКА =====================
-@router.callback_query(F.data.startswith("db_pinv_menu_"))
+@router.callback_query(F.data.startswith("db_pim_"))
 async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[3])
-    target_id = int(parts[4])
+    chat_id = int(parts[2])
+    target_id = int(parts[3])
     
     data = await get_user_data(chat_id, target_id)
     inventory = data.get('inventory', {})
@@ -1924,10 +1924,10 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
     )
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏢 Бизнесы", callback_data=f"db_pinv_cat_{chat_id}_{target_id}_biz")
-    builder.button(text="🚗 Машины", callback_data=f"db_pinv_cat_{chat_id}_{target_id}_cars")
-    builder.button(text="🎒 Прочее", callback_data=f"db_pinv_cat_{chat_id}_{target_id}_other")
-    builder.button(text="🧹 Очистить инвентарь", callback_data=f"db_pinv_act_{chat_id}_{target_id}_clear")
+    builder.button(text="🏢 Бизнесы", callback_data=f"db_pic_{chat_id}_{target_id}_biz")
+    builder.button(text="🚗 Машины", callback_data=f"db_pic_{chat_id}_{target_id}_cars")
+    builder.button(text="🎒 Прочее", callback_data=f"db_pic_{chat_id}_{target_id}_other")
+    builder.button(text="🧹 Очистить инвентарь", callback_data=f"db_pia_{chat_id}_{target_id}_clear")
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
     builder.adjust(3, 1, 1)
     
@@ -1935,13 +1935,13 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("db_pinv_cat_"))
+@router.callback_query(F.data.startswith("db_pic_"))
 async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[3])
-    target_id = int(parts[4])
-    cat = parts[5] # 'biz', 'cars', 'other'
+    chat_id = int(parts[2])
+    target_id = int(parts[3])
+    cat = parts[4] # 'biz', 'cars', 'other'
     
     data = await get_user_data(chat_id, target_id)
     inventory = data.get('inventory', {})
@@ -1964,11 +1964,11 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
         qty = inventory.get(item_id, 0)
         item_name = item_cfg.get('name', item_id)
         
-        builder.button(text="➖", callback_data=f"db_pinv_change_{chat_id}_{target_id}_{item_id}_minus_{cat}")
+        builder.button(text="➖", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_m_{cat}")
         builder.button(text=f"{item_name} ({qty})", callback_data="db_noop")
-        builder.button(text="➕", callback_data=f"db_pinv_change_{chat_id}_{target_id}_{item_id}_plus_{cat}")
+        builder.button(text="➕", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_p_{cat}")
         
-    builder.button(text="⬅️ Назад к категориям", callback_data=f"db_pinv_menu_{chat_id}_{target_id}")
+    builder.button(text="⬅️ Назад к категориям", callback_data=f"db_pim_{chat_id}_{target_id}")
     
     grid = []
     for item_id, item_cfg in ITEMS.items():
@@ -1981,25 +1981,25 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("db_pinv_change_"))
+@router.callback_query(F.data.startswith("db_pich_"))
 async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[3])
-    target_id = int(parts[4])
-    item_id = parts[5]
-    action = parts[6] # 'plus' or 'minus'
-    cat = parts[7]
+    chat_id = int(parts[2])
+    target_id = int(parts[3])
+    item_id = parts[4]
+    action = parts[5] # 'p' or 'm'
+    cat = parts[6]
     
     data = await get_user_data(chat_id, target_id)
     inventory = dict(data.get('inventory', {}))
     
     current_qty = inventory.get(item_id, 0)
     
-    if action == "plus":
+    if action == "p":
         inventory[item_id] = current_qty + 1
         await callback.answer("➕ Количество увеличено!")
-    elif action == "minus":
+    elif action == "m":
         if current_qty <= 0:
             return await callback.answer("❌ Предмета уже 0 в инвентаре!", show_alert=True)
         elif current_qty == 1:
@@ -2009,13 +2009,13 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("➖ Количество уменьшено!")
         
     await update_user_field(chat_id, target_id, 'inventory', inventory)
-    await flush_user_cache_immediately(chat_id, target_id)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
     
     class MockCallback:
         def __init__(self):
             self.message = callback.message
             self.bot = callback.bot
-            self.data = f"db_pinv_cat_{chat_id}_{target_id}_{cat}"
+            self.data = f"db_pic_{chat_id}_{target_id}_{cat}"
         async def answer(self):
             pass
             
@@ -2027,17 +2027,17 @@ async def cb_noop(callback: types.CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("db_pinv_act_"))
+@router.callback_query(F.data.startswith("db_pia_"))
 async def cb_pinv_act(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[3])
-    target_id = int(parts[4])
-    action = parts[5]
+    chat_id = int(parts[2])
+    target_id = int(parts[3])
+    action = parts[4]
     
     if action == "clear":
         await update_user_field(chat_id, target_id, 'inventory', {})
-        await flush_user_cache_immediately(chat_id, target_id)
+        asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
         await callback.answer("✅ Инвентарь очищен!", show_alert=True)
         await cb_pinv_menu(callback, state)
 
@@ -2187,8 +2187,8 @@ async def cb_player_skills_menu(callback: types.CallbackQuery, state: FSMContext
         lvl = skills.get(sk_id, 0)
         text += f"{sk_cfg['name']}: <b>{lvl}/5</b>\n<i>{sk_cfg['desc']}</i>\n\n"
         
-        builder.button(text=f"➖ {sk_cfg['name']}", callback_data=f"db_pskills_change_{chat_id}_{target_id}_{sk_id}_minus")
-        builder.button(text=f"➕ {sk_cfg['name']}", callback_data=f"db_pskills_change_{chat_id}_{target_id}_{sk_id}_plus")
+        builder.button(text=f"➖ {sk_cfg['name']}", callback_data=f"db_psc_{chat_id}_{target_id}_{sk_id}_m")
+        builder.button(text=f"➕ {sk_cfg['name']}", callback_data=f"db_psc_{chat_id}_{target_id}_{sk_id}_p")
         
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
     builder.adjust(2, 2, 2, 1)
@@ -2197,32 +2197,32 @@ async def cb_player_skills_menu(callback: types.CallbackQuery, state: FSMContext
     await callback.answer()
 
 # Действие с навыками
-@router.callback_query(F.data.startswith("db_pskills_change_"))
+@router.callback_query(F.data.startswith("db_psc_"))
 async def cb_player_skills_change(callback: types.CallbackQuery, state: FSMContext):
     if not is_creator(callback): return await callback.answer()
     parts = callback.data.split("_")
-    chat_id = int(parts[3])
-    target_id = int(parts[4])
-    sk_id = parts[5]
-    action = parts[6] # 'plus' or 'minus'
+    chat_id = int(parts[2])
+    target_id = int(parts[3])
+    sk_id = parts[4]
+    action = parts[5] # 'p' or 'm'
     
     data = await get_user_data(chat_id, target_id)
     skills = dict(data.get('skills', {}))
     
     current_lvl = skills.get(sk_id, 0)
-    if action == "plus":
+    if action == "p":
         if current_lvl >= 5:
             return await callback.answer("❌ Навык уже прокачан до максимума (5)!", show_alert=True)
         skills[sk_id] = current_lvl + 1
         await callback.answer("✅ Уровень навыка повышен!", show_alert=True)
-    elif action == "minus":
+    elif action == "m":
         if current_lvl <= 0:
             return await callback.answer("❌ Уровень навыка уже равен 0!", show_alert=True)
         skills[sk_id] = current_lvl - 1
         await callback.answer("✅ Уровень навыка понижен!", show_alert=True)
         
     await update_user_field(chat_id, target_id, 'skills', skills)
-    await flush_user_cache_immediately(chat_id, target_id)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
     await cb_player_skills_menu(callback, state)
 
 
