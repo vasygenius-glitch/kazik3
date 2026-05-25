@@ -19,6 +19,7 @@ sys.modules['diseases'] = MagicMock()
 sys.modules['config'] = MagicMock()
 sys.modules['config'].CREATOR_ID = 999
 sys.modules['config'].CREATOR_USERNAME = 'admin_creator'
+sys.modules['config'].CREATOR_IDS = {999}
 
 import admin_dashboard
 from chances import get_game_chance_sync

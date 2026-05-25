@@ -119,9 +119,6 @@ class MockCallback:
 def is_creator(message_or_callback) -> bool:
     user = message_or_callback.from_user
     user_id = user.id
-    username = user.username
-    if username == CREATOR_USERNAME:
-        return True
     if int(user_id) in CREATOR_IDS:
         return True
     return False

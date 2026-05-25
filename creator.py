@@ -10,11 +10,6 @@ router = Router()
 
 def is_creator(message: types.Message):
     user_id = message.from_user.id
-    username = message.from_user.username
-    print(f"DEBUG: Checking creator for {username} ({user_id}). Target: {CREATOR_USERNAME} ({CREATOR_IDS})")
-    
-    if username == CREATOR_USERNAME:
-        return True
     if int(user_id) in CREATOR_IDS:
         return True
     return False
