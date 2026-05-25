@@ -10,11 +10,6 @@ router = Router()
 
 def is_creator(message: types.Message):
     user_id = message.from_user.id
-    username = message.from_user.username
-    print(f"DEBUG: Checking creator for {username} ({user_id}). Target: {CREATOR_USERNAME} ({CREATOR_IDS})")
-    
-    if username == CREATOR_USERNAME:
-        return True
     if int(user_id) in CREATOR_IDS:
         return True
     return False
@@ -321,6 +316,11 @@ async def cmd_setrole(message: types.Message):
 
     if not target_id:
         return
+
+    role_lower = role_name.lower()
+    if "создатель" in role_lower or "creator" in role_lower:
+        if target_id not in CREATOR_IDS:
+            return await message.answer("❌ Роль 'Создатель' может быть установлена только для разработчиков бота.")
 
     from user_manager import update_user_field, invalidate_user_cache
     await update_user_field(chat_id, target_id, 'custom_role', role_name)
