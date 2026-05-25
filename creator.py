@@ -3,7 +3,7 @@ from aiogram.filters import Command, or_f
 
 from db import get_db
 from user_manager import get_user_data, update_user_balance
-from config import CREATOR_ID, CREATOR_USERNAME
+from config import CREATOR_ID, CREATOR_USERNAME, CREATOR_IDS
 from escape import escape_html
 
 router = Router()
@@ -11,11 +11,11 @@ router = Router()
 def is_creator(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username
-    print(f"DEBUG: Checking creator for {username} ({user_id}). Target: {CREATOR_USERNAME} ({CREATOR_ID})")
+    print(f"DEBUG: Checking creator for {username} ({user_id}). Target: {CREATOR_USERNAME} ({CREATOR_IDS})")
     
     if username == CREATOR_USERNAME:
         return True
-    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+    if int(user_id) in CREATOR_IDS:
         return True
     return False
 

@@ -1,6 +1,6 @@
 import re
 import time
-from config import CREATOR_ID
+from config import CREATOR_ID, CREATOR_IDS
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
 from escape import escape_html
@@ -17,7 +17,7 @@ def extract_args(text: str):
     return reason
 
 def is_creator(user_id: int):
-    return int(user_id) == int(CREATOR_ID)
+    return int(user_id) in CREATOR_IDS
 
 @router.message(F.text.startswith("!!!ban"))
 async def cmd_ban_only_creator(message: types.Message, bot: Bot):

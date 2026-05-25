@@ -1,6 +1,6 @@
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command
-from config import CREATOR_ID
+from config import CREATOR_ID, CREATOR_IDS
 from user_manager import get_user_data, update_user_field
 from escape import escape_html
 from profile_bank import get_bank_info, create_or_update_bank
@@ -8,9 +8,7 @@ from profile_bank import get_bank_info, create_or_update_bank
 router = Router()
 
 def is_creator(message: types.Message):
-    if not CREATOR_ID or CREATOR_ID == 0:
-        return False
-    return int(message.from_user.id) == int(CREATOR_ID)
+    return int(message.from_user.id) in CREATOR_IDS
 
 # 1. Добавить долг банку
 @router.message(Command("add_bank_debt"))

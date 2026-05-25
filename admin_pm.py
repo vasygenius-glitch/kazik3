@@ -3,7 +3,7 @@ from aiogram.fsm.storage.base import StorageKey
 import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
-from config import CREATOR_ID
+from config import CREATOR_ID, CREATOR_IDS
 from user_manager import update_user_field, get_user_data, update_user_balance
 from escape import escape_html
 from db import get_db
@@ -14,8 +14,8 @@ router = Router()
 
 # Фильтр: только ЛС и только владелец (Creator)
 # Проверяем что CREATOR_ID задан (не 0), иначе фильтр пропустит всех
-if CREATOR_ID and CREATOR_ID != 0:
-    router.message.filter(F.chat.type == "private", F.from_user.id == CREATOR_ID)
+if CREATOR_IDS:
+    router.message.filter(F.chat.type == "private", F.from_user.id.in_(CREATOR_IDS))
 else:
     # Если CREATOR_ID не задан, блокируем весь роутер невозможным условием
     router.message.filter(F.chat.type == "private", F.from_user.id == -1)
@@ -162,7 +162,7 @@ async def creator_vip(message: types.Message):
 
 @router.message(Command("reset_game"))
 async def cmd_reset_game(message: types.Message):
-    if not CREATOR_ID or message.from_user.id != int(CREATOR_ID):
+    if not CREATOR_IDS or message.from_user.id not in CREATOR_IDS:
         return await message.answer("Эта команда доступна только Создателю.")
 
     target_id = None

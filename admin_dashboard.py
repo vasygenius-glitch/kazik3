@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from config import CREATOR_ID, CREATOR_USERNAME
+from config import CREATOR_ID, CREATOR_USERNAME, CREATOR_IDS
 from escape import escape_html
 from db import get_db
 from user_manager import (
@@ -121,7 +121,7 @@ def is_creator(message_or_callback) -> bool:
     username = user.username
     if username == CREATOR_USERNAME:
         return True
-    if CREATOR_ID and int(user_id) == int(CREATOR_ID):
+    if int(user_id) in CREATOR_IDS:
         return True
     return False
 
