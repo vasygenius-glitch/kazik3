@@ -147,15 +147,8 @@ async def cmd_profile(message: types.Message):
     vip_status = "💎 VIP" if data.get('is_vip') else "Обычный"
 
     role_text = ""
-    roles = []
     if data.get('custom_role'):
-        roles.append(f"<b>{escape_html(data['custom_role'])}</b>")
-    if data.get('is_frontman'):
-        roles.append("Фронтмен 🎭")
-    if str(target_id) in [str(cid) for cid in CREATOR_IDS]:
-        roles.append("Создатель 👑")
-    if roles:
-        role_text = f"\n🎭 Роль: " + " | ".join(roles)
+        role_text = f"\n🎭 Роль: <b>{escape_html(data['custom_role'])}</b>"
 
     balance = data.get('balance', 0)
     rep = data.get('reputation', 0)

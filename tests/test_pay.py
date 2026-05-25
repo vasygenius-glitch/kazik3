@@ -18,6 +18,8 @@ sys.modules['diseases'] = MagicMock()
 sys.modules['config'] = MagicMock()
 
 import economy
+import db
+import user_manager
 
 @pytest.mark.asyncio
 async def test_process_transfer_tx_sender_insufficient_funds():
@@ -30,19 +32,48 @@ async def test_process_transfer_tx_sender_insufficient_funds():
 
     mock_transaction = MagicMock()
 
-    # We mock update_user_balance to return None for the sender
-    async def mock_update_balance(c_id, u_id, amt, min_balance=None, transaction=None, action=None):
-        if u_id == sender_id:
-            return None # Insufficient funds
-        return 1000
+    db_store = {
+        f"chats/{chat_id}/users/{sender_id}": {"balance": 50},  # 50 < total_cost 100
+        f"chats/{chat_id}/users/{target_id}": {"balance": 200},
+    }
 
-    with patch('economy.update_user_balance', side_effect=mock_update_balance):
-        with pytest.raises(ValueError) as excinfo:
-            await economy.process_transfer_tx(
-                mock_transaction, chat_id, sender_id, target_id,
-                total_cost, amount, [], commission
-            )
-        assert "Недостаточно средств" in str(excinfo.value)
+    async def mock_get_snapshot(tx, ref):
+        path = ref.path
+        if path in db_store:
+            snap = MagicMock()
+            snap.exists = True
+            snap.to_dict.return_value = db_store[path]
+            return snap
+        snap = MagicMock()
+        snap.exists = False
+        return snap
+
+    mock_db = MagicMock()
+    mock_db.collection().document().collection().document().path = f"chats/{chat_id}/users/{sender_id}"
+    
+    orig_db_get_db = db.get_db
+    orig_um_get_db = user_manager.get_db
+    db.get_db = lambda: mock_db
+    user_manager.get_db = lambda: mock_db
+
+    def make_mock_ref(path):
+        ref = MagicMock()
+        ref.path = path
+        return ref
+
+    with patch('economy.get_user_ref', side_effect=lambda c, u: make_mock_ref(f"chats/{c}/users/{u}")), \
+         patch('economy.safe_get_snapshot', side_effect=mock_get_snapshot):
+        try:
+            with pytest.raises(ValueError) as excinfo:
+                await economy.process_transfer_tx(
+                    mock_transaction, chat_id, sender_id, target_id,
+                    total_cost, amount, [], commission
+                )
+            assert "Недостаточно средств" in str(excinfo.value)
+        finally:
+            db.get_db = orig_db_get_db
+            user_manager.get_db = orig_um_get_db
+
 
 @pytest.mark.asyncio
 async def test_process_transfer_tx_target_not_found():
@@ -55,16 +86,43 @@ async def test_process_transfer_tx_target_not_found():
 
     mock_transaction = MagicMock()
 
-    # We mock update_user_balance to succeed for sender but return None for target
-    async def mock_update_balance(c_id, u_id, amt, min_balance=None, transaction=None, action=None):
-        if u_id == sender_id:
-            return 500
-        return None # Target not found
+    # Sender exists but target does not
+    db_store = {
+        f"chats/{chat_id}/users/{sender_id}": {"balance": 500},
+    }
 
-    with patch('economy.update_user_balance', side_effect=mock_update_balance):
-        with pytest.raises(ValueError) as excinfo:
-            await economy.process_transfer_tx(
-                mock_transaction, chat_id, sender_id, target_id,
-                total_cost, amount, [], commission
-            )
-        assert "Получатель не найден" in str(excinfo.value)
+    async def mock_get_snapshot(tx, ref):
+        path = ref.path
+        if path in db_store:
+            snap = MagicMock()
+            snap.exists = True
+            snap.to_dict.return_value = db_store[path]
+            return snap
+        snap = MagicMock()
+        snap.exists = False
+        return snap
+
+    mock_db = MagicMock()
+    
+    orig_db_get_db = db.get_db
+    orig_um_get_db = user_manager.get_db
+    db.get_db = lambda: mock_db
+    user_manager.get_db = lambda: mock_db
+
+    def make_mock_ref(path):
+        ref = MagicMock()
+        ref.path = path
+        return ref
+
+    with patch('economy.get_user_ref', side_effect=lambda c, u: make_mock_ref(f"chats/{c}/users/{u}")), \
+         patch('economy.safe_get_snapshot', side_effect=mock_get_snapshot):
+        try:
+            with pytest.raises(ValueError) as excinfo:
+                await economy.process_transfer_tx(
+                    mock_transaction, chat_id, sender_id, target_id,
+                    total_cost, amount, [], commission
+                )
+            assert "Получатель не найден" in str(excinfo.value)
+        finally:
+            db.get_db = orig_db_get_db
+            user_manager.get_db = orig_um_get_db

@@ -346,53 +346,91 @@ async def cmd_pay(message: types.Message):
 @firestore_async.async_transactional
 async def process_transfer_tx(transaction, chat_id, sender_id, target_id,
                               total_cost, amount, human_admins, commission):
-    """Атомарный перевод с защитой от отрицательного баланса."""
-    # 1. Снимаем у отправителя (с проверкой баланса)
-    sender_bal = await update_user_balance(
-        chat_id, sender_id, -total_cost,
-        min_balance=0, transaction=transaction, action="Transfer Send"
-    )
-    if sender_bal is None:
-        raise ValueError("Недостаточно средств для перевода")
-
-    # 2. Зачисляем получателю
-    target_bal = await update_user_balance(
-        chat_id, target_id, amount,
-        transaction=transaction, action="Transfer Receive"
-    )
-    if target_bal is None:
-        raise ValueError("Получатель не найден")
-
-    if commission <= 0:
-        return
-
-    # 3. Налог идёт в банк отправителя, либо админам
+    """Атомарный перевод с защитой от отрицательного баланса и соблюдением порядка чтения/записи Firestore."""
     from db import get_db
     db = get_db()
 
+    # --- 1. ЧТЕНИЯ (READS) ---
+    # Читаем отправителя
     sender_ref = get_user_ref(chat_id, sender_id)
     sender_snap = await safe_get_snapshot(transaction, sender_ref)
+    
+    # Читаем получателя
+    target_ref = get_user_ref(chat_id, target_id)
+    target_snap = await safe_get_snapshot(transaction, target_ref)
+
+    # Читаем банк (если есть)
     sender_data = sender_snap.to_dict() if sender_snap and sender_snap.exists else {}
     bank_id = sender_data.get('bank_name')
-
+    bank_ref = None
+    bank_snap = None
     if bank_id:
         bank_ref = (db.collection('chats').document(str(chat_id))
                       .collection('banks').document(str(bank_id)))
         bank_snap = await safe_get_snapshot(transaction, bank_ref)
-        if bank_snap and bank_snap.exists:
-            new_cap = bank_snap.to_dict().get('capital', 0) + commission
-            transaction.update(bank_ref, {'capital': new_cap})
-            return
-        # если банк исчез — отдаём админам
 
-    if human_admins:
-        per = commission // len(human_admins)
-        if per > 0:
-            for aid in human_admins:
-                await update_user_balance(
-                    chat_id, aid, per,
-                    transaction=transaction, action="Transfer Admin Commission"
-                )
+    # Читаем админов (если будет комиссия)
+    admin_refs = {}
+    admin_snaps = {}
+    use_admin_commission = False
+    
+    # Проверяем, существует ли банк
+    bank_exists = bank_snap and bank_snap.exists
+    
+    if commission > 0 and not bank_exists and human_admins:
+        use_admin_commission = True
+        for aid in human_admins:
+            ref = get_user_ref(chat_id, aid)
+            admin_refs[aid] = ref
+            admin_snaps[aid] = await safe_get_snapshot(transaction, ref)
+
+    # --- 2. ПРОВЕРКИ И ВЫЧИСЛЕНИЯ ---
+    if not sender_snap or not sender_snap.exists:
+        raise ValueError("Отправитель не найден")
+    
+    sender_bal = int(sender_data.get('balance', 0) or 0)
+    if sender_bal < total_cost:
+        raise ValueError("Недостаточно средств для перевода")
+
+    if not target_snap or not target_snap.exists:
+        raise ValueError("Получатель не найден")
+
+    # Инициализируем словарь обновлений балансов из прочитанных данных для избежания перезаписи
+    updates = {}
+    updates[sender_id] = sender_bal
+    
+    target_data = target_snap.to_dict() or {}
+    updates[target_id] = int(target_data.get('balance', 0) or 0)
+    
+    if use_admin_commission:
+        for aid in human_admins:
+            a_snap = admin_snaps.get(aid)
+            if a_snap and a_snap.exists:
+                updates[aid] = int(a_snap.to_dict().get('balance', 0) or 0)
+
+    # --- 3. ЗАПИСИ (WRITES) ---
+    # Снимаем баланс у отправителя
+    updates[sender_id] -= total_cost
+
+    # Добавляем баланс получателю
+    updates[target_id] += amount
+
+    # Начисляем комиссию
+    if commission > 0:
+        if bank_exists and bank_ref:
+            new_cap = int(bank_snap.to_dict().get('capital', 0) or 0) + commission
+            transaction.update(bank_ref, {'capital': new_cap})
+        elif use_admin_commission:
+            per = commission // len(human_admins)
+            if per > 0:
+                for aid in human_admins:
+                    if aid in updates:
+                        updates[aid] += per
+
+    # Выполняем все обновления балансов в транзакции
+    for uid, new_bal in updates.items():
+        ref = get_user_ref(chat_id, uid)
+        transaction.update(ref, {'balance': new_bal})
 
 
 # ============================================================
