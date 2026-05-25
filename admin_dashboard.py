@@ -78,6 +78,7 @@ class AdminPanelState(StatesGroup):
     waiting_for_debt_amount = State()
     waiting_for_player_inv_qty = State()
     waiting_for_player_escort = State()
+    waiting_for_player_role = State()
 
 # Helper to simulate callback from a text message handler
 class MockCallback:
@@ -847,6 +848,7 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
     username = data.get('username', 'нет')
     reputation = data.get('reputation', 0)
     escort_count = data.get('escort_count', 0)
+    custom_role = data.get('custom_role', 'Нет')
     
     # Питомец
     pet = data.get('pet')
@@ -898,6 +900,7 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
         f"📱 ID: <code>{target_id}</code> | 🏷 @{username}\n\n"
         f"💰 Баланс: <b>{balance:,}</b> сыр.\n"
         f"📈 Репутация: <b>{reputation}</b>\n"
+        f"🎭 Роль: <b>{custom_role}</b>\n"
         f"🔞 Выебан(а): <b>{escort_count}</b> раз\n"
         f"💸 Долги: {debt_text}\n"
         f"👑 VIP: <b>{vip_status}</b>\n"
@@ -928,11 +931,12 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
     builder.button(text="💸 Долги", callback_data=f"db_pdebts_menu_{chat_id}_{target_id}")
     builder.button(text="📈 Репутация", callback_data=f"db_prep_prompt_{chat_id}_{target_id}")
     builder.button(text="🔞 Выебан(а)", callback_data=f"db_pesc_prompt_{chat_id}_{target_id}")
+    builder.button(text="🎭 Роль", callback_data=f"db_prole_prompt_{chat_id}_{target_id}")
     builder.button(text="🔄 Сбросить FSM", callback_data=f"db_pfsm_reset_{chat_id}_{target_id}")
     builder.button(text="⚡️ Казнить!", callback_data=f"db_pexecute_ask_{chat_id}_{target_id}")
     builder.button(text="🧹 Полный сброс", callback_data=f"db_pwi_{chat_id}_{target_id}")
     builder.button(text="⬅️ Назад", callback_data=f"db_m_{chat_id}")
-    builder.adjust(2, 2, 2, 2, 3, 3, 2, 2, 2)
+    builder.adjust(2, 2, 2, 2, 3, 3, 3, 2, 2)
     
     markup = builder.as_markup()
     bot = callback_or_message.bot if hasattr(callback_or_message, 'bot') else callback_or_message.message.bot
@@ -2242,6 +2246,55 @@ async def process_player_escort_input(message: types.Message, state: FSMContext)
     await flush_user_cache_immediately(chat_id, target_id)
     
     await message.answer(f"✅ Количество выебов игрока успешно установлено в {val}.")
+    await show_player_details_screen(message, state, chat_id, target_id)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+# Изменение роли игрока (Запрос)
+@router.callback_query(F.data.startswith("db_prole_prompt_"))
+async def cb_player_role_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    target_id = int(parts[4])
+    
+    await state.set_state(AdminPanelState.waiting_for_player_role)
+    await state.update_data(chat_id=chat_id, target_user_id=target_id, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_pv_{chat_id}_{target_id}")
+    
+    await callback.message.edit_text(
+        "🎭 <b>Изменение роли игрока</b>\n\n"
+        "Введите название новой особой роли для игрока (например, Король, Люцифер) в ответ на это сообщение.\n"
+        "Чтобы удалить роль, введите <code>отмена</code> или <code>none</code>:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+# Обработчик ввода роли игрока
+@router.message(AdminPanelState.waiting_for_player_role)
+async def process_player_role_input(message: types.Message, state: FSMContext):
+    if not is_creator(message): return
+    state_data = await state.get_data()
+    chat_id = state_data["chat_id"]
+    target_id = state_data["target_user_id"]
+    
+    text = message.text.strip()
+    if text.lower() in ["none", "отмена", "clear", "сбросить", "удалить"]:
+        role_val = None
+        success_text = "❌ Особая роль игрока успешно удалена."
+    else:
+        role_val = text
+        success_text = f"✅ Особая роль игрока успешно установлена в: <b>{escape_html(role_val)}</b>."
+        
+    await update_user_field(chat_id, target_id, 'custom_role', role_val)
+    await flush_user_cache_immediately(chat_id, target_id)
+    
+    await message.answer(success_text)
     await show_player_details_screen(message, state, chat_id, target_id)
     try:
         await message.delete()

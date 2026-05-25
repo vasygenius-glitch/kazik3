@@ -285,6 +285,89 @@ async def cmd_delvip(message: types.Message):
     await update_user_field(chat_id, target_id, 'is_vip', False)
     await message.answer(f"Пользователь {target_name} лишен статуса VIP.")
 
+
+@router.message(Command("setrole"))
+async def cmd_setrole(message: types.Message):
+    if not is_creator(message):
+        return
+
+    chat_id = message.chat.id
+    target_id = None
+    target_name = ""
+    role_name = ""
+
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+        
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2 or not args[1].strip():
+            return await message.answer("Укажите название роли. Пример: <code>/setrole Люцифер</code>")
+        role_name = args[1].strip()
+    else:
+        args = message.text.split(maxsplit=2)
+        if len(args) < 3:
+            return await message.answer("Использование:\nОтветом на сообщение: <code>/setrole [роль]</code>\nИли: <code>/setrole [ID/username] [роль]</code>")
+        
+        target_input = args[1]
+        role_name = args[2].strip()
+        
+        from user_manager import get_user_by_username_or_id
+        target_user = await get_user_by_username_or_id(chat_id, target_input)
+        if not target_user:
+            return await message.answer("❌ Пользователь не найден в базе этого чата.")
+        target_id = target_user['user_id']
+        target_name = escape_html(target_user.get('full_name', f"Юзер {target_id}"))
+
+    if not target_id:
+        return
+
+    from user_manager import update_user_field, invalidate_user_cache
+    await update_user_field(chat_id, target_id, 'custom_role', role_name)
+    invalidate_user_cache(chat_id, target_id)
+    
+    await message.answer(f"✅ Пользователю <b>{target_name}</b> выдана особая роль: <b>{escape_html(role_name)}</b>!")
+    from log_system import log_action
+    log_action(f"🎭 <b>Выдача роли:</b> {message.from_user.full_name} ({message.from_user.id}) выдал роль \"{role_name}\" пользователю {target_name} ({target_id}) в чате {chat_id}")
+
+
+@router.message(Command("delrole"))
+async def cmd_delrole(message: types.Message):
+    if not is_creator(message):
+        return
+
+    chat_id = message.chat.id
+    target_id = None
+    target_name = ""
+
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+    else:
+        args = message.text.split(maxsplit=1)
+        if len(args) < 2:
+            return await message.answer("Использование:\nОтветом на сообщение: <code>/delrole</code>\nИли: <code>/delrole [ID/username]</code>")
+        
+        target_input = args[1]
+        from user_manager import get_user_by_username_or_id
+        target_user = await get_user_by_username_or_id(chat_id, target_input)
+        if not target_user:
+            return await message.answer("❌ Пользователь не найден в базе этого чата.")
+        target_id = target_user['user_id']
+        target_name = escape_html(target_user.get('full_name', f"Юзер {target_id}"))
+
+    if not target_id:
+        return
+
+    from user_manager import update_user_field, invalidate_user_cache
+    await update_user_field(chat_id, target_id, 'custom_role', None)
+    invalidate_user_cache(chat_id, target_id)
+    
+    await message.answer(f"❌ С пользователя <b>{target_name}</b> снята особая роль.")
+    from log_system import log_action
+    log_action(f"🎭 <b>Снятие роли:</b> {message.from_user.full_name} ({message.from_user.id}) снял роль с пользователя {target_name} ({target_id}) в чате {chat_id}")
+
+
 @router.message(Command("check_id"))
 async def cmd_check_id(message: types.Message):
     user_id = message.from_user.id
