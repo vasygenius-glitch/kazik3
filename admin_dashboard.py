@@ -76,6 +76,7 @@ class AdminPanelState(StatesGroup):
     waiting_for_player_reputation = State()
     waiting_for_debt_creditor = State()
     waiting_for_debt_amount = State()
+    waiting_for_player_inv_qty = State()
 
 # Helper to simulate callback from a text message handler
 class MockCallback:
@@ -1281,29 +1282,54 @@ async def cb_group_say_prompt(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(chat_id=chat_id, menu_message_id=callback.message.message_id)
     
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data=f"db_g_{chat_id}")
+    builder.button(text="🛑 Остановить трансляцию", callback_data=f"db_stop_say_{chat_id}")
     
     await callback.message.edit_text(
-        "📣 <b>Отправка сообщения в группу от имени бота</b>\n\n"
-        "Введите текст сообщения, которое бот должен немедленно отправить в группу:",
+        "📣 <b>Трансляция сообщений в группу от имени бота</b>\n\n"
+        "Все отправленные вами сообщения (текст, фото, стикеры, GIF и т.д.) "
+        "будут автоматически пересылаться в группу.\n\n"
+        "Для завершения трансляции нажмите кнопку ниже:",
         reply_markup=builder.as_markup()
     )
     await callback.answer()
+
+@router.callback_query(F.data.startswith("db_stop_say_"))
+async def cb_stop_group_say(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    chat_id = int(callback.data.split("_")[3])
+    await state.clear()
+    await callback.answer("Трансляция остановлена")
+    callback.data = f"db_g_{chat_id}"
+    await cb_group_settings_view(callback, state)
 
 @router.message(AdminPanelState.waiting_for_say_text)
 async def process_group_say_text(message: types.Message, state: FSMContext):
     if not is_creator(message): return
     state_data = await state.get_data()
-    chat_id = state_data["chat_id"]
+    chat_id = state_data.get("chat_id")
+    if not chat_id:
+        return
     
     try:
         await message.send_copy(chat_id=chat_id)
-        await message.answer("✅ Сообщение успешно отправлено в группу.")
+        sent = await message.answer("✅ Отправлено")
+        async def delete_later(msg, delay):
+            await asyncio.sleep(delay)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(delete_later(sent, 2))
     except Exception as e:
-        await message.answer(f"❌ Ошибка отправки: {e}")
+        sent_err = await message.answer(f"❌ Ошибка отправки: {e}")
+        async def delete_later(msg, delay):
+            await asyncio.sleep(delay)
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+        asyncio.create_task(delete_later(sent_err, 5))
         
-    await state.clear()
-    await cb_group_settings_view(message, state) # В качестве callback_query передаем message (функция проверит тип)
     try:
         await message.delete()
     except Exception:
@@ -1964,7 +1990,7 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
         item_name = item_cfg.get('name', item_id)
         
         builder.button(text="➖", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_m_{cat}")
-        builder.button(text=f"{item_name} ({qty})", callback_data="db_noop")
+        builder.button(text=f"{item_name} ({qty})", callback_data=f"db_piq_{chat_id}_{target_id}_{item_id}_{cat}")
         builder.button(text="➕", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_p_{cat}")
         
     builder.button(text="⬅️ Назад к категориям", callback_data=f"db_pim_{chat_id}_{target_id}")
@@ -2039,6 +2065,85 @@ async def cb_pinv_act(callback: types.CallbackQuery, state: FSMContext):
         asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
         await callback.answer("✅ Инвентарь очищен!", show_alert=True)
         await cb_pinv_menu(callback, state)
+
+
+# Запрос ввода количества предметов
+@router.callback_query(F.data.startswith("db_piq_"))
+async def cb_player_inv_qty_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[2])
+    target_id = int(parts[3])
+    item_id = parts[4]
+    cat = parts[5]
+    
+    data = await get_user_data(chat_id, target_id)
+    inventory = data.get('inventory', {})
+    current_qty = inventory.get(item_id, 0)
+    
+    from shop import ITEMS
+    item_cfg = ITEMS.get(item_id, {})
+    item_name = item_cfg.get('name', item_id)
+    
+    await state.set_state(AdminPanelState.waiting_for_player_inv_qty)
+    await state.update_data(
+        chat_id=chat_id,
+        target_user_id=target_id,
+        item_id=item_id,
+        cat=cat,
+        menu_message_id=callback.message.message_id
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_pic_{chat_id}_{target_id}_{cat}")
+    
+    await callback.message.edit_text(
+        f"🎒 <b>Изменение количества в инвентаре</b>\n\n"
+        f"Предмет: <b>{item_name}</b>\n"
+        f"Текущее количество: <b>{current_qty} шт.</b>\n\n"
+        f"Введите новое целое количество (от 0 до 1000) в ответ на это сообщение:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+
+# Обработчик ввода количества
+@router.message(AdminPanelState.waiting_for_player_inv_qty)
+async def process_player_inv_qty_input(message: types.Message, state: FSMContext):
+    if not is_creator(message): return
+    state_data = await state.get_data()
+    chat_id = state_data["chat_id"]
+    target_id = state_data["target_user_id"]
+    item_id = state_data["item_id"]
+    cat = state_data["cat"]
+    
+    try:
+        val = int(message.text.replace(" ", "").replace(",", ""))
+        if val < 0 or val > 1000:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Количество должно быть целым числом от 0 до 1000. Попробуйте еще раз:")
+        return
+        
+    data = await get_user_data(chat_id, target_id)
+    inventory = dict(data.get('inventory', {}))
+    
+    if val == 0:
+        inventory.pop(item_id, None)
+    else:
+        inventory[item_id] = val
+        
+    await update_user_field(chat_id, target_id, 'inventory', inventory)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+    
+    await message.answer(f"✅ Количество предметов в инвентаре успешно установлено в {val}.")
+    await state.clear()
+    
+    await cb_pinv_cat(MockCallback(message, state_data["menu_message_id"], f"db_pic_{chat_id}_{target_id}_{cat}"), state)
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 
 # ===================== ДОПОЛНИТЕЛЬНЫЙ ФУНКЦИОНАЛ ИГРОКА =====================
