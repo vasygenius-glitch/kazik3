@@ -77,6 +77,7 @@ class AdminPanelState(StatesGroup):
     waiting_for_debt_creditor = State()
     waiting_for_debt_amount = State()
     waiting_for_player_inv_qty = State()
+    waiting_for_player_escort = State()
 
 # Helper to simulate callback from a text message handler
 class MockCallback:
@@ -845,6 +846,7 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
     full_name = escape_html(data.get('full_name', 'Игрок'))
     username = data.get('username', 'нет')
     reputation = data.get('reputation', 0)
+    escort_count = data.get('escort_count', 0)
     
     # Питомец
     pet = data.get('pet')
@@ -896,6 +898,7 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
         f"📱 ID: <code>{target_id}</code> | 🏷 @{username}\n\n"
         f"💰 Баланс: <b>{balance:,}</b> сыр.\n"
         f"📈 Репутация: <b>{reputation}</b>\n"
+        f"🔞 Выебан(а): <b>{escort_count}</b> раз\n"
         f"💸 Долги: {debt_text}\n"
         f"👑 VIP: <b>{vip_status}</b>\n"
         f"💼 Банкир: <b>{banker_status}</b>\n"
@@ -924,11 +927,12 @@ async def show_player_details_screen(callback_or_message, state: FSMContext, cha
     builder.button(text="🎯 Навыки", callback_data=f"db_pskills_menu_{chat_id}_{target_id}")
     builder.button(text="💸 Долги", callback_data=f"db_pdebts_menu_{chat_id}_{target_id}")
     builder.button(text="📈 Репутация", callback_data=f"db_prep_prompt_{chat_id}_{target_id}")
+    builder.button(text="🔞 Выебан(а)", callback_data=f"db_pesc_prompt_{chat_id}_{target_id}")
     builder.button(text="🔄 Сбросить FSM", callback_data=f"db_pfsm_reset_{chat_id}_{target_id}")
     builder.button(text="⚡️ Казнить!", callback_data=f"db_pexecute_ask_{chat_id}_{target_id}")
     builder.button(text="🧹 Полный сброс", callback_data=f"db_pwi_{chat_id}_{target_id}")
     builder.button(text="⬅️ Назад", callback_data=f"db_m_{chat_id}")
-    builder.adjust(2, 2, 2, 2, 3, 3, 2, 2, 1)
+    builder.adjust(2, 2, 2, 2, 3, 3, 2, 2, 2)
     
     markup = builder.as_markup()
     bot = callback_or_message.bot if hasattr(callback_or_message, 'bot') else callback_or_message.message.bot
@@ -1864,14 +1868,17 @@ async def cb_pdiseases_menu(callback: types.CallbackQuery, state: FSMContext):
     
     builder = InlineKeyboardBuilder()
     builder.button(text="🧼 Вылечить всё", callback_data=f"db_pdis_cure_{chat_id}_{target_id}")
-    builder.button(text="🦠 Чесотка", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_scabies")
-    builder.button(text="🦠 Сифилис", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_syphilis")
-    builder.button(text="🦠 Гепатит", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_hepatitis")
-    builder.button(text="🦠 СПИД", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_aids")
-    builder.button(text="🦠 Грипп Реальности", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_reality_flu")
     builder.button(text="🤮 Полный букет ЗППП", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_fullhouse")
+    
+    for d_id, d_info in DISEASES.items():
+        name = d_info['name']
+        prefix = "🟢" if d_id in active else "🦠"
+        builder.button(text=f"{prefix} {name}", callback_data=f"db_pdis_inf_{chat_id}_{target_id}_{d_id}")
+        
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
-    builder.adjust(2, 2, 2, 1, 1)
+    
+    adjust_pattern = [2] + [2] * ((len(DISEASES) + 1) // 2) + [1]
+    builder.adjust(*adjust_pattern)
     
     await callback.message.edit_text(text, reply_markup=builder.as_markup())
     await callback.answer()
@@ -2187,6 +2194,54 @@ async def process_player_reputation_input(message: types.Message, state: FSMCont
     await flush_user_cache_immediately(chat_id, target_id)
     
     await message.answer(f"✅ Репутация игрока успешно установлена в {val}.")
+    await show_player_details_screen(message, state, chat_id, target_id)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+# Изменение количества выебов (Запрос)
+@router.callback_query(F.data.startswith("db_pesc_prompt_"))
+async def cb_player_escort_prompt(callback: types.CallbackQuery, state: FSMContext):
+    if not is_creator(callback): return await callback.answer()
+    parts = callback.data.split("_")
+    chat_id = int(parts[3])
+    target_id = int(parts[4])
+    
+    await state.set_state(AdminPanelState.waiting_for_player_escort)
+    await state.update_data(chat_id=chat_id, target_user_id=target_id, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_pv_{chat_id}_{target_id}")
+    
+    await callback.message.edit_text(
+        "🔞 <b>Изменение количества выебов игрока</b>\n\n"
+        "Введите новое неотрицательное целое число раз, сколько игрок был выебан, в ответ на это сообщение:",
+        reply_markup=builder.as_markup()
+    )
+    await callback.answer()
+
+# Обработчик ввода количества выебов
+@router.message(AdminPanelState.waiting_for_player_escort)
+async def process_player_escort_input(message: types.Message, state: FSMContext):
+    if not is_creator(message): return
+    state_data = await state.get_data()
+    chat_id = state_data["chat_id"]
+    target_id = state_data["target_user_id"]
+    
+    try:
+        val = int(message.text.replace(" ", "").replace(",", ""))
+        if val < 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Количество должно быть целым неотрицательным числом. Попробуйте еще раз:")
+        return
+        
+    await update_user_field(chat_id, target_id, 'escort_count', val)
+    await flush_user_cache_immediately(chat_id, target_id)
+    
+    await message.answer(f"✅ Количество выебов игрока успешно установлено в {val}.")
     await show_player_details_screen(message, state, chat_id, target_id)
     try:
         await message.delete()
