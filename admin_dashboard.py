@@ -1296,9 +1296,8 @@ async def process_group_say_text(message: types.Message, state: FSMContext):
     state_data = await state.get_data()
     chat_id = state_data["chat_id"]
     
-    text_to_say = message.text
     try:
-        await message.bot.send_message(chat_id=chat_id, text=text_to_say)
+        await message.send_copy(chat_id=chat_id)
         await message.answer("✅ Сообщение успешно отправлено в группу.")
     except Exception as e:
         await message.answer(f"❌ Ошибка отправки: {e}")
@@ -2608,7 +2607,6 @@ async def process_global_broadcast_input(message: types.Message, state: FSMConte
     state_data = await state.get_data()
     chat_id = state_data["chat_id"]
     
-    announcement = message.text
     whitelist = await get_whitelist()
     
     status_msg = await message.answer(
@@ -2621,7 +2619,7 @@ async def process_global_broadcast_input(message: types.Message, state: FSMConte
         success, fail = 0, 0
         for cid in whitelist.keys():
             try:
-                await message.bot.send_message(chat_id=cid, text=announcement)
+                await message.send_copy(chat_id=cid)
                 success += 1
                 await asyncio.sleep(0.15)
             except Exception:
