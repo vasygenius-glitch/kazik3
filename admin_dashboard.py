@@ -2284,6 +2284,15 @@ async def process_player_role_input(message: types.Message, state: FSMContext):
     target_id = state_data["target_user_id"]
     
     text = message.text.strip()
+    role_lower = text.lower()
+    if role_lower not in ["none", "отмена", "clear", "сбросить", "удалить"]:
+        if "создатель" in role_lower or "creator" in role_lower:
+            from config import CREATOR_IDS
+            if target_id not in CREATOR_IDS:
+                await message.answer("❌ Роль 'Создатель' может быть установлена только для разработчиков бота.")
+                await show_player_details_screen(message, state, chat_id, target_id)
+                return
+
     if text.lower() in ["none", "отмена", "clear", "сбросить", "удалить"]:
         role_val = None
         success_text = "❌ Особая роль игрока успешно удалена."
