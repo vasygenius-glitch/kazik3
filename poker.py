@@ -430,7 +430,7 @@ def hint_already_winning(combo: str) -> Optional[str]:
     if combo == "Nothing":
         return None
     multiplier = get_payout_multiplier(combo)
-    if multiplier >= PAY_FLUSH:
+    if multiplier >= PAY_STRAIGHT:
         name = COMBO_NAMES[combo]
         return f"💡 <b>Совет:</b> Уже есть {name}! Удержите все 5 карт."
     if combo in ("Four of a Kind", "Full House"):
@@ -1211,7 +1211,7 @@ async def process_poker_hold(callback: types.CallbackQuery, state: FSMContext):
     if game is None:
         return
 
-    index = parse_callback_index(callback.data, 4)
+    index = parse_callback_index(callback.data, -1)
     if index is None:
         return await callback.answer()
 
@@ -1402,7 +1402,7 @@ async def process_poker_draw(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("poker_replay_"))
 async def process_poker_replay(callback: types.CallbackQuery, state: FSMContext):
-    bet = parse_callback_index(callback.data, 2)
+    bet = parse_callback_index(callback.data, -1)
     if bet is None:
         return await callback.answer()
 
