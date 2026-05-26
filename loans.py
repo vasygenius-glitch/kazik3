@@ -1,12 +1,159 @@
 import time
+import uuid
 from aiogram import Router, types, F
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from escape import escape_html
-from user_manager import get_user_data, update_user_balance, update_user_field
-from profile_bank import get_bank_info, create_or_update_bank
+from user_manager import get_user_data, update_user_balance, update_user_field, get_user_ref, safe_get_snapshot, invalidate_user_cache
+from profile_bank import get_bank_info, create_or_update_bank, invalidate_bank_cache
+from db import get_db
+from firebase_admin import firestore_async
 
 router = Router()
 active_loans = {}
+
+@firestore_async.async_transactional
+async def issue_loan_tx(transaction, chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id):
+    db = get_db()
+    bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(lender_id))
+    user_ref = get_user_ref(chat_id, borrower_id)
+
+    bank_snap = await safe_get_snapshot(transaction, bank_ref)
+    if not bank_snap.exists or bank_snap.to_dict().get('capital', 0) < amount:
+        raise ValueError("У банка недостаточно капитала.")
+
+    user_snap = await safe_get_snapshot(transaction, user_ref)
+    if not user_snap.exists:
+        raise ValueError("Заемщик не найден.")
+
+    user_data = user_snap.to_dict()
+
+    # 1. Снимаем капитал у банка
+    transaction.update(bank_ref, {'capital': bank_snap.to_dict().get('capital', 0) - amount})
+
+    # 2. Начисляем баланс заемщику
+    new_balance = user_data.get('balance', 0) + amount
+
+    # 3. Добавляем долг
+    debts = dict(user_data.get('debts') or {})
+    due_date = int(time.time()) + (term_days * 86400)
+    g_id_str = str(guarantor_id) if guarantor_id else "none"
+    str_lender = f"bank_{lender_id}_{due_date}_{g_id_str}_{amount}"
+    debts[str_lender] = debts.get(str_lender, 0) + total_debt
+
+    updates = {
+        'balance': new_balance,
+        'debts': debts
+    }
+    transaction.update(user_ref, updates)
+
+    return True
+
+@firestore_async.async_transactional
+async def repay_loan_tx(transaction, chat_id, borrower_id, lender_id, amount, current_time, target_debt_key):
+    db = get_db()
+    borrower_ref = get_user_ref(chat_id, borrower_id)
+    borrower_snap = await safe_get_snapshot(transaction, borrower_ref)
+    if not borrower_snap.exists:
+        raise ValueError("Заемщик не найден.")
+    
+    borrower_data = borrower_snap.to_dict() or {}
+    balance = int(borrower_data.get('balance', 0) or 0)
+    
+    debts = dict(borrower_data.get('debts') or {})
+    if target_debt_key not in debts or debts[target_debt_key] <= 0:
+        raise ValueError("Долг уже выплачен или не существует.")
+        
+    current_debt = debts[target_debt_key]
+    discount = 0
+    banker_commission = 0
+    is_bank_debt = target_debt_key.startswith("bank_")
+    
+    if is_bank_debt:
+        parts = target_debt_key.split("_")
+        if len(parts) >= 5:
+            due_date = int(parts[2])
+            principal = int(parts[4])
+            
+            # Рассчитываем потенциальную скидку за досрочное погашение (20% от процентов)
+            potential_discount = 0
+            if due_date - current_time > 86400:
+                potential_discount = int((current_debt - principal) * 0.2)
+                if potential_discount < 0:
+                    potential_discount = 0
+                    
+            if amount >= current_debt - potential_discount:
+                discount = potential_discount
+                current_debt -= discount
+                
+                # Комиссия банкира 10% от выплаченных процентов (если кредит отдан полностью)
+                profit_margin = current_debt - principal
+                if profit_margin > 0:
+                    banker_commission = int(profit_margin * 0.1)
+
+    repay_amount = min(amount, current_debt)
+    if balance < repay_amount:
+        raise ValueError("У тебя нет столько денег на балансе.")
+        
+    # Снимаем баланс у заемщика
+    new_balance = balance - repay_amount
+    
+    # Обновляем долг в debts
+    debts[target_debt_key] -= (repay_amount + discount)
+    
+    rating_msg = ""
+    credit_score = borrower_data.get('credit_score', 100)
+    if debts[target_debt_key] <= 0:
+        del debts[target_debt_key]
+        if is_bank_debt:
+            new_score = min(500, credit_score + 10)
+            credit_score = new_score
+            rating_msg = f"\n📈 Ваш кредитный рейтинг повышен до <b>{new_score}</b>!"
+            
+    # Сохраняем обновления заемщика
+    transaction.update(borrower_ref, {
+        'balance': new_balance,
+        'debts': debts,
+        'credit_score': credit_score
+    })
+    
+    # Возврат средств
+    if is_bank_debt:
+        bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(lender_id))
+        bank_snap = await safe_get_snapshot(transaction, bank_ref)
+        if bank_snap.exists:
+            # Возврат в капитал банка
+            bank_capital = int(bank_snap.to_dict().get('capital', 0) or 0)
+            transaction.update(bank_ref, {'capital': bank_capital + (repay_amount - banker_commission)})
+            
+            # Начисляем комиссию банкиру на личный счет
+            if banker_commission > 0:
+                banker_ref = get_user_ref(chat_id, lender_id)
+                banker_snap = await safe_get_snapshot(transaction, banker_ref)
+                if banker_snap.exists:
+                    banker_bal = int(banker_snap.to_dict().get('balance', 0) or 0)
+                    transaction.update(banker_ref, {'balance': banker_bal + banker_commission})
+        else:
+            # Если банка уже нет, возвращаем напрямую банкиру на личный счет
+            banker_ref = get_user_ref(chat_id, lender_id)
+            banker_snap = await safe_get_snapshot(transaction, banker_ref)
+            if banker_snap.exists:
+                banker_bal = int(banker_snap.to_dict().get('balance', 0) or 0)
+                transaction.update(banker_ref, {'balance': banker_bal + repay_amount})
+    else:
+        # Возврат обычному игроку-кредитору
+        lender_ref = get_user_ref(chat_id, lender_id)
+        lender_snap = await safe_get_snapshot(transaction, lender_ref)
+        if lender_snap.exists:
+            lender_bal = int(lender_snap.to_dict().get('balance', 0) or 0)
+            transaction.update(lender_ref, {'balance': lender_bal + repay_amount})
+            
+    return {
+        'repay_amount': repay_amount,
+        'discount': discount,
+        'banker_commission': banker_commission,
+        'rating_msg': rating_msg,
+        'remaining_debt': debts.get(target_debt_key, 0)
+    }
 
 @router.message(F.text.lower().startswith("кредит") | F.text.lower().startswith("/credit"))
 async def cmd_credit(message: types.Message):
@@ -39,8 +186,12 @@ async def cmd_credit(message: types.Message):
         amount = int(args[1])
         percent = int(args[2])
         term_days = int(args[3])
-        if amount <= 0 or percent < 0 or term_days <= 0:
-            return
+        if amount <= 0:
+            return await message.answer("Сумма кредита должна быть больше нуля.")
+        if percent < 0:
+            return await message.answer("Процент по кредиту не может быть отрицательным.")
+        if term_days <= 0:
+            return await message.answer("Срок кредита должен быть больше нуля.")
     except ValueError:
         return await message.answer("Сумма, процент и срок должны быть числами.")
 
@@ -60,7 +211,6 @@ async def cmd_credit(message: types.Message):
     if bank_data.get('capital', 0) < amount:
         return await message.answer(f"❌ В капитале вашего банка недостаточно средств! Капитал: {bank_data.get('capital', 0)}")
 
-    import uuid
     short_id = str(uuid.uuid4())[:8]
     loan_id = f"bk_{short_id}"
     active_loans[loan_id] = {
@@ -110,11 +260,17 @@ async def process_bank_loan(callback: types.CallbackQuery):
     borrower_id = loan_info['borrower_id']
 
     if callback.from_user.id != borrower_id:
-        return await callback.answer("Это предлагают не тебе!", show_alert=True)
+        if action == "no" and callback.from_user.id == lender_id:
+            # Banker can cancel the loan offer
+            pass
+        else:
+            return await callback.answer("Это предлагают не тебе!", show_alert=True)
 
     active_loans.pop(loan_id)
 
     if action == "no":
+        if callback.from_user.id == lender_id:
+            return await callback.message.edit_text("❌ Банкир отозвал предложение по кредиту.")
         return await callback.message.edit_text("❌ Клиент отказался брать кредит.")
 
     amount = loan_info['amount']
@@ -124,50 +280,15 @@ async def process_bank_loan(callback: types.CallbackQuery):
     total_debt = int(amount * (1 + percent / 100))
 
     db = get_db()
-    from user_manager import update_user_balance, get_user_ref, safe_get_snapshot, set_in_cache, mark_dirty
-
-    @firestore_async.async_transactional
-    async def issue_loan_tx(transaction, chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id):
-        bank_ref = db.collection('chats').document(str(chat_id)).collection('banks').document(str(lender_id))
-        user_ref = get_user_ref(chat_id, borrower_id)
-
-        bank_snap = await safe_get_snapshot(transaction, bank_ref)
-        if not bank_snap.exists or bank_snap.to_dict().get('capital', 0) < amount:
-            raise ValueError("У банка недостаточно капитала.")
-
-        user_snap = await safe_get_snapshot(transaction, user_ref)
-        if not user_snap.exists:
-            raise ValueError("Заемщик не найден.")
-
-        user_data = user_snap.to_dict()
-
-        # 1. Снимаем капитал у банка
-        transaction.update(bank_ref, {'capital': bank_snap.to_dict()['capital'] - amount})
-
-        # 2. Начисляем баланс заемщику
-        new_balance = user_data.get('balance', 0) + amount
-
-        # 3. Добавляем долг
-        debts = user_data.get('debts', {}).copy()
-        due_date = int(time.time()) + (term_days * 86400)
-        g_id_str = str(guarantor_id) if guarantor_id else "none"
-        str_lender = f"bank_{lender_id}_{due_date}_{g_id_str}_{amount}"
-        debts[str_lender] = debts.get(str_lender, 0) + total_debt
-
-        updates = {
-            'balance': new_balance,
-            'debts': debts
-        }
-        transaction.update(user_ref, updates)
-
-        return True
 
     try:
-        from user_manager import get_user_lock, invalidate_user_cache
+        from user_manager import get_user_lock
         lock = get_user_lock(chat_id, borrower_id)
         async with lock:
             await issue_loan_tx(db.transaction(), chat_id, lender_id, borrower_id, amount, total_debt, term_days, guarantor_id)
             invalidate_user_cache(chat_id, borrower_id)
+            invalidate_bank_cache(chat_id, lender_id)
+            
         await callback.message.edit_text(f"🤝 Кредит оформлен на {term_days} дн.!\nПолучено <b>{amount}</b> сыроежек.\nДолг банку: <b>{total_debt}</b> сыроежек.")
 
         # --- Логирование выдачи кредита ---
@@ -207,6 +328,7 @@ async def process_bank_loan(callback: types.CallbackQuery):
     except ValueError as ve:
         await callback.message.edit_text(f"❌ Ошибка: {ve}")
     except Exception as e:
+        print(f"Error in process_bank_loan: {e}")
         await callback.message.edit_text(f"❌ Произошла ошибка при оформлении кредита.")
 
 @router.message(F.text.lower().startswith("выплатить") | F.text.lower().startswith("вернуть"))
@@ -229,10 +351,9 @@ async def cmd_repay(message: types.Message):
     lender_id = message.reply_to_message.from_user.id
 
     borrower_data = await get_user_data(chat_id, borrower_id)
-    debts = borrower_data.get('debts', {})
+    debts = borrower_data.get('debts') or {}
 
     str_lender_player = str(lender_id)
-
     target_debt_key = None
 
     # Ищем долг банку с любой датой или без даты (для старых долгов)
@@ -247,96 +368,68 @@ async def cmd_repay(message: types.Message):
     if not target_debt_key:
         return await message.answer("Ты ничего не должен этому человеку/банку.")
 
-    if borrower_data.get('balance', 0) < amount:
-        return await message.answer("У тебя нет столько денег на балансе.")
-
-    current_debt = debts[target_debt_key]
-
-    # Обработка досрочного погашения и банковской комиссии
-    banker_commission = 0
-    discount_msg = ""
-    if target_debt_key.startswith("bank_"):
-        parts = target_debt_key.split("_")
-        if len(parts) >= 5:
-            due_date = int(parts[2])
-            principal = int(parts[4])
-
-            # Проверяем, отдается ли весь долг целиком
-            if amount >= current_debt:
-                current_time = time.time()
-                # Если возвращаем сильно заранее (более 1 дня до конца срока)
-                if due_date - current_time > 86400:
-                    discount = int((current_debt - principal) * 0.2) # 20% скидка на проценты
-                    if discount > 0:
-                        current_debt -= discount
-                        discount_msg = f"\n🎁 <i>Скидка за досрочное погашение: -{discount} сыр.</i>"
-
-                # Комиссия банкира 10% от выплаченных процентов (если кредит отдан полностью)
-                profit_margin = current_debt - principal
-                if profit_margin > 0:
-                    banker_commission = int(profit_margin * 0.1)
-
-    repay_amount = min(amount, current_debt)
-    res = await update_user_balance(chat_id, borrower_id, -repay_amount, min_balance=0)
-    if res is None:
-        return await message.answer("У тебя нет столько денег на балансе.")
-
-    if target_debt_key.startswith("bank_"):
-        # Возврат банку в капитал
-        bank_data = await get_bank_info(chat_id, lender_id)
-        if bank_data:
-            # Начисляем капитал банку (минус премия банкиру)
-            await create_or_update_bank(chat_id, lender_id, {'capital': bank_data.get('capital', 0) + (repay_amount - banker_commission)})
-            # Начисляем премию банкиру на личный счет
-            if banker_commission > 0:
-                await update_user_balance(chat_id, lender_id, banker_commission)
-    else:
-        # Возврат обычному игроку
-        await update_user_balance(chat_id, lender_id, repay_amount)
-
-    debts[target_debt_key] -= repay_amount
-
-    # Повышаем рейтинг при полном закрытии долга
-    rating_msg = ""
-    if debts[target_debt_key] <= 0:
-        del debts[target_debt_key]
-        if target_debt_key.startswith("bank_"):
-            credit_score = borrower_data.get('credit_score', 100)
-            new_score = min(500, credit_score + 10)
-            await update_user_field(chat_id, borrower_id, 'credit_score', new_score)
-            rating_msg = f"\n📈 Ваш кредитный рейтинг повышен до <b>{new_score}</b>!"
-
-    await update_user_field(chat_id, borrower_id, 'debts', debts)
-    await message.answer(f"✅ Ты вернул <b>{repay_amount}</b> сыроежек кредитору.{discount_msg}\nОстаток долга: <b>{debts.get(target_debt_key, 0)}</b> сыроежек.{rating_msg}")
-
-    # --- Логирование возврата кредита ---
+    db = get_db()
     try:
-        lender_data = await get_user_data(chat_id, lender_id)
-        lender_name = lender_data.get('full_name') or message.reply_to_message.from_user.full_name or "Unknown"
-        lender_username = lender_data.get('username') or message.reply_to_message.from_user.username or ""
+        from user_manager import get_user_lock
+        lock = get_user_lock(chat_id, borrower_id)
+        async with lock:
+            res = await repay_loan_tx(
+                db.transaction(),
+                chat_id,
+                borrower_id,
+                lender_id,
+                amount,
+                time.time(),
+                target_debt_key
+            )
+            invalidate_user_cache(chat_id, borrower_id)
+            invalidate_user_cache(chat_id, lender_id)
+            
+            if target_debt_key.startswith("bank_"):
+                invalidate_bank_cache(chat_id, lender_id)
 
-        borrower_name = borrower_data.get('full_name') or message.from_user.full_name or "Unknown"
-        borrower_username = borrower_data.get('username') or message.from_user.username or ""
+        repay_amount = res['repay_amount']
+        discount = res['discount']
+        rating_msg = res['rating_msg']
+        remaining_debt = res['remaining_debt']
 
+        discount_msg = f"\n🎁 <i>Скидка за досрочное погашение: -{discount} сыр.</i>" if discount > 0 else ""
+
+        await message.answer(f"✅ Ты вернул <b>{repay_amount}</b> сыроежек кредитору.{discount_msg}\nОстаток долга: <b>{remaining_debt}</b> сыроежек.{rating_msg}")
+
+        # --- Логирование возврата кредита ---
         try:
-            message_link = message.link or ""
-        except Exception:
-            message_link = ""
+            lender_data = await get_user_data(chat_id, lender_id)
+            lender_name = lender_data.get('full_name') or message.reply_to_message.from_user.full_name or "Unknown"
+            lender_username = lender_data.get('username') or message.reply_to_message.from_user.username or ""
 
-        from log_system import log_loan
-        log_loan(
-            action_type="repay",
-            chat_id=chat_id,
-            chat_title=message.chat.title or "Unknown",
-            lender_id=lender_id,
-            lender_name=lender_name,
-            lender_username=lender_username,
-            borrower_id=borrower_id,
-            borrower_name=borrower_name,
-            borrower_username=borrower_username,
-            amount=repay_amount,
-            total_debt=debts.get(target_debt_key, 0),
-            message_link=message_link
-        )
-    except Exception as log_e:
-        print(f"Error logging loan repay: {log_e}")
+            borrower_name = borrower_data.get('full_name') or message.from_user.full_name or "Unknown"
+            borrower_username = borrower_data.get('username') or message.from_user.username or ""
+
+            try:
+                message_link = message.link or ""
+            except Exception:
+                message_link = ""
+
+            from log_system import log_loan
+            log_loan(
+                action_type="repay",
+                chat_id=chat_id,
+                chat_title=message.chat.title or "Unknown",
+                lender_id=lender_id,
+                lender_name=lender_name,
+                lender_username=lender_username,
+                borrower_id=borrower_id,
+                borrower_name=borrower_name,
+                borrower_username=borrower_username,
+                amount=repay_amount,
+                total_debt=remaining_debt,
+                message_link=message_link
+            )
+        except Exception as log_e:
+            print(f"Error logging loan repay: {log_e}")
+    except ValueError as ve:
+        await message.answer(f"❌ Ошибка: {ve}")
+    except Exception as e:
+        print(f"Error in cmd_repay: {e}")
+        await message.answer(f"❌ Произошла ошибка при выплате кредита.")
