@@ -91,7 +91,7 @@ async def cmd_del_bank_debt(message: types.Message):
     data = await get_user_data(chat_id, target_id)
     debts = data.get('debts', {})
 
-    keys_to_delete = [k for k in debts.keys() if k.startswith(f"bank_{banker_id}")]
+    keys_to_delete = [k for k in debts.keys() if k.startswith(f"bank_{banker_id}_")]
     for k in keys_to_delete:
         del debts[k]
 
@@ -146,7 +146,7 @@ async def cmd_set_bank_debt(message: types.Message):
 
     found = False
     for k in list(debts.keys()):
-        if k.startswith(f"bank_{banker_id}"):
+        if k.startswith(f"bank_{banker_id}_"):
             debts[k] = new_amount
             found = True
             break

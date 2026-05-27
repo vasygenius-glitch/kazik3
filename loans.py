@@ -342,9 +342,10 @@ async def cmd_repay(message: types.Message):
 
     try:
         amount = int(args[1])
-        if amount <= 0: return
+        if amount <= 0:
+            return await message.answer("Сумма должна быть больше нуля.")
     except ValueError:
-        return
+        return await message.answer("Сумма должна быть целым числом.")
 
     chat_id = message.chat.id
     borrower_id = message.from_user.id
@@ -358,7 +359,7 @@ async def cmd_repay(message: types.Message):
 
     # Ищем долг банку с любой датой или без даты (для старых долгов)
     for k, v in debts.items():
-        if k.startswith(f"bank_{lender_id}") and v > 0:
+        if k.startswith(f"bank_{lender_id}_") and v > 0:
             target_debt_key = k
             break
 
