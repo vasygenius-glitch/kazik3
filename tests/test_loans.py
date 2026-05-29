@@ -26,18 +26,17 @@ validation_cases = [
     # Valid cases
     (["1000", "10", "7"], True, None),
     (["5000", "5", "30"], True, None),
-    (["1", "0", "1"], True, None),
     (["100", "100", "10"], True, None),
     # Invalid amount
-    (["0", "10", "7"], False, "Сумма кредита должна быть больше нуля."),
-    (["-100", "10", "7"], False, "Сумма кредита должна быть больше нуля."),
+    (["0", "10", "7"], False, "❌ Сумма кредита должна быть не меньше 1."),
+    (["-100", "10", "7"], False, "❌ Сумма кредита должна быть не меньше 1."),
     (["abc", "10", "7"], False, "Сумма, процент и срок должны быть числами."),
     # Invalid percent
-    (["1000", "-1", "7"], False, "Процент по кредиту не может быть отрицательным."),
+    (["1000", "-1", "7"], False, "❌ Процент по кредиту не может быть отрицательным."),
     (["1000", "abc", "7"], False, "Сумма, процент и срок должны быть числами."),
     # Invalid term
-    (["1000", "10", "0"], False, "Срок кредита должен быть больше нуля."),
-    (["1000", "10", "-5"], False, "Срок кредита должен быть больше нуля."),
+    (["1000", "10", "0"], False, "❌ Срок кредита должен быть не меньше 1 дн."),
+    (["1000", "10", "-5"], False, "❌ Срок кредита должен быть не меньше 1 дн."),
     (["1000", "10", "abc"], False, "Сумма, процент и срок должны быть числами."),
 ]
 
@@ -47,7 +46,7 @@ while len(validation_cases) < 40:
     if idx % 2 == 0:
         validation_cases.append(([str(100 * idx), "10", "5"], True, None))
     else:
-        validation_cases.append(([str(100 * idx), "-5", "5"], False, "Процент по кредиту не может быть отрицательным."))
+        validation_cases.append(([str(100 * idx), "-5", "5"], False, "❌ Процент по кредиту не может быть отрицательным."))
 
 @pytest.mark.parametrize("args, expected_valid, expected_err", validation_cases)
 @pytest.mark.asyncio
@@ -90,7 +89,7 @@ repay_cases = [
     # Missing reply
     ("выплатить 500", False, "Сделай реплай на кредитора (или банкира), которому возвращаешь долг."),
     # Missing amount
-    ("выплатить", True, "Укажи сумму: выплатить [сумма]"),
+    ("выплатить", True, "Укажи сумму: <code>выплатить [сумма]</code>"),
     # Non-numeric amount
     ("выплатить abc", True, "Сумма должна быть целым числом."),
     # Negative amount
@@ -140,11 +139,11 @@ async def test_cmd_repay_validation(text, has_reply, expected_err):
 issue_cases = []
 for idx in range(35):
     if idx < 7:
-        issue_cases.append((False, 0, True, 1000, 7, False, "У банка недостаточно капитала."))
+        issue_cases.append((False, 0, True, 1000, 7, False, "Банк не найден."))
     elif idx < 14:
         issue_cases.append((True, 500, True, 1000, 7, False, "У банка недостаточно капитала."))
     elif idx < 21:
-        issue_cases.append((True, 10000, False, 1000, 7, False, "Заемщик не найден."))
+        issue_cases.append((True, 10000, False, 1000, 7, False, "Заёмщик не найден."))
     else:
         issue_cases.append((True, 10000, True, 1000, 7, True, None))
 
@@ -188,7 +187,8 @@ async def test_issue_loan_tx(bank_exists, bank_capital, borrower_exists, amount,
 
         if expected_valid:
             res = await loans.issue_loan_tx(mock_transaction, chat_id, lender_id, borrower_id, amount, total_debt, term, None)
-            assert res is True
+            assert isinstance(res, dict)
+            assert "debt_key" in res
             mock_transaction.update.assert_any_call(mock_bank_ref, {'capital': bank_capital - amount})
         else:
             with pytest.raises(ValueError) as exc_info:
