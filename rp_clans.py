@@ -893,8 +893,20 @@ async def cmd_clan(message: types.Message):
         bonus = (my_members - t_members) * 5
         chance = max(10, min(90, base_chance + bonus))
         
+        from config import CREATOR_ID
+        is_attacker_creator_clan = CREATOR_ID and int(clan_data.get('leader_id', 0)) == int(CREATOR_ID)
+        is_defender_creator_clan = CREATOR_ID and int(target_clan_data.get('leader_id', 0)) == int(CREATOR_ID)
+        
         roll = random.randint(1, 100)
-        if roll <= chance:
+        success = False
+        if is_attacker_creator_clan:
+            success = True
+        elif is_defender_creator_clan:
+            success = False
+        else:
+            success = (roll <= chance)
+
+        if success:
             steal_pct = random.randint(10, 25) / 100.0
             stolen = int(t_treasury * steal_pct)
             
@@ -913,11 +925,18 @@ async def cmd_clan(message: types.Message):
             
             await clan_ref.update({'treasury': my_treasury - lost})
             
-            await message.answer(
-                f"🛡 <b>ПРОВАЛ НАБЕГА!</b>\n\n"
-                f"Клан <b>{escape_html(target_clan_name)}</b> дал жесткий отпор вашему нападению.\n"
-                f"В панике ваши бойцы потеряли часть своей казны: <b>{lost}</b> сыроежек. 📉"
-            )
+            if is_defender_creator_clan:
+                await message.answer(
+                    f"🛡 <b>ПРОВАЛ НАБЕГА!</b>\n\n"
+                    f"Вы попытались напасть на клан Создателя <b>{escape_html(target_clan_name)}</b>, но получили по лицу от админской мощи! 💥\n"
+                    f"В панике ваши бойцы бросили <b>{lost}</b> сыроежек. 📉"
+                )
+            else:
+                await message.answer(
+                    f"🛡 <b>ПРОВАЛ НАБЕГА!</b>\n\n"
+                    f"Клан <b>{escape_html(target_clan_name)}</b> дал жесткий отпор вашему нападению.\n"
+                    f"В панике ваши бойцы потеряли часть своей казны: <b>{lost}</b> сыроежек. 📉"
+                )
 
 # --- ОБРАБОТЧИК КНОПОК ДЛЯ КЛАНА ---
 @router.callback_query(F.data.startswith("claninv_"))

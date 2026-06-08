@@ -79,9 +79,12 @@ async def cmd_judge(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
+    from config import CREATOR_ID
+    is_bot_creator = (user_id == CREATOR_ID)
+
     judge_id = await get_chat_judge(chat_id)
     
-    is_judge = (judge_id == user_id)
+    is_judge = (judge_id == user_id) or is_bot_creator
     if not is_judge:
         member = await message.chat.get_member(user_id)
         if member.status not in ["creator", "administrator"]:

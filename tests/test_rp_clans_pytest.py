@@ -17,7 +17,7 @@ sys.modules['firebase_admin.firestore_async'] = mock_fa_async
 sys.modules['diseases'] = MagicMock()
 sys.modules['config'] = MagicMock()
 sys.modules['config'].CREATOR_ID = 999
-sys.modules['economy_utils'] = MagicMock()
+import economy_utils
 
 
 import rp_clans
@@ -53,7 +53,7 @@ async def test_duel_god_mode_creator_shoots(setup_duel):
     callback.message.chat.id = chat_id
 
     sys.modules['diseases'].get_active_diseases = AsyncMock(return_value=[])
-    sys.modules['economy_utils'].get_global_tax = AsyncMock(return_value=10)
+    economy_utils.get_global_tax = AsyncMock(return_value=10)
 
     with patch("rp_clans.update_user_balance", new_callable=AsyncMock) as mock_update, \
          patch("rp_clans.render_tactical_duel", new_callable=AsyncMock) as mock_render:

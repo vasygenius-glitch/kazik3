@@ -18,7 +18,7 @@ sys.modules['firebase_admin.firestore_async'] = mock_fa_async
 sys.modules['diseases'] = MagicMock()
 sys.modules['config'] = MagicMock()
 sys.modules['config'].CREATOR_ID = 999
-sys.modules['economy_utils'] = MagicMock()
+import economy_utils
 
 import rp_clans
 
