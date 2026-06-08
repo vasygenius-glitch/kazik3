@@ -35,6 +35,15 @@ async def cmd_set_judge(message: types.Message):
     target_name = escape_html(message.reply_to_message.from_user.full_name)
     await message.answer(f"👨‍⚖️ Пользователь <b>{target_name}</b> назначен официальным судьей этого чата!")
 
+@router.message(F.text & (F.text.lower().startswith("снять судью") | F.text.lower().startswith("/remove_judge")))
+async def cmd_remove_judge(message: types.Message):
+    from config import CREATOR_ID
+    if message.from_user.id != CREATOR_ID:
+        return await message.answer("Только Создатель бота может снимать судью.")
+
+    await set_chat_judge(message.chat.id, None)
+    await message.answer("👨‍⚖️ Текущий судья чата был отстранен от своих обязанностей!")
+
 
 @router.message(F.text & (F.text.lower().startswith("подать иск") | F.text.lower().startswith("/sue") | F.text.lower().startswith("суд") | F.text.lower().startswith("/court")))
 async def cmd_sue(message: types.Message):
