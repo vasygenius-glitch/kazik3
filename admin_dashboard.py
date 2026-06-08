@@ -1468,8 +1468,7 @@ async def cb_stop_group_say(callback: types.CallbackQuery, state: FSMContext):
     chat_id = cb_int(split_cb(callback.data), 3)
     await state.clear()
     await safe_answer(callback, "Трансляция остановлена")
-    callback.data = f"db_g_{chat_id}"
-    await cb_group_settings_view(callback, state)
+    await cb_group_settings_view(MockCallback(callback.message, callback.message.message_id, f"db_g_{chat_id}"), state)
 
 
 @router.message(AdminPanelState.waiting_for_say_text)

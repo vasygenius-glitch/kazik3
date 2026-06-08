@@ -790,8 +790,13 @@ async def cb_trade_execute(callback: types.CallbackQuery):
     await update_user_field(callback.message.chat.id, callback.from_user.id, 'crypto_portfolio', port)
     
     # Возвращаемся в cb_coin_view, чтобы картинка обновилась БЕСШОВНО (edit_media)
-    callback.data = f"cr_view_{cid}"
-    await cb_coin_view(callback)
+    class PseudoCallback:
+        def __init__(self, cb, new_data):
+            self.data = new_data
+            self.message = cb.message
+        async def answer(self, *args, **kwargs):
+            return await cb.answer(*args, **kwargs)
+    await cb_coin_view(PseudoCallback(callback, f"cr_view_{cid}"))
 
 @router.callback_query(F.data == "crypto_portfolio")
 async def cb_portfolio(callback: types.CallbackQuery):
