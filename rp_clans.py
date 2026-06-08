@@ -471,6 +471,7 @@ async def get_clan_ref(chat_id: int, clan_name: str):
     return db.collection('chats').document(str(chat_id)).collection('clans').document(clan_name)
 
 active_clan_invites = {}
+active_clan_raids = {}
 
 @router.message(Command("clan"))
 async def cmd_clan(message: types.Message):
@@ -500,6 +501,7 @@ async def cmd_clan(message: types.Message):
             "<code>/clan disband</code> — распустить клан (лидер)\n"
             "<code>/clan deposit [сумма]</code> — положить в казну\n"
             "<code>/clan withdraw [сумма]</code> — снять из казны (лидер)\n"
+            "<code>/clan raid [клан]</code> — совершить набег на другой клан\n"
             "<code>/clan list</code> — список всех кланов чата\n"
             "<code>/clan info</code> — детальная информация о клане"
         )
@@ -840,6 +842,82 @@ async def cmd_clan(message: types.Message):
         await update_user_balance(chat_id, user_id, net_amount)
         await clan_ref.update({'treasury': treasury - amount})
         await message.answer(f"💸 Вы сняли <b>{amount}</b> из казны. Удержан налог {tax_amount}. На руки получено: {net_amount}.")
+
+    elif action in ["raid", "attack"]:
+        if not clan_name:
+            return await message.answer("Вы не состоите в клане.")
+            
+        clan_ref = await get_clan_ref(chat_id, clan_name)
+        doc = await clan_ref.get()
+        clan_data = doc.to_dict()
+        
+        if user_id != clan_data['leader_id'] and user_id not in clan_data.get('deputy_ids', []):
+            return await message.answer("Организовывать набеги могут только Лидер и Заместители.")
+            
+        if len(args) < 3:
+            return await message.answer("Укажите клан для нападения: <code>/clan raid [Название]</code>")
+            
+        target_clan_name = " ".join(args[2:])
+        if target_clan_name.lower() == clan_name.lower():
+            return await message.answer("Нельзя напасть на свой же клан.")
+            
+        target_clan_ref = await get_clan_ref(chat_id, target_clan_name)
+        t_doc = await target_clan_ref.get()
+        
+        if not t_doc.exists:
+            return await message.answer("Вражеский клан не найден.")
+            
+        target_clan_data = t_doc.to_dict()
+        
+        my_treasury = clan_data.get('treasury', 0)
+        t_treasury = target_clan_data.get('treasury', 0)
+        
+        if my_treasury < 1000:
+            return await message.answer("В вашей казне должно быть минимум 1000 сыроежек для организации набега.")
+        if t_treasury < 1000:
+            return await message.answer("У вражеского клана слишком бедная казна (меньше 1000), набег не имеет смысла.")
+            
+        raid_key = f"{chat_id}_{clan_name}"
+        current_time = time.time()
+        if raid_key in active_clan_raids and current_time - active_clan_raids[raid_key] < 3600:
+            rem = 3600 - int(current_time - active_clan_raids[raid_key])
+            return await message.answer(f"Ваши бойцы устали. Следующий набег возможен через {rem//60} мин.")
+            
+        active_clan_raids[raid_key] = current_time
+        
+        import random
+        my_members = len(clan_data.get('members', []))
+        t_members = len(target_clan_data.get('members', []))
+        
+        base_chance = 50
+        bonus = (my_members - t_members) * 5
+        chance = max(10, min(90, base_chance + bonus))
+        
+        roll = random.randint(1, 100)
+        if roll <= chance:
+            steal_pct = random.randint(10, 25) / 100.0
+            stolen = int(t_treasury * steal_pct)
+            
+            await target_clan_ref.update({'treasury': t_treasury - stolen})
+            await clan_ref.update({'treasury': my_treasury + stolen})
+            
+            await message.answer(
+                f"⚔️ <b>УСПЕШНЫЙ НАБЕГ!</b>\n\n"
+                f"Ваш клан <b>{escape_html(clan_name)}</b> внезапно атаковал клан <b>{escape_html(target_clan_name)}</b>.\n"
+                f"Защитники были застигнуты врасплох!\n\n"
+                f"Вы разграбили вражескую казну и украли <b>{stolen}</b> сыроежек! 💰"
+            )
+        else:
+            lose_pct = random.randint(10, 25) / 100.0
+            lost = int(my_treasury * lose_pct)
+            
+            await clan_ref.update({'treasury': my_treasury - lost})
+            
+            await message.answer(
+                f"🛡 <b>ПРОВАЛ НАБЕГА!</b>\n\n"
+                f"Клан <b>{escape_html(target_clan_name)}</b> дал жесткий отпор вашему нападению.\n"
+                f"В панике ваши бойцы потеряли часть своей казны: <b>{lost}</b> сыроежек. 📉"
+            )
 
 # --- ОБРАБОТЧИК КНОПОК ДЛЯ КЛАНА ---
 @router.callback_query(F.data.startswith("claninv_"))
