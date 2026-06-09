@@ -12,3 +12,8 @@ except ValueError:
     CREATOR_ID = 5416583030
 
 CREATOR_IDS = {CREATOR_ID}
+
+# --- ЛЕТНИЙ СЕЗОН (Summer Season) ---
+SUMMER_COURAGE_ENABLED = os.getenv("SUMMER_COURAGE_ENABLED", "True").lower() == "true"
+SUMMER_WIN_CHANCE_BOOST = int(os.getenv("SUMMER_WIN_CHANCE_BOOST", "15"))
+SUMMER_DEPOSIT_BOOST = float(os.getenv("SUMMER_DEPOSIT_BOOST", "0.20"))

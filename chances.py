@@ -8,21 +8,33 @@ CHANCES_CACHE_TTL = 300.0
 async def get_game_chance(game_name: str) -> int:
     global _chances_cache, _chances_cache_time
     if time.time() - _chances_cache_time < CHANCES_CACHE_TTL:
-        return _chances_cache.get(game_name, -1)
-
-    db = get_db()
-    if db is None:
-        return _chances_cache.get(game_name, -1)
-    ref = db.collection('bot_settings').document('chances')
-    doc = await ref.get()
-
-    if doc.exists:
-        _chances_cache = doc.to_dict()
+        chance = _chances_cache.get(game_name, -1)
     else:
-        _chances_cache = {}
+        db = get_db()
+        if db is None:
+            chance = _chances_cache.get(game_name, -1)
+        else:
+            ref = db.collection('bot_settings').document('chances')
+            doc = await ref.get()
 
-    _chances_cache_time = time.time()
-    return _chances_cache.get(game_name, -1) # -1 означает честный рандом
+            if doc.exists:
+                _chances_cache = doc.to_dict()
+            else:
+                _chances_cache = {}
+
+            _chances_cache_time = time.time()
+            chance = _chances_cache.get(game_name, -1) # -1 означает честный рандом
+
+    # Apply Summer Win Chance Boost
+    from config import SUMMER_COURAGE_ENABLED, SUMMER_WIN_CHANCE_BOOST
+    if SUMMER_COURAGE_ENABLED:
+        from seasons import get_season_config
+        cfg = await get_season_config()
+        if cfg.get("active") and cfg.get("id") == "summer":
+            base_chance = 35 if chance == -1 else chance
+            return base_chance + SUMMER_WIN_CHANCE_BOOST
+
+    return chance
 
 def get_game_chance_sync(game_name: str) -> int:
     global _chances_cache

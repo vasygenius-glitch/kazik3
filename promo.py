@@ -1,7 +1,8 @@
 from aiogram import Router, types
 from aiogram.filters import Command
 from db import get_db
-from user_manager import update_user_balance
+from user_manager import update_user_balance, safe_get_snapshot
+from firebase_admin import firestore_async
 from creator import is_creator
 from escape import escape_html
 from utils import fire_and_forget
@@ -56,8 +57,7 @@ async def cmd_promo(message: types.Message):
     db = get_db()
     ref = db.collection('bot_settings').document('promocodes').collection('active').document(code)
 
-    from firebase_admin import firestore_async
-    from user_manager import safe_get_snapshot
+
 
     @firestore_async.async_transactional
     async def process_promo_activation_tx(transaction, promo_ref, u_id):
@@ -85,8 +85,19 @@ async def cmd_promo(message: types.Message):
         if error_msg:
             return await message.answer(error_msg)
 
-        await update_user_balance(chat_id, user_id, reward)
-        await message.answer(f"🎉 Вы успешно активировали промокод <b>{code}</b> и получили <b>{reward}</b> сыроежек!")
+        # Apply Summer Promo Boost
+        final_reward = reward
+        from config import SUMMER_COURAGE_ENABLED, SUMMER_DEPOSIT_BOOST
+        if SUMMER_COURAGE_ENABLED:
+            from seasons import get_season_config
+            cfg = await get_season_config()
+            if cfg.get("active") and cfg.get("id") == "summer":
+                final_reward = int(reward * (1 + SUMMER_DEPOSIT_BOOST))
+
+        await update_user_balance(chat_id, user_id, final_reward)
+        
+        bonus_text = f" (включая летний бонус +{int(SUMMER_DEPOSIT_BOOST * 100)}%)" if final_reward > reward else ""
+        await message.answer(f"🎉 Вы успешно активировали промокод <b>{code}</b> и получили <b>{final_reward}</b> сыроежек!{bonus_text}")
     except Exception as e:
         print(f"Promo activation error: {e}")
         await message.answer("❌ Произошла ошибка при активации промокода. Попробуйте позже.")
