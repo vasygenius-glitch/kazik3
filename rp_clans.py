@@ -613,7 +613,8 @@ async def cmd_clan(message: types.Message):
         target_data = await get_user_data(chat_id, target_id)
         if target_data.get('clan'): return await message.answer("Пользователь уже в клане.")
 
-        invite_id = f"{chat_id}_{clan_name}_{target_id}_{int(time.time())}"
+        import uuid
+        invite_id = uuid.uuid4().hex[:12]
         active_clan_invites[invite_id] = {'target': target_id, 'clan_name': clan_name}
 
         builder = InlineKeyboardBuilder()
