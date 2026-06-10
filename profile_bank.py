@@ -323,17 +323,9 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
         raise ValueError("У вас уже есть активный вклад в другом банке! Сначала снимите все средства.")
 
     # Записи
-    boosted_amount = amount
-    from config import SUMMER_COURAGE_ENABLED, SUMMER_DEPOSIT_BOOST
-    if SUMMER_COURAGE_ENABLED:
-        from seasons import get_season_config
-        cfg = await get_season_config()
-        if cfg.get("active") and cfg.get("id") == "summer":
-            boosted_amount = int(amount * (1 + SUMMER_DEPOSIT_BOOST))
-
     updates = {
         'balance': current_balance - amount,
-        'bank_deposit': current_deposit + boosted_amount,
+        'bank_deposit': current_deposit + amount,
         'bank_name': target_banker_id,
     }
     if current_deposit == 0:
@@ -344,13 +336,13 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
     else:
         await user_ref.update(updates)
 
-    new_capital = bank_data.get('capital', 0) + boosted_amount
+    new_capital = bank_data.get('capital', 0) + amount
     if transaction:
         transaction.update(bank_ref, {'capital': new_capital})
     else:
         await bank_ref.update({'capital': new_capital})
 
-    return amount, current_deposit + boosted_amount
+    return amount, current_deposit + amount
 
 
 @firestore_async.async_transactional
