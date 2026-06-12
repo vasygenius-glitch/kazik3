@@ -1,4 +1,5 @@
 from aiogram import Router, types, F
+from aiogram.filters import and_f, or_f
 from escape import escape_html
 from user_manager import get_user_data, update_user_balance
 from db import get_db
@@ -18,7 +19,7 @@ async def get_chat_judge(chat_id: int) -> int:
         return doc.to_dict().get('judge_id')
     return None
 
-@router.message(F.text & (F.text.lower().startswith("назначить судью") | F.text.lower().startswith("/set_judge")))
+@router.message(and_f(F.text, or_f(F.text.lower().startswith("назначить судью"), F.text.lower().startswith("/set_judge"))))
 async def cmd_set_judge(message: types.Message):
     from config import CREATOR_ID
     if message.from_user.id != CREATOR_ID:
@@ -35,7 +36,7 @@ async def cmd_set_judge(message: types.Message):
     target_name = escape_html(message.reply_to_message.from_user.full_name)
     await message.answer(f"👨‍⚖️ Пользователь <b>{target_name}</b> назначен официальным судьей этого чата!")
 
-@router.message(F.text & (F.text.lower().startswith("снять судью") | F.text.lower().startswith("/remove_judge")))
+@router.message(and_f(F.text, or_f(F.text.lower().startswith("снять судью"), F.text.lower().startswith("/remove_judge"))))
 async def cmd_remove_judge(message: types.Message):
     from config import CREATOR_ID
     if message.from_user.id != CREATOR_ID:
@@ -45,7 +46,7 @@ async def cmd_remove_judge(message: types.Message):
     await message.answer("👨‍⚖️ Текущий судья чата был отстранен от своих обязанностей!")
 
 
-@router.message(F.text & (F.text.lower().startswith("подать иск") | F.text.lower().startswith("/sue") | F.text.lower().startswith("суд") | F.text.lower().startswith("/court")))
+@router.message(and_f(F.text, or_f(F.text.lower().startswith("подать иск"), F.text.lower().startswith("/sue"), F.text.lower().startswith("суд"), F.text.lower().startswith("/court"))))
 async def cmd_sue(message: types.Message):
     if not message.reply_to_message:
         return await message.answer("Ответьте на сообщение пользователя, на которого хотите подать в суд.")
@@ -74,7 +75,7 @@ async def cmd_sue(message: types.Message):
     await message.answer(text)
 
 
-@router.message(F.text & (F.text.lower().startswith("приговор") | F.text.lower().startswith("/judge") | F.text.lower().startswith("осудить")))
+@router.message(and_f(F.text, or_f(F.text.lower().startswith("приговор"), F.text.lower().startswith("/judge"), F.text.lower().startswith("осудить"))))
 async def cmd_judge(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -109,12 +110,12 @@ async def cmd_judge(message: types.Message):
     except ValueError:
         return await message.answer("Сумма штрафа должна быть числом.")
 
-    res = await update_user_balance(chat_id, target_id, -fine, min_balance=0)
+    res = await update_user_balance(chat_id, target_id, -fine, min_balance=0, is_debt_repayment=False)
     actual_fine = fine
     if res is None:
         def_data = await get_user_data(chat_id, target_id)
         actual_fine = def_data.get('balance', 0)
-        await update_user_balance(chat_id, target_id, -actual_fine, min_balance=0)
+        await update_user_balance(chat_id, target_id, -actual_fine, min_balance=0, is_debt_repayment=False)
 
     target_name = escape_html(message.reply_to_message.from_user.full_name)
     judge_name = escape_html(message.from_user.full_name)
