@@ -452,6 +452,8 @@ def _default_user_data(full_name: str) -> dict:
         'is_banker': False,
         'debts': {},
         'escort_count': 0,
+        'meme_cards': {},
+        'opened_cases_count': 0,
     }
 
 
@@ -742,7 +744,13 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             except Exception as e:
                 logger.error("Tax redirect to bank error: %s", e)
 
-        total = base_bonus + extra_income - tax_amt
+        # Meme bonuses
+        meme_bonuses = get_user_meme_bonuses(data)
+        meme_mult = meme_bonuses['multiplier']
+        meme_flat = meme_bonuses['flat']
+        card_boost = int((base_bonus + extra_income) * meme_mult) + meme_flat
+
+        total = base_bonus + extra_income - tax_amt + card_boost
         if total <= 0:
             total = 0
 
@@ -762,6 +770,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         'car': car_income,
         'tax_percent': tax_percent,
         'tax_amount': tax_amt,
+        'meme_bonus': card_boost,
         'total': total,
         'is_banker_bonus': False,
     }
@@ -1110,3 +1119,61 @@ async def wipe_user_data(chat_id, user_id) -> bool:
 
         invalidate_user_cache(chat_id, user_id)
         return True
+
+
+# ============================================================
+# КОЛЛЕКЦИОННЫЕ КАРТОЧКИ
+# ============================================================
+def get_user_meme_bonuses(user_data: dict) -> dict:
+    """
+    Возвращает суммарные бонусы от карточек пользователя.
+    """
+    from cards_system import CARDS
+    meme_cards = user_data.get('meme_cards', {})
+    
+    total_multiplier = 0.0
+    total_flat = 0
+    
+    for card_id, count in meme_cards.items():
+        if count > 0 and card_id in CARDS:
+            card_info = CARDS[card_id]
+            total_multiplier += card_info.get('bonus_multiplier', 0.0) * count
+            total_flat += card_info.get('bonus_flat', 0) * count
+            
+    return {
+        'multiplier': total_multiplier,
+        'flat': total_flat
+    }
+
+
+async def buy_and_open_case_tr(transaction, chat_id, user_id, price_to_deduct: int, card_id: str):
+    """
+    Транзакционное списание денег и добавление мем-карточки в инвентарь пользователя.
+    """
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await safe_get_snapshot(transaction, ref)
+    if not snapshot.exists:
+        return False, "Пользователь не найден"
+
+    data = snapshot.to_dict() or {}
+    balance = int(data.get('balance', 0) or 0)
+    if balance < price_to_deduct:
+        return False, "Недостаточно денег"
+
+    meme_cards = dict(data.get('meme_cards') or {})
+    meme_cards[card_id] = meme_cards.get(card_id, 0) + 1
+    
+    opened_count = int(data.get('opened_cases_count', 0) or 0) + 1
+
+    updates = {
+        'balance': balance - price_to_deduct,
+        'meme_cards': meme_cards,
+        'opened_cases_count': opened_count
+    }
+
+    if transaction:
+        transaction.update(ref, updates)
+    else:
+        await ref.update(updates)
+
+    return True, None

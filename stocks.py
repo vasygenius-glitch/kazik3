@@ -107,8 +107,10 @@ async def get_stocks_db():
     cfg = await get_season_config()
     seasonal_stocks = cfg.get('strings', {}).get('stocks', {})
     
-    # Объединяем базовые и сезонные компании
-    ALL_COMPANIES = {**COMPANIES, **seasonal_stocks}
+    # Объединяем базовые и сезонные компании, гарантируя наличие ticker
+    ALL_COMPANIES = {}
+    for cid, info in {**COMPANIES, **seasonal_stocks}.items():
+        ALL_COMPANIES[cid] = {**info, 'ticker': info.get('ticker', cid.upper())}
     
     if doc.exists:
         data = doc.to_dict()
@@ -138,7 +140,11 @@ async def update_stocks_task():
             from seasons import get_season_config
             cfg = await get_season_config()
             seasonal_stocks = cfg.get('strings', {}).get('stocks', {})
-            ALL_COMPANIES = {**COMPANIES, **seasonal_stocks}
+            
+            # Объединяем базовые и сезонные компании, гарантируя наличие ticker
+            ALL_COMPANIES = {}
+            for cid, info in {**COMPANIES, **seasonal_stocks}.items():
+                ALL_COMPANIES[cid] = {**info, 'ticker': info.get('ticker', cid.upper())}
 
             data = doc.to_dict() if doc.exists else {}
             

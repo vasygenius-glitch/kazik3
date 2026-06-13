@@ -492,6 +492,10 @@ async def process_claim_bonus(callback: types.CallbackQuery):
         text += (
             f"🏢 Доход с бизнесов: <b>{receipt['business']}</b>\n"
             f"🚗 Доход с машин: <b>{receipt['car']}</b>\n"
+        )
+        if receipt.get('meme_bonus', 0) > 0:
+            text += f"🃏 Бонус от карточек: <b>+{receipt['meme_bonus']}</b>\n"
+        text += (
             f"➖ Налог ({receipt['tax_percent']}%): <b>-{receipt['tax_amount']}</b>\n"
             f"-----------------------\n"
             f"💰 Итого на руки: <b>{receipt['total']}</b> сыроежек"
