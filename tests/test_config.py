@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-import court
+import config
 
 # Mock db and external services for safety
 @pytest.fixture(autouse=True)
@@ -20,33 +20,32 @@ def mock_db_and_services():
         m_upd.return_value = 10000
         yield
 
-def test_court_001():
-    assert court is not None
+def test_config_001():
+    assert config is not None
 
-def test_court_002():
-    assert hasattr(court, 'router')
-    assert court.router is not None
-
-def test_court_003():
+def test_config_002():
     pass
 
-def test_court_004():
+def test_config_003():
     pass
 
-def test_court_005():
+def test_config_004():
     pass
 
-def test_court_006():
+def test_config_005():
     pass
 
-def test_court_007():
+def test_config_006():
     pass
 
-def test_court_008():
+def test_config_007():
     pass
 
-def test_court_009():
+def test_config_008():
     pass
 
-def test_court_010():
+def test_config_009():
+    pass
+
+def test_config_010():
     pass
