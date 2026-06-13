@@ -1,6 +1,6 @@
 from aiogram import Router, F, types
 from aiogram.filters import Command
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 import asyncio
@@ -148,13 +148,22 @@ def _calc_final_price(item: dict, balance: int, tax_rate: float) -> int:
 
 
 async def _safe_edit(message: types.Message, text: str, reply_markup=None):
-    """edit_text без падений при отсутствии изменений / устаревшем сообщении."""
+    """edit_text без падений при отсутствии изменений / устаревшем сообщении / флуде."""
     try:
         await message.edit_text(text, reply_markup=reply_markup)
+    except TelegramRetryAfter as e:
+        logger.warning("Flood limit exceeded in shop, sleeping for %ss", e.retry_after)
+        await asyncio.sleep(e.retry_after)
+        try:
+            await message.edit_text(text, reply_markup=reply_markup)
+        except Exception as ex:
+            logger.debug("Retry edit_text failed: %s", ex)
     except TelegramBadRequest as e:
         if "message is not modified" in str(e).lower():
             return
         logger.debug("edit_text failed: %s", e)
+    except Exception as e:
+        logger.debug("edit_text failed with exception: %s", e)
 
 
 # ─────────────────────────────────────────────────────────────

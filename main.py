@@ -1,6 +1,9 @@
 import asyncio
 import logging
 import sys
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, message="Detected filter.*positional arguments")
+
 
 from aiogram import Bot, Dispatcher
 from aiogram.enums import ParseMode
