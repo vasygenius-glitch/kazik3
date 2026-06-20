@@ -763,6 +763,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
 
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
+        await flush_user_cache_immediately(chat_id, user_id)
 
     return True, {
         'base': base_bonus,
@@ -1176,4 +1177,4 @@ async def buy_and_open_case_tr(transaction, chat_id, user_id, price_to_deduct: i
     else:
         await ref.update(updates)
 
-    return True, None
+    return True, None

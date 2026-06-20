@@ -362,6 +362,24 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     current_deposit = user_data.get('bank_deposit', 0)
     current_balance = int(user_data.get('balance', 0) or 0)
 
+    # Recalculate deposit based on accrued interest
+    deposit_start_time = user_data.get('deposit_start_time', 0)
+    if deposit_start_time > 0 and current_deposit > 0:
+        days_held = int((time.time() - deposit_start_time) // 86400)
+        if days_held > 0:
+            rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
+            loyalty_bonus = min(5.0, days_held * 0.5)
+            final_rate = rate + loyalty_bonus
+            interest = int(current_deposit * (final_rate / 100) * days_held)
+            if interest > 0:
+                current_deposit += interest
+                if doc_snapshot.exists:
+                    new_capital = bank_data.get('capital', 0) - interest
+                    if transaction:
+                        transaction.update(bank_ref, {'capital': new_capital})
+                    else:
+                        await bank_ref.update({'capital': new_capital})
+
     if amount == -1:  # all
         amount = current_deposit
 
@@ -387,6 +405,8 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
     if current_deposit - amount <= 0:
         updates['bank_name'] = None
         updates['deposit_start_time'] = 0
+    else:
+        updates['deposit_start_time'] = int(time.time())
 
     if transaction:
         transaction.update(user_ref, updates)
@@ -476,6 +496,25 @@ async def cmd_bank(message: types.Message):
     data = await get_user_data(chat_id, user_id)
     current_deposit = data.get('bank_deposit', 0)
     current_banker_id = data.get('bank_name')
+
+    if action == "withdraw":
+        if not current_banker_id:
+            last_daily = data.get('last_daily_time', 0)
+            dep_start = data.get('deposit_start_time', 0)
+            start_time = last_daily if last_daily > 0 else dep_start
+            if start_time > 0 and current_deposit > 0:
+                days_held = int((time.time() - start_time) // 86400)
+                if days_held > 0:
+                    temp_dep = current_deposit
+                    for _ in range(days_held):
+                        if temp_dep <= 100_000_000:
+                            income = int(temp_dep * 0.01)
+                        elif temp_dep <= 1_000_000_000:
+                            income = int(temp_dep * 0.005)
+                        else:
+                            income = int(temp_dep * 0.002)
+                        temp_dep += income
+                    current_deposit = temp_dep
 
     amount_str = args[2].lower()
     is_all = amount_str in ALL_KEYWORDS
@@ -579,6 +618,12 @@ async def cmd_bank(message: types.Message):
                 actual_withdraw = min(current_deposit if is_all else amount, current_deposit)
                 await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - actual_withdraw)
                 await update_user_balance(chat_id, user_id, actual_withdraw)
+                if current_deposit - actual_withdraw <= 0:
+                    await update_user_field(chat_id, user_id, 'deposit_start_time', 0)
+                else:
+                    await update_user_field(chat_id, user_id, 'deposit_start_time', int(time.time()))
+                    if data.get('last_daily_time', 0) > 0:
+                        await update_user_field(chat_id, user_id, 'last_daily_time', int(time.time()))
 
                 # --- Логирование снятия со старого системного счета ---
                 try:

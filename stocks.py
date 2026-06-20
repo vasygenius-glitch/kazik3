@@ -9,6 +9,7 @@ from typing import Dict, Any
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_agg import FigureCanvasAgg
+from firebase_admin import firestore_async
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -308,6 +309,41 @@ async def cb_stk_buy(callback: types.CallbackQuery):
     await callback.answer(f"✅ Куплено {qty} акций {ALL_COMPANIES[cid]['ticker']}!")
     await cb_stk_view(callback)
 
+@firestore_async.async_transactional
+async def sell_stocks_tx(transaction, chat_id, user_id, cid, qty_str, price, base_tax):
+    from user_manager import get_user_ref, safe_get_snapshot
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await safe_get_snapshot(transaction, ref)
+    if not snapshot.exists:
+        return False, 0, 0, 0, "Пользователь не найден"
+        
+    ud = snapshot.to_dict() or {}
+    portfolio = dict(ud.get('stocks_portfolio', {}))
+    
+    if cid not in portfolio or portfolio[cid] <= 0:
+        return False, 0, 0, 0, "У вас нет акций этой компании."
+        
+    qty = portfolio[cid] if qty_str == "all" else int(qty_str)
+    if portfolio[cid] < qty:
+        return False, 0, 0, 0, "Недостаточно акций для продажи."
+        
+    tax_rate = calculate_progressive_tax(ud.get('balance', 0), base_tax, ud.get('skills', {}).get('negotiation', 0))
+    total_tax = 5 + tax_rate
+    profit = int((price * qty) * (1 - total_tax / 100))
+    
+    portfolio[cid] -= qty
+    if portfolio[cid] <= 0:
+        del portfolio[cid]
+        
+    updates = {
+        'balance': ud.get('balance', 0) + profit,
+        'stocks_portfolio': portfolio
+    }
+    
+    transaction.update(ref, updates)
+    return True, profit, total_tax, qty, None
+
+
 @router.callback_query(F.data.startswith("stk_sell_"))
 async def cb_stk_sell(callback: types.CallbackQuery):
     parts = callback.data.split("_")
@@ -317,37 +353,22 @@ async def cb_stk_sell(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
     
-    from user_manager import get_user_lock, set_in_cache, mark_dirty
+    data, ALL_COMPANIES = await get_stocks_db()
+    price = data.get('prices', {}).get(cid, [1000])[-1]
+    base_tax = await get_global_tax()
+    
+    from user_manager import get_user_lock, invalidate_user_cache, flush_user_cache_immediately
     lock = get_user_lock(chat_id, user_id)
     async with lock:
-        ud = await get_user_data(chat_id, user_id)
-        portfolio = dict(ud.get('stocks_portfolio', {}))
-        
-        if cid not in portfolio or portfolio[cid] <= 0:
-            return await callback.answer("❌ У вас нет акций этой компании.", show_alert=True)
-        
-        qty = portfolio[cid] if qty_str == "all" else int(qty_str)
-        if portfolio[cid] < qty:
-            return await callback.answer("❌ Недостаточно акций для продажи.", show_alert=True)
-        
-        data, ALL_COMPANIES = await get_stocks_db()
-        price = data.get('prices', {}).get(cid, [1000])[-1]
-        
-        # Комиссия при продаже (фиксированная 5% + прогрессивный налог)
-        base_tax = await get_global_tax()
-        tax_rate = calculate_progressive_tax(ud.get('balance', 0), base_tax, ud.get('skills', {}).get('negotiation', 0))
-        
-        total_tax = 5 + tax_rate
-        profit = int((price * qty) * (1 - total_tax / 100))
-        
-        ud['balance'] = ud.get('balance', 0) + profit
-        portfolio[cid] -= qty
-        if portfolio[cid] <= 0:
-            del portfolio[cid]
-        ud['stocks_portfolio'] = portfolio
-        
-        set_in_cache(chat_id, user_id, ud)
-        mark_dirty(chat_id, user_id)
+        await flush_user_cache_immediately(chat_id, user_id)
+        success, profit, total_tax, qty, error_msg = await sell_stocks_tx(
+            get_db().transaction(), chat_id, user_id, cid, qty_str, price, base_tax
+        )
+        if success:
+            invalidate_user_cache(chat_id, user_id)
+            
+    if not success:
+        return await callback.answer(f"❌ {error_msg}", show_alert=True)
     
     await callback.answer(f"✅ Продано {qty} акций! Вы получили {fmt(profit)} сыр (налог {total_tax}%).")
     await cb_stk_view(callback)

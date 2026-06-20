@@ -1,3 +1,4 @@
+from decimal import Decimal
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -139,12 +140,14 @@ def _calc_user_tax(data: dict, base_tax: float) -> float:
 
 def _calc_final_price(item: dict, balance: int, tax_rate: float) -> int:
     """Итоговая цена покупки с учётом налога и наценки на роскошь для бизнесов."""
-    price = item["price"]
-    markup = int(price * (tax_rate / 100.0))
+    price = Decimal(item["price"])
+    tax_dec = Decimal(str(tax_rate))
+    markup = price * (tax_dec / Decimal('100'))
     if item.get("cat") == "biz":
         biz_markup_percent = calculate_biz_markup(balance)
-        markup += int(price * (biz_markup_percent / 100.0))
-    return price + markup
+        biz_dec = Decimal(str(biz_markup_percent))
+        markup += price * (biz_dec / Decimal('100'))
+    return int(price + markup)
 
 
 async def _safe_edit(message: types.Message, text: str, reply_markup=None):

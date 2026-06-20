@@ -38,7 +38,14 @@ def _cleanup_expired_games() -> None:
     """Удаляет просроченные мини-игры из памяти."""
     now = time.time()
     for store in (active_work_games, active_crime_games):
-        expired = [k for k, v in store.items() if now > v.get('expires', 0)]
+        expired = []
+        for k, v in list(store.items()):
+            if not isinstance(v, dict):
+                expired.append(k)
+                continue
+            exp = v.get('expires')
+            if exp is None or now > exp:
+                expired.append(k)
         for k in expired:
             store.pop(k, None)
 
