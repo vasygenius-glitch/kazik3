@@ -160,6 +160,16 @@ class AdminPanelState(StatesGroup):
     waiting_for_player_escort = State()
     waiting_for_player_role = State()
 
+    # Крипта
+    waiting_for_coin_ticker = State()
+    waiting_for_coin_name = State()
+    waiting_for_coin_price = State()
+    waiting_for_coin_crash = State()
+
+    # Доп. команды
+    waiting_for_eval_code = State()
+    waiting_for_lock_chat_id = State()
+
 
 # ==============================================================================
 #  УНИВЕРСАЛЬНЫЕ БЕЗОПАСНЫЕ ОБЁРТКИ
@@ -1523,12 +1533,17 @@ async def cb_global_settings_view(callback: types.CallbackQuery, state: FSMConte
     builder.button(text="📝 Белый список групп", callback_data=f"db_gwl_{chat_id}")
     builder.button(text="🏷 Управление промокодами", callback_data=f"db_promos_list_{chat_id}")
     builder.button(text="🧹 Глобальный вайп экономики", callback_data=f"db_gwipes_{chat_id}")
+    
+    # Новые разделы управления
+    builder.button(text="📦 Резервные копии (Бэкапы)", callback_data=f"db_backups_menu_{chat_id}")
+    builder.button(text="🪙 Управление криптой", callback_data=f"db_crypto_menu_{chat_id}")
+    builder.button(text="🤖 Дополнительные команды", callback_data=f"db_extra_cmds_{chat_id}")
 
     if chat_id != 0:
         builder.button(text="⬅️ Назад к меню группы", callback_data=f"db_m_{chat_id}")
     else:
         builder.button(text="⬅️ К выбору чатов", callback_data="db_sc_0")
-    builder.adjust(2, 2, 2, 1, 1)
+    builder.adjust(2, 2, 2, 1, 1, 1, 1, 1)
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -3366,4 +3381,776 @@ async def process_promo_max_uses_input(message: types.Message, state: FSMContext
     await cb_promos_list(
         MockCallback(message, data.get("menu_message_id"), f"db_promos_list_{chat_id}"), state
     )
+    await safe_delete(message)
+
+
+# ==============================================================================
+# РАЗДЕЛ: РЕЗЕРВНОЕ КОПИРОВАНИЕ (БЭКАПЫ) В МЕНЮ
+# ==============================================================================
+
+@router.callback_query(F.data.startswith("db_backups_menu_"))
+@creator_only
+async def cb_backups_menu(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    await state.clear()
+    
+    db = get_db()
+    text = (
+        "📦 <b>Управление резервными копиями базы данных</b>\n\n"
+        "Здесь вы можете вручную создавать резервные копии (users, banks, clans) "
+        "и просматривать список доступных точек восстановления.\n\n"
+        "Выберите копию для просмотра деталей и отката:"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Создать новый бэкап", callback_data=f"db_backup_create_{chat_id}")
+    
+    try:
+        docs = await db.collection('backups').order_by('timestamp', direction='descending').limit(15).get()
+        for doc in docs:
+            d = doc.to_dict()
+            dt_str = d.get('datetime', 'Unknown')
+            builder.button(text=f"📅 {doc.id} ({dt_str})", callback_data=f"db_backup_view_{chat_id}_{doc.id}")
+    except Exception as e:
+        text += f"\n\n❌ <i>Ошибка загрузки бэкапов: {e}</i>"
+        
+    builder.button(text="⬅️ Назад в глобальные", callback_data=f"db_glob_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_backup_create_"))
+@creator_only
+async def cb_backup_create(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    await safe_answer(callback, "⏳ Создаю бэкап...")
+    
+    from backup_system import backup_database
+    success, result = await backup_database()
+    
+    if success:
+        await safe_answer(callback, "✅ Бэкап успешно создан!", show_alert=True)
+    else:
+        await safe_answer(callback, f"❌ Ошибка: {result}", show_alert=True)
+        
+    await cb_backups_menu(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_backup_view_"))
+@creator_only
+async def cb_backup_view(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    backup_id = "_".join(parts[4:])
+    
+    import gzip
+    import json
+    import base64
+    
+    db = get_db()
+    doc = await db.collection('backups').document(backup_id).get()
+    
+    if not doc.exists:
+        return await safe_answer(callback, "❌ Бэкап не найден.", show_alert=True)
+        
+    d = doc.to_dict()
+    payload = d.get("payload", "")
+    dt_str = d.get("datetime", "Unknown")
+    ts = d.get("timestamp", 0)
+    
+    info_str = "❌ Нет данных"
+    if payload:
+        try:
+            compressed_bytes = base64.b64decode(payload)
+            json_bytes = gzip.decompress(compressed_bytes)
+            backup_data = json.loads(json_bytes.decode('utf-8'))
+            chats = backup_data.get("chats", {})
+            num_chats = len(chats)
+            num_users = sum(len(c.get("users", {})) for c in chats.values())
+            num_banks = sum(len(c.get("banks", {})) for c in chats.values())
+            num_clans = sum(len(c.get("clans", {})) for c in chats.values())
+            info_str = (
+                f"🏢 Чатов: {num_chats}\n"
+                f"👤 Игроков: {num_users}\n"
+                f"🏦 Банков: {num_banks}\n"
+                f"🛡 Кланов: {num_clans}"
+            )
+        except Exception as e:
+            info_str = f"⚠️ Ошибка разбора: {e}"
+            
+    text = (
+        f"📄 <b>Информация о бэкапе:</b> <code>{backup_id}</code>\n\n"
+        f"📅 Дата создания: <b>{dt_str} UTC</b>\n"
+        f"🔑 Timestamp: <code>{ts}</code>\n\n"
+        f"📊 <b>Содержимое бэкапа:</b>\n{info_str}\n\n"
+        f"⚠️ Восстановление сотрет текущие данные в чатах!"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Восстановить базу из бэкапа", callback_data=f"db_backup_rest_conf_{chat_id}_{backup_id}")
+    builder.button(text="⬅️ К списку бэкапов", callback_data=f"db_backups_menu_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_backup_rest_conf_"))
+@creator_only
+async def cb_backup_restore_confirm(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 4, default=0)
+    backup_id = "_".join(parts[5:])
+    
+    text = (
+        f"⚠️⚠️⚠️ <b>ВНИМАНИЕ! ПОЛНЫЙ ОТКАТ БАЗЫ ДАННЫХ</b> ⚠️⚠️⚠️\n\n"
+        f"Вы действительно хотите восстановить базу данных из копии <code>{backup_id}</code>?\n\n"
+        f"<b>ЭТО ДЕЙСТВИЕ:</b>\n"
+        f"1. Полностью сотрет всех игроков, банки и кланы в чатах.\n"
+        f"2. Запишет данные из выбранного бэкапа.\n"
+        f"3. Сбросит кэш.\n\n"
+        f"Убедитесь, что бот остановлен на время восстановления во избежание сбоев кэша!"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔥 Да, начать восстановление", callback_data=f"db_backup_rest_exec_{chat_id}_{backup_id}")
+    builder.button(text="❌ Отмена", callback_data=f"db_backup_view_{chat_id}_{backup_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_backup_rest_exec_"))
+@creator_only
+async def cb_backup_restore_execute(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 4, default=0)
+    backup_id = "_".join(parts[5:])
+    
+    await safe_edit(callback.message, f"🔄 <i>Восстанавливаю базу данных из {backup_id}... Пожалуйста, подождите.</i>")
+    await safe_answer(callback, "🔄 Запуск восстановления...")
+    
+    from backup_system import restore_database
+    success, error = await restore_database(backup_id)
+    
+    if success:
+        text = f"✅ База данных успешно восстановлена из резервной копии <code>{backup_id}</code>!"
+        await safe_answer(callback, "✅ Успешно восстановлено!", show_alert=True)
+    else:
+        text = f"❌ Ошибка восстановления: <code>{error}</code>"
+        await safe_answer(callback, f"❌ Ошибка: {error}", show_alert=True)
+        
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Назад", callback_data=f"db_backup_view_{chat_id}_{backup_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    
+    try:
+        from config import CREATOR_ID
+        await callback.bot.send_message(chat_id=CREATOR_ID, text=text, parse_mode="HTML")
+    except Exception:
+        pass
+
+
+# ==============================================================================
+# РАЗДЕЛ: УПРАВЛЕНИЕ КРИПТОЙ В МЕНЮ
+# ==============================================================================
+
+@router.callback_query(F.data.startswith("db_crypto_menu_"))
+@creator_only
+async def cb_crypto_menu(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    await state.clear()
+    
+    from crypto import get_all_coins
+    coins = await get_all_coins()
+    
+    text = (
+        "🪙 <b>Управление криптовалютой на бирже</b>\n\n"
+        "Здесь вы можете управлять листингом монет, изменять курс "
+        "и делать искусственные пампы или дампы (краш).\n\n"
+        "Выберите монету для настроек или создайте новую:"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="➕ Создать новую монету (Листинг)", callback_data=f"db_crypto_add_{chat_id}")
+    
+    for cid, coin in coins.items():
+        price = coin["prices"][-1] if coin.get("prices") else 0
+        name = coin.get("name", "Unknown")
+        builder.button(text=f"🪙 {coin['ticker']} ({name}) — {fmt_money(price)} сыр.", callback_data=f"db_crypto_cview_{chat_id}_{cid}")
+        
+    builder.button(text="⬅️ Назад в глобальные", callback_data=f"db_glob_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_crypto_add_"))
+@creator_only
+async def cb_crypto_add(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    await state.set_state(AdminPanelState.waiting_for_coin_ticker)
+    await state.update_data(chat_id=chat_id, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_crypto_menu_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(
+        callback.message,
+        "🪙 <b>Листинг новой монеты — Шаг 1</b>\n\nВведите краткий ТИКЕР монеты (например, SOL, максимум 8 букв):",
+        builder.as_markup()
+    )
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_coin_ticker)
+@creator_only
+async def process_coin_ticker_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+    ticker = message.text.strip().lower()[:8]
+    
+    if not ticker.isalnum():
+        await message.answer("❌ Тикер должен содержать только буквы и цифры. Введите еще раз:")
+        return
+        
+    from crypto import get_all_coins
+    coins = await get_all_coins()
+    if ticker in coins:
+        await message.answer("❌ Такой тикер уже занят другой монетой. Введите другой:")
+        return
+        
+    await state.set_state(AdminPanelState.waiting_for_coin_name)
+    await state.update_data(coin_ticker=ticker)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_crypto_menu_{chat_id}")
+    builder.adjust(1)
+    
+    await message.answer(
+        f"🪙 <b>Монета {ticker.upper()}</b>\n\nШаг 2: Введите полное название монеты (например, Solana, максимум 32 символа):",
+        reply_markup=builder.as_markup()
+    )
+    await safe_delete(message)
+
+
+@router.message(AdminPanelState.waiting_for_coin_name)
+@creator_only
+async def process_coin_name_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+    ticker = data["coin_ticker"]
+    name = escape_html(message.text.strip()[:32])
+    
+    start_price = random.randint(100, 500)
+    
+    from crypto import get_all_coins, update_coins
+    coins = await get_all_coins()
+    
+    coins[ticker] = {
+        "name": name,
+        "ticker": ticker.upper(),
+        "prices": [start_price],
+        "creator": message.from_user.id
+    }
+    await update_coins(coins)
+    
+    await message.answer(
+        f"✅ Монета <b>{name}</b> ({ticker.upper()}) успешно добавлена на биржу!\n"
+        f"💰 Начальный курс: {fmt_money(start_price)} сыр."
+    )
+    await state.clear()
+    
+    await cb_crypto_menu(MockCallback(message, data.get("menu_message_id"), f"db_crypto_menu_{chat_id}"), state)
+    await safe_delete(message)
+
+
+@router.callback_query(F.data.startswith("db_crypto_cview_"))
+@creator_only
+async def cb_crypto_coin_view(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    ticker = parts[4].lower()
+    
+    from crypto import get_all_coins
+    coins = await get_all_coins()
+    
+    if ticker not in coins:
+        return await safe_answer(callback, "❌ Монета не найдена.", show_alert=True)
+        
+    coin = coins[ticker]
+    prices = coin.get("prices", [100])
+    price = prices[-1]
+    name = coin.get("name", "Unknown")
+    creator_id = coin.get("creator", "Админ")
+    
+    text = (
+        f"🪙 <b>Управление монетой {coin['ticker']} ({name})</b>\n\n"
+        f"💰 Текущая цена: <b>{fmt_money(price)} сыр.</b>\n"
+        f"👤 ID создателя: <code>{creator_id}</code>\n"
+        f"📈 Длина истории цен: {len(prices)} тиков\n\n"
+        f"Выберите действие для монеты:"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💸 Изменить курс (вручную)", callback_data=f"db_crypto_pr_{chat_id}_{ticker}")
+    builder.button(text="📈 Памп / 📉 Дамп (Краш)", callback_data=f"db_crypto_cr_{chat_id}_{ticker}")
+    builder.button(text="🗑 Делистинг (Удалить монету)", callback_data=f"db_crypto_del_{chat_id}_{ticker}")
+    builder.button(text="⬅️ Назад к списку", callback_data=f"db_crypto_menu_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_crypto_pr_"))
+@creator_only
+async def cb_crypto_price_prompt(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    ticker = parts[4].lower()
+    
+    await state.set_state(AdminPanelState.waiting_for_coin_price)
+    await state.update_data(chat_id=chat_id, coin_ticker=ticker, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_crypto_cview_{chat_id}_{ticker}")
+    builder.adjust(1)
+    
+    await safe_edit(
+        callback.message,
+        f"💸 <b>Изменение курса {ticker.upper()}</b>\n\nВведите новое значение курса монеты (целое число больше нуля):",
+        builder.as_markup()
+    )
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_coin_price)
+@creator_only
+async def process_coin_price_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id, ticker = data["chat_id"], data["coin_ticker"]
+    
+    price = parse_int(message.text, allow_negative=False, minimum=1)
+    if price is None:
+        await message.answer("❌ Курс монеты должен быть целым числом больше нуля. Попробуйте еще раз:")
+        return
+        
+    from crypto import get_all_coins, update_coins
+    coins = await get_all_coins()
+    if ticker in coins:
+        coins[ticker].setdefault("prices", [100]).append(price)
+        await update_coins(coins)
+        await message.answer(f"✅ Курс монеты <b>{ticker.upper()}</b> изменен на <b>{fmt_money(price)} сыр.</b>")
+        
+    await state.clear()
+    await cb_crypto_coin_view(MockCallback(message, data.get("menu_message_id"), f"db_crypto_cview_{chat_id}_{ticker}"), state)
+    await safe_delete(message)
+
+
+@router.callback_query(F.data.startswith("db_crypto_cr_"))
+@creator_only
+async def cb_crypto_crash_prompt(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    ticker = parts[4].lower()
+    
+    await state.set_state(AdminPanelState.waiting_for_coin_crash)
+    await state.update_data(chat_id=chat_id, coin_ticker=ticker, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_crypto_cview_{chat_id}_{ticker}")
+    builder.adjust(1)
+    
+    await safe_edit(
+        callback.message,
+        f"📈📉 <b>Памп / Дамп монеты {ticker.upper()}</b>\n\n"
+        f"Введите процент изменения курса монеты (целое число от -99 до +1000).\n"
+        f"Например: <code>+50</code> увеличит курс наполовину, а <code>-30</code> обвалит на 30%:",
+        builder.as_markup()
+    )
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_coin_crash)
+@creator_only
+async def process_coin_crash_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id, ticker = data["chat_id"], data["coin_ticker"]
+    
+    percent = parse_int(message.text, allow_negative=True)
+    if percent is None or percent < -99 or percent > 1000:
+        await message.answer("❌ Процент изменения должен быть целым числом в диапазоне от -99 до +1000. Введите снова:")
+        return
+        
+    from crypto import get_all_coins, update_coins
+    coins = await get_all_coins()
+    if ticker in coins:
+        prices = coins[ticker].setdefault("prices", [100])
+        last_price = prices[-1]
+        
+        multiplier = 1 + (percent / 100.0)
+        new_price = max(1, int(last_price * multiplier))
+        
+        prices.append(new_price)
+        await update_coins(coins)
+        
+        sign = "+" if percent >= 0 else ""
+        await message.answer(f"📊 Курс монеты <b>{ticker.upper()}</b> изменен на <b>{sign}{percent}%</b>! Текущая цена: <b>{fmt_money(new_price)} сыр.</b>")
+        
+    await state.clear()
+    await cb_crypto_coin_view(MockCallback(message, data.get("menu_message_id"), f"db_crypto_cview_{chat_id}_{ticker}"), state)
+    await safe_delete(message)
+
+
+@router.callback_query(F.data.startswith("db_crypto_del_"))
+@creator_only
+async def cb_crypto_del_confirm(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    ticker = parts[4].lower()
+    
+    from crypto import get_all_coins
+    coins = await get_all_coins()
+    if ticker not in coins:
+        return await safe_answer(callback, "❌ Монета не найдена.", show_alert=True)
+        
+    price = coins[ticker]["prices"][-1]
+    
+    text = (
+        f"⚠️⚠️⚠️ <b>ДЕЛИСТИНГ МОНЕТЫ {ticker.upper()}</b> ⚠️⚠️⚠️\n\n"
+        f"Вы действительно хотите полностью удалить монету <b>{ticker.upper()}</b>?\n\n"
+        f"<b>ЭТО ДЕЙСТВИЕ:</b>\n"
+        f"1. Удалит монету с биржи безвозвратно.\n"
+        f"2. Возвратит баланс в сыроежках ВСЕМ владельцам во всех чатах "
+        f"по текущей цене <b>{fmt_money(price)} сыр.</b> за единицу.\n\n"
+        f"Это тяжелая операция, которая сканирует всю БД!"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔥 Да, удалить и вернуть средства", callback_data=f"db_crypto_dexec_{chat_id}_{ticker}")
+    builder.button(text="❌ Отмена", callback_data=f"db_crypto_cview_{chat_id}_{ticker}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_crypto_dexec_"))
+@creator_only
+async def cb_crypto_del_execute(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    ticker = parts[4].lower()
+    
+    await safe_edit(callback.message, f"🗑 <i>Провожу делистинг монеты {ticker.upper()}... Пожалуйста, подождите.</i>")
+    await safe_answer(callback, "🔄 Запуск делистинга...")
+    
+    from crypto import get_all_coins
+    coins = await get_all_coins()
+    
+    if ticker not in coins:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="⬅️ Назад", callback_data=f"db_crypto_menu_{chat_id}")
+        await safe_edit(callback.message, "❌ Ошибка: монета не найдена.", builder.as_markup())
+        return
+        
+    last_price = coins[ticker]["prices"][-1]
+    db = get_db()
+    
+    refunded_count = 0
+    total_refund = 0
+    
+    try:
+        from firebase_admin import firestore_async
+        chats_ref = db.collection('chats')
+        chats_docs = await chats_ref.get()
+        
+        for chat_doc in chats_docs:
+            c_id = chat_doc.id
+            users_ref = chats_ref.document(c_id).collection('users')
+            users_docs = await users_ref.get()
+            
+            for user_doc in users_docs:
+                u_data = user_doc.to_dict() or {}
+                port = u_data.get('crypto_portfolio', {})
+                
+                if ticker in port:
+                    qty = port[ticker]
+                    if qty > 0:
+                        refund_amount = qty * last_price
+                        del port[ticker]
+                        
+                        await users_ref.document(user_doc.id).update({
+                            'balance': firestore_async.Increment(refund_amount),
+                            'crypto_portfolio': port
+                        })
+                        from user_manager import invalidate_user_cache
+                        try:
+                            invalidate_user_cache(int(c_id), int(user_doc.id))
+                        except Exception:
+                            pass
+                            
+                        refunded_count += 1
+                        total_refund += refund_amount
+                        
+        await db.collection('bot_settings').document('crypto_coins').update({
+            f"coins.{ticker}": firestore_async.DELETE_FIELD
+        })
+        
+        text = (
+            f"🗑 Монета <b>{ticker.upper()}</b> была успешно удалена с биржи (делистинг).\n\n"
+            f"💰 Средства возвращены {refunded_count} игрокам во всех чатах.\n"
+            f"💵 Всего выплачено: <b>{fmt_money(total_refund)} сыр.</b> (по цене {fmt_money(last_price)} сыр./ед.)."
+        )
+        await safe_answer(callback, "✅ Делистинг выполнен!", show_alert=True)
+    except Exception as e:
+        text = f"❌ Ошибка в процессе делистинга: <code>{e}</code>"
+        await safe_answer(callback, f"❌ Ошибка: {e}", show_alert=True)
+        
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ В крипто-меню", callback_data=f"db_crypto_menu_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+
+
+# ==============================================================================
+# РАЗДЕЛ: ДОПОЛНИТЕЛЬНЫЕ АДМИН-КОМАНДЫ В МЕНЮ
+# ==============================================================================
+
+@router.callback_query(F.data.startswith("db_extra_cmds_"))
+@creator_only
+async def cb_extra_cmds_menu(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    await state.clear()
+    
+    text = (
+        "🤖 <b>Панель дополнительных команд Создателя</b>\n\n"
+        "Используйте эти кнопки как быстрые ярлыки вместо ручного ввода команд в чате.\n"
+        "Здесь собрано полное управление состоянием бота:"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧹 Сбросить все кэши (Invalidate)", callback_data=f"db_ext_ccache_{chat_id}")
+    builder.button(text="💼 Управление банкирами", callback_data=f"db_ext_bankers_{chat_id}")
+    builder.button(text="🔒 Заблокировать/Разблокировать группу", callback_data=f"db_ext_lock_{chat_id}")
+    builder.button(text="📟 Выполнить Python-код", callback_data=f"db_ext_eval_{chat_id}")
+    builder.button(text="⬅️ Назад в глобальные", callback_data=f"db_glob_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_ext_ccache_"))
+@creator_only
+async def cb_extra_clear_cache(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    
+    from user_manager import _user_cache, _username_to_id_cache
+    from profile_bank import _bank_cache
+    
+    _user_cache.clear()
+    _username_to_id_cache.clear()
+    _bank_cache.clear()
+    
+    await safe_answer(callback, "✅ Все локальные кэши успешно сброшены!", show_alert=True)
+    await cb_extra_cmds_menu(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_ext_bankers_"))
+@creator_only
+async def cb_extra_bankers(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    
+    db = get_db()
+    text = "💼 <b>Список официальных Банкиров во всех чатах:</b>\n\n"
+    
+    builder = InlineKeyboardBuilder()
+    
+    try:
+        chats_docs = await db.collection('chats').get()
+        found_any = False
+        for chat_doc in chats_docs:
+            c_id = chat_doc.id
+            whitelist = await get_whitelist()
+            chat_title = whitelist.get(int(c_id), f"Чат {c_id}")
+            
+            users_docs = await db.collection('chats').document(c_id).collection('users').where('is_banker', '==', True).get()
+            for u_doc in users_docs:
+                u_data = u_doc.to_dict()
+                username = u_data.get('username', 'NoUsername')
+                balance = u_data.get('balance', 0)
+                text += f"• 🏢 {chat_title}: @{username} (<code>{u_doc.id}</code>) — {fmt_money(balance)} сыр.\n"
+                builder.button(
+                    text=f"❌ Разжаловать @{username} ({chat_title})",
+                    callback_data=f"db_ext_delbanker_{chat_id}_{c_id}_{u_doc.id}"
+                )
+                found_any = True
+                
+        if not found_any:
+            text += "<i>Банкиры не найдены. Назначить банкира можно только в группе ответом на сообщение командой <code>/setbanker</code>.</i>"
+    except Exception as e:
+        text += f"❌ Ошибка получения банкиров: {e}"
+        
+    builder.button(text="⬅️ Назад", callback_data=f"db_extra_cmds_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_ext_delbanker_"))
+@creator_only
+async def cb_extra_delbanker(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id = cb_int(parts, 3, default=0)
+    target_chat_id = parts[4]
+    target_user_id = parts[5]
+    
+    from user_manager import update_user_field, invalidate_user_cache
+    await update_user_field(int(target_chat_id), int(target_user_id), 'is_banker', False)
+    invalidate_user_cache(int(target_chat_id), int(target_user_id))
+    
+    await safe_answer(callback, "✅ Банкир успешно разжалован!", show_alert=True)
+    await cb_extra_bankers(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_ext_lock_"))
+@creator_only
+async def cb_extra_lock_prompt(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    
+    from lock_system import get_locked_chats
+    locked = await get_locked_chats()
+    
+    text = "🔒 <b>Управление блокировками бота в группах</b>\n\n"
+    if locked:
+        text += "Список заблокированных ID групп:\n"
+        for lid in locked:
+            text += f"  • <code>{lid}</code>\n"
+    else:
+        text += "Заблокированных групп нет. Бот работает везде свободно.\n"
+        
+    text += "\nВведите ID группы (целое число со знаком минус, например -100...) для переключения блокировки:"
+    
+    await state.set_state(AdminPanelState.waiting_for_lock_chat_id)
+    await state.update_data(chat_id=chat_id, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_extra_cmds_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_lock_chat_id)
+@creator_only
+async def process_lock_chat_id_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+    
+    try:
+        target_id = int(message.text.strip())
+        from lock_system import toggle_lock
+        is_enabled = await toggle_lock(target_id)
+        
+        status = "заблокирован" if is_enabled else "разблокирован"
+        await message.answer(f"✅ Чат <code>{target_id}</code> успешно {status}!")
+    except ValueError:
+        await message.answer("❌ ID группы должен быть целым числом (обычно начинается с -100). Попробуйте еще раз:")
+        return
+        
+    await state.clear()
+    await cb_extra_cmds_menu(MockCallback(message, data.get("menu_message_id"), f"db_extra_cmds_{chat_id}"), state)
+    await safe_delete(message)
+
+
+@router.callback_query(F.data.startswith("db_ext_eval_"))
+@creator_only
+async def cb_extra_eval_prompt(callback: types.CallbackQuery, state: FSMContext):
+    chat_id = cb_int(split_cb(callback.data), 3, default=0)
+    
+    await state.set_state(AdminPanelState.waiting_for_eval_code)
+    await state.update_data(chat_id=chat_id, menu_message_id=callback.message.message_id)
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_extra_cmds_{chat_id}")
+    builder.adjust(1)
+    
+    await safe_edit(
+        callback.message,
+        "📟 <b>Выполнение Python-кода (Async Eval/Exec)</b>\n\n"
+        "Отправьте Python-код. Поддерживается `await`. "
+        "В контексте доступны: `db`, `bot`, `callback`, `state`, `get_db()`. "
+        "Для вывода используйте `print()` или верните выражение через `return`:",
+        builder.as_markup()
+    )
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_eval_code)
+@creator_only
+async def process_eval_code_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+    code = message.text.strip()
+    
+    await message.answer("⏳ Выполняю код...")
+    
+    import io
+    import sys
+    
+    local_vars = {
+        "db": get_db(),
+        "get_db": get_db,
+        "bot": message.bot,
+        "message": message,
+        "state": state,
+        "asyncio": asyncio,
+        "time": time,
+        "os": os
+    }
+    
+    stdout = io.StringIO()
+    sys.stdout = stdout
+    
+    func_code = f"async def __temp_async_eval_func():\n"
+    for line in code.split("\n"):
+        func_code += f"    {line}\n"
+        
+    try:
+        exec(func_code, globals(), local_vars)
+        func = local_vars["__temp_async_eval_func"]
+        result = await func()
+        
+        sys.stdout = sys.__stdout__
+        output = stdout.getvalue()
+        
+        res_str = ""
+        if output:
+            res_str += f"<b>Вывод stdout:</b>\n<pre>{escape_html(output)}</pre>\n"
+        if result is not None:
+            res_str += f"<b>Результат:</b>\n<code>{escape_html(str(result))}</code>"
+            
+        if not res_str:
+            res_str = "✅ Код успешно выполнен (без вывода)."
+            
+        await message.answer(res_str)
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        error_trace = traceback.format_exc()
+        await message.answer(f"❌ <b>Ошибка выполнения:</b>\n<pre>{escape_html(str(e))}</pre>\n<pre>{escape_html(error_trace[:800])}</pre>")
+        
+    await state.clear()
+    await cb_extra_cmds_menu(MockCallback(message, data.get("menu_message_id"), f"db_extra_cmds_{chat_id}"), state)
     await safe_delete(message)
