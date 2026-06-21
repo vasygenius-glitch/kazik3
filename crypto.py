@@ -740,54 +740,61 @@ async def cb_trade_execute(callback: types.CallbackQuery):
     coin = coins[cid]
     price = coin["prices"][-1]
     
-    from user_manager import get_user_data, update_user_balance, update_user_field
-    ud = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    if not ud: ud = {}
-    port = ud.get('crypto_portfolio', {})
-    user_balance = ud.get('balance', 0)
+    from user_manager import get_user_lock, flush_user_cache_immediately, get_user_data, update_user_balance, update_user_field
     
-    if action == "buy":
-        amount = user_balance // price if qty_str == "all" else int(qty_str)
-        if amount <= 0:
-            return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
-            
-        res = await update_user_balance(callback.message.chat.id, callback.from_user.id, -(price * amount), min_balance=0)
-        if res is None:
-            return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
-            
-        port[cid] = port.get(cid, 0) + amount
-        
-        await callback.answer(f"✅ Успешно куплено {amount} шт. {coin['ticker']}!")
-        
-    elif action == "sell":
-        amount = port.get(cid, 0) if qty_str == "all" else int(qty_str)
-        
-        if amount <= 0:
-            return await callback.answer("❌ У вас нет этой монеты для продажи.", show_alert=True)
-            
-        if port.get(cid, 0) < amount: 
-            return await callback.answer("❌ Недостаточно монет в портфеле.", show_alert=True)
-            
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(callback.message.chat.id, callback.from_user.id)
-
-        # ХАРДКОР: Комиссия при продаже ТЕПЕРЬ 10% (заработать ОЧЕНЬ сложно)
-        if 'chancroid' in active_diseases:
-            profit = int(price * amount * 0.75) # Мягкий шанкр: 25% налог
-        else:
-            profit = int(price * amount * 0.90)
-        await update_user_balance(callback.message.chat.id, callback.from_user.id, profit)
-        
-        port[cid] -= amount
-        if port[cid] <= 0: 
-            del port[cid]
-            
-        await callback.answer(f"✅ Успешно продано {amount} шт. {coin['ticker']}!")
-        
-    else: 
-        return
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
     
-    await update_user_field(callback.message.chat.id, callback.from_user.id, 'crypto_portfolio', port)
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        await flush_user_cache_immediately(chat_id, user_id)
+        ud = await get_user_data(chat_id, user_id)
+        if not ud: ud = {}
+        port = ud.get('crypto_portfolio', {})
+        user_balance = ud.get('balance', 0)
+        
+        if action == "buy":
+            amount = user_balance // price if qty_str == "all" else int(qty_str)
+            if amount <= 0:
+                return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
+                
+            res = await update_user_balance(chat_id, user_id, -(price * amount), min_balance=0)
+            if res is None:
+                return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
+                
+            port[cid] = port.get(cid, 0) + amount
+            
+            await callback.answer(f"✅ Успешно куплено {amount} шт. {coin['ticker']}!")
+            
+        elif action == "sell":
+            amount = port.get(cid, 0) if qty_str == "all" else int(qty_str)
+            
+            if amount <= 0:
+                return await callback.answer("❌ У вас нет этой монеты для продажи.", show_alert=True)
+                
+            if port.get(cid, 0) < amount: 
+                return await callback.answer("❌ Недостаточно монет в портфеле.", show_alert=True)
+                
+            from diseases import get_active_diseases
+            active_diseases = await get_active_diseases(chat_id, user_id)
+    
+            # ХАРДКОР: Комиссия при продаже ТЕПЕРЬ 10% (заработать ОЧЕНЬ сложно)
+            if 'chancroid' in active_diseases:
+                profit = int(price * amount * 0.75) # Мягкий шанкр: 25% налог
+            else:
+                profit = int(price * amount * 0.90)
+            await update_user_balance(chat_id, user_id, profit)
+            
+            port[cid] -= amount
+            if port[cid] <= 0: 
+                del port[cid]
+                
+            await callback.answer(f"✅ Успешно продано {amount} шт. {coin['ticker']}!")
+            
+        else: 
+            return
+        
+        await update_user_field(chat_id, user_id, 'crypto_portfolio', port)
     
     # Возвращаемся в cb_coin_view, чтобы картинка обновилась БЕСШОВНО (edit_media)
     class PseudoCallback:

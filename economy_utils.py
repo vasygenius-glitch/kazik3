@@ -96,12 +96,12 @@ def calculate_progressive_tax(balance: int, base_tax: int, negotiation_skill: in
 def calculate_biz_markup(balance: int) -> int:
     """
     Returns the non-stacking luxury tax markup for businesses based on the user's balance.
-    If balance > 500 million, the markup is 50%.
+    If balance > 500 million, the markup is 20%.
     If balance > 100 million, the markup is 20%.
     Otherwise, the markup is 0%.
     """
     if balance > 500_000_000:
-        return 50
+        return 20
     elif balance > 100_000_000:
         return 20
     else:

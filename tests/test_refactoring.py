@@ -1021,9 +1021,9 @@ def test_shop_060():
     assert markup2 == 20
 
 def test_shop_061():
-    # business luxury markup (balance > 500M -> 50%)
+    # business luxury markup (balance > 500M -> 20%)
     markup = economy_utils.calculate_biz_markup(500_000_001)
-    assert markup == 50
+    assert markup == 20
 
 def test_shop_062():
     # shop final price calculation: non-business item only adds progressive tax
@@ -1068,7 +1068,7 @@ def test_shop_067():
     item = {"name": "Biz", "price": 100000, "cat": "biz"}
     tax = economy_utils.calculate_progressive_tax(600_000_000, 10) # 20%
     price = shop._calc_final_price(item, 600_000_000, tax)
-    assert price == 170000
+    assert price == 140000
 
 @pytest.mark.asyncio
 async def test_shop_068():

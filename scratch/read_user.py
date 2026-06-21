@@ -10,7 +10,7 @@ async def main():
     db = get_db()
     
     chat_id = "-1002321279920"
-    user_id = "6226796902"
+    user_id = "6978846120"
     
     doc_ref = db.collection('chats').document(chat_id).collection('users').document(user_id)
     doc = await doc_ref.get()

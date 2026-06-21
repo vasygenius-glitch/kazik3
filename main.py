@@ -98,12 +98,14 @@ async def main():
         from user_manager import flush_user_data_task
         from stocks import update_stocks_task
         from admin_logs import admin_alert_worker
+        from backup_system import backup_database_task
         asyncio.create_task(flush_logs(bot))
         asyncio.create_task(weekly_reset_task(bot))
         asyncio.create_task(flush_stats_task())
         asyncio.create_task(flush_user_data_task())
         asyncio.create_task(update_stocks_task())
         asyncio.create_task(admin_alert_worker(bot))
+        asyncio.create_task(backup_database_task())
     except Exception as e:
         print(f"❌ Ошибка проверки токена: {e}")
 

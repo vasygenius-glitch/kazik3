@@ -1020,3 +1020,106 @@ async def cmd_execute(message: types.Message, bot: Bot):
     except Exception as e:
         print(f"Ошибка отправки фото казни: {e}")
         await message.answer(caption)
+
+
+# ============================================================
+# РЕЗЕРВНОЕ КОПИРОВАНИЕ И ВОССТАНОВЛЕНИЕ
+# ============================================================
+
+@router.message(Command("db_backup"))
+async def cmd_db_backup(message: types.Message):
+    if not is_creator(message):
+        return
+
+    # Удаляем сообщение с командой для конфиденциальности
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    from backup_system import backup_database
+    success, result = await backup_database()
+    
+    response_text = ""
+    if success:
+        response_text = f"✅ Резервная копия базы данных успешно создана: <code>{result}</code>"
+    else:
+        response_text = f"❌ Не удалось создать резервную копию: {result}"
+
+    try:
+        await message.bot.send_message(chat_id=message.from_user.id, text=response_text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка отправки приватного сообщения создателю: {e}")
+
+@router.message(Command("db_backups"))
+async def cmd_db_backups(message: types.Message):
+    if not is_creator(message):
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    db = get_db()
+    try:
+        docs = await db.collection('backups').order_by('timestamp', direction='descending').limit(30).get()
+        if not docs:
+            response_text = "📭 Список резервных копий пуст."
+        else:
+            lines = ["📅 <b>Доступные резервные копии (за последние 7 дней):</b>\n"]
+            for doc in docs:
+                d = doc.to_dict()
+                lines.append(f"• <code>{doc.id}</code> — {d.get('datetime')} UTC")
+            response_text = "\n".join(lines)
+            
+        await message.bot.send_message(chat_id=message.from_user.id, text=response_text, parse_mode="HTML")
+    except Exception as e:
+        try:
+            await message.bot.send_message(chat_id=message.from_user.id, text=f"❌ Ошибка получения списка копий: {e}", parse_mode="HTML")
+        except Exception:
+            pass
+
+@router.message(Command("db_restore"))
+async def cmd_db_restore(message: types.Message):
+    if not is_creator(message):
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    args = message.text.split()
+    if len(args) < 2:
+        try:
+            await message.bot.send_message(chat_id=message.from_user.id, text="⚠️ Использование: <code>/db_restore backup_[timestamp]</code>", parse_mode="HTML")
+        except Exception:
+            pass
+        return
+
+    backup_id = args[1].strip()
+    
+    try:
+        status_msg = await message.bot.send_message(
+            chat_id=message.from_user.id,
+            text=f"🔄 <i>Начинаю восстановление базы данных из {backup_id}...</i>",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Ошибка отправки приватного сообщения восстановления: {e}")
+        status_msg = None
+
+    from backup_system import restore_database
+    success, error = await restore_database(backup_id)
+    
+    if status_msg:
+        try:
+            if success:
+                await status_msg.edit_text(f"✅ База данных успешно восстановлена из резервной копии <code>{backup_id}</code>!", parse_mode="HTML")
+            else:
+                await status_msg.edit_text(f"❌ Ошибка восстановления: {error}", parse_mode="HTML")
+        except Exception:
+            pass
+    else:
+        print(f"Результат восстановления {backup_id}: success={success}, error={error}")
