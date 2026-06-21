@@ -3406,7 +3406,7 @@ async def cb_backups_menu(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="➕ Создать новый бэкап", callback_data=f"db_backup_create_{chat_id}")
     
     try:
-        docs = await db.collection('backups').order_by('timestamp', direction='descending').limit(15).get()
+        docs = await db.collection('backups').order_by('timestamp', direction='DESCENDING').limit(15).get()
         for doc in docs:
             d = doc.to_dict()
             dt_str = d.get('datetime', 'Unknown')

@@ -1063,7 +1063,7 @@ async def cmd_db_backups(message: types.Message):
 
     db = get_db()
     try:
-        docs = await db.collection('backups').order_by('timestamp', direction='descending').limit(30).get()
+        docs = await db.collection('backups').order_by('timestamp', direction='DESCENDING').limit(30).get()
         if not docs:
             response_text = "📭 Список резервных копий пуст."
         else:
