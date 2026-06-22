@@ -64,8 +64,10 @@ async def main():
 
     from aiogram.client.telegram import TelegramAPIServer
 
-    # Используем приватный Cloudflare Worker для обхода жесткой блокировки api.telegram.org на Hugging Face Spaces
-    custom_server = TelegramAPIServer.from_base("https://super-cloud-9af3.ruzkovmisa.workers.dev/")
+    # Используем приватный Cloudflare Worker для обхода жесткой блокировки api.telegram.org на Hugging Face Spaces.
+    # Можно переопределить через переменную окружения TELEGRAM_API_URL (например, свой Worker с кастомным доменом).
+    api_url = os.environ.get("TELEGRAM_API_URL", "https://super-cloud-9af3.ruzkovmisa.workers.dev/")
+    custom_server = TelegramAPIServer.from_base(api_url)
 
     # Назначаем этот API-сервер внутрь сессии (так требует aiogram 3.x для корректной маршрутизации)
     session.api = custom_server
