@@ -45,15 +45,16 @@ async def main():
 
     session = AiohttpSession()
 
-    # Enable `trust_env` so if Hugging Face provides HTTP_PROXY, it's automatically used.
-    # We do NOT force IPv4 anymore as it was failing on IPv6-only nodes.
+    # Enable `trust_env` if TRUST_ENV env var is set to True (default).
+    # Setting it to False allows bypassing Hugging Face's internal HTTP proxy.
+    trust_env_setting = os.environ.get("TRUST_ENV", "True").lower() == "true"
     original_create_session = session.create_session
     async def custom_create_session():
         if session._should_reset_connector:
             await session.close()
         if session._session is None or session._session.closed:
             session._session = aiohttp.ClientSession(
-                trust_env=True,
+                trust_env=trust_env_setting,
                 connector=aiohttp.TCPConnector()
             )
             session._should_reset_connector = False
@@ -155,6 +156,49 @@ if __name__ == "__main__":
     @app.route("/")
     def index():
         return "Бот работает круглосуточно на Hugging Face Spaces!"
+
+    @app.route("/diagnose")
+    def diagnose():
+        import asyncio
+        import aiohttp
+        import json
+
+        async def run_diagnostics():
+            results = {}
+            # We use a dummy token to test the connection (returns 401 if successful, otherwise connector/network errors)
+            test_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+            urls = {
+                "telegram_direct": f"https://api.telegram.org/bot{test_token}/getMe",
+                "default_proxy_workers_dev": f"https://super-cloud-9af3.ruzkovmisa.workers.dev/bot{test_token}/getMe"
+            }
+            
+            for name, url in urls.items():
+                for trust in [True, False]:
+                    key = f"{name}_trust_env_{trust}"
+                    try:
+                        async with aiohttp.ClientSession(trust_env=trust) as session:
+                            async with session.get(url, timeout=5) as resp:
+                                text = await resp.text()
+                                results[key] = {
+                                    "success": True,
+                                    "status": resp.status,
+                                    "data": text[:200]
+                                }
+                    except Exception as e:
+                        results[key] = {
+                            "success": False,
+                            "error_type": type(e).__name__,
+                            "error_msg": str(e)
+                        }
+            return results
+
+        loop = asyncio.new_event_loop()
+        try:
+            res = loop.run_until_complete(run_diagnostics())
+        finally:
+            loop.close()
+
+        return json.dumps(res, indent=2, ensure_ascii=False), 200, {"Content-Type": "application/json; charset=utf-8"}
 
     def run_flask():
         # Hugging Face Spaces требует чтобы приложение слушало 0.0.0.0:7860
