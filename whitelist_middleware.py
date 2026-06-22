@@ -1,10 +1,13 @@
 from typing import Callable, Dict, Any, Awaitable
 import time
+import logging
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery
 
+logger = logging.getLogger(__name__)
+
 from whitelist import get_whitelist, log_unauthorized_chat
-from config import CREATOR_ID
+from config import CREATOR_ID, DISABLE_WHITELIST
 from spy import get_spy_chats
 from user_manager import get_user_data
 from diseases import get_active_diseases
@@ -60,13 +63,27 @@ class WhitelistMiddleware(BaseMiddleware):
                             )
                         )
                 except Exception as e:
-                    print(f"Spy Error: {e}")
+                    logger.error(f"Spy Error: {e}", exc_info=True)
+
+        if DISABLE_WHITELIST:
+            return await handler(event, data)
 
         whitelist = await get_whitelist()
 
-
-
         if chat.id not in whitelist:
+            # Определяем, является ли это командой
+            is_command = False
+            if isinstance(event, CallbackQuery):
+                is_command = True
+            elif isinstance(event, Message):
+                text = event.text or event.caption or ""
+                if is_valid_command(text) or event.reply_to_message:
+                    is_command = True
+
+            # Выводим понятный лог в консоль
+            if is_command:
+                logger.warning(f"⚠️ Группа '{chat.title}' (ID: {chat.id}) отсутствует в белом списке! Команда проигнорирована.")
+
             # Логируем попытку использования
             is_new = await log_unauthorized_chat(chat.id, chat.title or "Unknown")
 
@@ -86,7 +103,30 @@ class WhitelistMiddleware(BaseMiddleware):
                             )
                         )
                     except Exception as e:
-                        print(f"Ошибка мидлвари: {e}")
+                        logger.error(f"Ошибка мидлвари: {e}", exc_info=True)
+
+            # Отправляем предупреждение в саму группу (не чаще раза в час), чтобы пользователи знали причину игнора
+            if is_command:
+                if not hasattr(self, '_warning_spam_cache'):
+                    self._warning_spam_cache = {}
+                last_sent = self._warning_spam_cache.get(chat.id, 0)
+                current_time = time.time()
+                if current_time - last_sent > 3600:
+                    self._warning_spam_cache[chat.id] = current_time
+                    bot = data.get('bot')
+                    if bot:
+                        try:
+                            msg_text = (
+                                f"⚠️ <b>Данный чат не зарегистрирован в белом списке!</b>\n"
+                                f"ID этого чата: <code>{chat.id}</code>\n\n"
+                                f"Свяжитесь с владельцем бота для добавления чата в белый список."
+                            )
+                            if isinstance(event, CallbackQuery):
+                                await event.answer("⚠️ Чат не в белом списке!", show_alert=True)
+                            else:
+                                await event.answer(msg_text)
+                        except Exception as e:
+                            logger.error(f"Ошибка отправки предупреждения в чат: {e}", exc_info=True)
 
             return
 
@@ -150,7 +190,7 @@ class WhitelistMiddleware(BaseMiddleware):
                         # Let the command go through now that it's unlocked
                         return await handler(event, data)
                 except Exception as e:
-                    print(f"Ошибка проверки админки: {e}")
+                    logger.error(f"Ошибка проверки админки: {e}", exc_info=True)
                     return
 
                 # Используем локальный кэш для ограничения спама (1 сообщение в 60 сек)

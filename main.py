@@ -35,7 +35,7 @@ async def main():
     try:
         init_db(FIREBASE_KEY_PATH)
     except Exception as e:
-        print(f"Ошибка БД: {e}")
+        logger.error(f"Ошибка БД: {e}", exc_info=True)
 
     # Hugging Face Spaces block Telegram API sporadically.
     # The most robust way to solve this is to use a clean connector without forcing families,
@@ -87,29 +87,37 @@ async def main():
     dp.callback_query.middleware(CooldownMiddleware())
     register_all_handlers(dp)
 
-    print("Бот запускается на Hugging Face Spaces...")
+    logger.info("Бот запускается на Hugging Face Spaces...")
 
-    try:
-        me = await bot.get_me()
-        print(f"✅ Соединение с Telegram API установлено! Бот: @{me.username}")
-        # Удаляем вебхуки, чтобы поллинг не конфликтовал (если они случайно были)
-        await bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Начинаю слушать сообщения (polling)...")
-        from log_system import flush_logs
-        from chat_stats import weekly_reset_task, flush_stats_task
-        from user_manager import flush_user_data_task
-        from stocks import update_stocks_task
-        from admin_logs import admin_alert_worker
-        from backup_system import backup_database_task
-        asyncio.create_task(flush_logs(bot))
-        asyncio.create_task(weekly_reset_task(bot))
-        asyncio.create_task(flush_stats_task())
-        asyncio.create_task(flush_user_data_task())
-        asyncio.create_task(update_stocks_task())
-        asyncio.create_task(admin_alert_worker(bot))
-        asyncio.create_task(backup_database_task())
-    except Exception as e:
-        print(f"❌ Ошибка проверки токена: {e}")
+    # We will try to resolve webhook conflict and verify token first
+    while True:
+        try:
+            me = await bot.get_me()
+            logger.info(f"✅ Соединение с Telegram API установлено! Бот: @{me.username}")
+            
+            # Удаляем вебхуки, чтобы поллинг не конфликтовал (если они случайно были)
+            await bot.delete_webhook(drop_pending_updates=True)
+            logger.info("✅ Вебхуки успешно удалены (если были).")
+            break
+        except Exception as e:
+            logger.error(f"❌ Ошибка при инициализации/проверке токена: {e}", exc_info=True)
+            logger.info("Повторная попытка подключения через 10 секунд...")
+            await asyncio.sleep(10)
+
+    logger.info("✅ Начинаю слушать сообщения (polling)...")
+    from log_system import flush_logs
+    from chat_stats import weekly_reset_task, flush_stats_task
+    from user_manager import flush_user_data_task
+    from stocks import update_stocks_task
+    from admin_logs import admin_alert_worker
+    from backup_system import backup_database_task
+    asyncio.create_task(flush_logs(bot))
+    asyncio.create_task(weekly_reset_task(bot))
+    asyncio.create_task(flush_stats_task())
+    asyncio.create_task(flush_user_data_task())
+    asyncio.create_task(update_stocks_task())
+    asyncio.create_task(admin_alert_worker(bot))
+    asyncio.create_task(backup_database_task())
 
     # Бесконечный цикл поллинга для защиты от падений сети на Hugging Face Spaces
     from aiogram.exceptions import TelegramConflictError
@@ -117,21 +125,24 @@ async def main():
         while True:
             try:
                 await dp.start_polling(bot, handle_signals=False)
+                # If start_polling returns without exception (e.g. if stopped gracefully or webhook conflict again)
+                logger.warning("⚠️ Метод start_polling завершился. Переподключение через 5с...")
+                await asyncio.sleep(5)
             except TelegramConflictError as e:
-                print(f"⚠️ Обнаружен конфликт сессий (запущена другая копия бота): {e}")
-                print("Принудительно завершаю этот процесс для разрешения конфликта.")
+                logger.error(f"⚠️ Обнаружен конфликт сессий (запущена другая копия бота): {e}")
+                logger.error("Принудительно завершаю этот процесс для разрешения конфликта.")
                 break
             except Exception as e:
-                print(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}")
+                logger.error(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}", exc_info=True)
                 await asyncio.sleep(5)
     finally:
-        print("🔄 Завершение работы: принудительная синхронизация данных...")
+        logger.info("🔄 Завершение работы: принудительная синхронизация данных...")
         from user_manager import flush_user_data
         try:
             await asyncio.wait_for(flush_user_data(), timeout=10)
-            print("✅ Данные успешно синхронизированы.")
+            logger.info("✅ Данные успешно синхронизированы.")
         except Exception as e:
-            print(f"⚠️ Ошибка при финальной синхронизации: {e}")
+            logger.error(f"⚠️ Ошибка при финальной синхронизации: {e}", exc_info=True)
         await bot.session.close()
 
 if __name__ == "__main__":
@@ -156,4 +167,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Бот остановлен вручную")
+        logger.info("Бот остановлен вручную")

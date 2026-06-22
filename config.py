@@ -13,6 +13,8 @@ except ValueError:
 
 CREATOR_IDS = {CREATOR_ID}
 
+DISABLE_WHITELIST = os.getenv("DISABLE_WHITELIST", "False").lower() == "true"
+
 # --- ЛЕТНИЙ СЕЗОН (Summer Season) ---
 SUMMER_COURAGE_ENABLED = os.getenv("SUMMER_COURAGE_ENABLED", "True").lower() == "true"
 SUMMER_WIN_CHANCE_BOOST = int(os.getenv("SUMMER_WIN_CHANCE_BOOST", "15"))
