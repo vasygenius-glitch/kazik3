@@ -122,20 +122,29 @@ async def main():
 
     # Бесконечный цикл поллинга для защиты от падений сети на Hugging Face Spaces
     from aiogram.exceptions import TelegramConflictError
+    backoff_delay = 5
     try:
         while True:
             try:
+                start_time = asyncio.get_event_loop().time()
                 await dp.start_polling(bot, handle_signals=False)
-                # If start_polling returns without exception (e.g. if stopped gracefully or webhook conflict again)
-                logger.warning("⚠️ Метод start_polling завершился. Переподключение через 5с...")
-                await asyncio.sleep(5)
+                
+                # Если поллинг завершился, сбрасываем задержку только если он проработал более 60 секунд
+                duration = asyncio.get_event_loop().time() - start_time
+                if duration > 60:
+                    backoff_delay = 5
+                
+                logger.warning(f"⚠️ Метод start_polling завершился. Переподключение через {backoff_delay}с...")
+                await asyncio.sleep(backoff_delay)
+                backoff_delay = min(backoff_delay * 2, 60)
             except TelegramConflictError as e:
                 logger.error(f"⚠️ Обнаружен конфликт сессий (запущена другая копия бота): {e}")
                 logger.error("Принудительно завершаю этот процесс для разрешения конфликта.")
                 break
             except Exception as e:
-                logger.error(f"❌ Ошибка сети/поллинга (переподключение через 5с): {e}", exc_info=True)
-                await asyncio.sleep(5)
+                logger.error(f"❌ Ошибка сети/поллинга (переподключение через {backoff_delay}с): {e}", exc_info=True)
+                await asyncio.sleep(backoff_delay)
+                backoff_delay = min(backoff_delay * 2, 60)
     finally:
         logger.info("🔄 Завершение работы: принудительная синхронизация данных...")
         from user_manager import flush_user_data
