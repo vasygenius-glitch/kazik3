@@ -61,6 +61,10 @@ async def cmd_steal(message: types.Message, bot: Bot):
     target_data = await get_user_data(chat_id, target_id)
     target_balance = target_data.get('balance', 0)
 
+    target_inventory = target_data.get('inventory') or {}
+    if target_inventory.get('sec_bunker', 0) > 0:
+        return await message.answer(f"🛡 <b>Защита!</b> У {target_name} есть Подземный Бункер, его невозможно ограбить!")
+
     if target_balance <= 0:
         return await message.answer("У жертвы пустые карманы, воровать нечего.")
 

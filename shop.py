@@ -34,6 +34,11 @@ router = Router()
 # ─────────────────────────────────────────────────────────────
 ITEMS: dict[str, dict] = {
     # БИЗНЕСЫ (Окупаемость — 10 сборов)
+    "семечки":   {"name": "🌻 Продажа семечек", "price": 500,            "cat": "biz",   "action": "business", "income": 50},
+    "газеты":    {"name": "📰 Газетный киоск",  "price": 1_200,          "cat": "biz",   "action": "business", "income": 120},
+    "свип":      {"name": "🧹 Услуги дворника", "price": 2_500,          "cat": "biz",   "action": "business", "income": 250},
+    "пирожки":   {"name": "🥐 Ларёк с пирожками","price": 4_500,          "cat": "biz",   "action": "business", "income": 450},
+    "цветы":     {"name": "💐 Цветочный ларёк", "price": 7_000,          "cat": "biz",   "action": "business", "income": 700},
     "ларек":     {"name": "🏣 Торговый ларёк",  "price": 10_000,        "cat": "biz",   "action": "business", "income": 1_000},
     "шаурма":    {"name": "🏪 Ларёк с шаурмой", "price": 25_000,        "cat": "biz",   "action": "business", "income": 2_500},
     "мойка":     {"name": "🚿 Автомойка",       "price": 125_000,       "cat": "biz",   "action": "business", "income": 12_500},
@@ -53,7 +58,13 @@ ITEMS: dict[str, dict] = {
     "космодром": {"name": "🚀 Космодром",       "price": 1_250_000_000, "cat": "biz",   "action": "business", "income": 125_000_000},
     "планета":   {"name": "🪐 Колония",         "price": 2_500_000_000, "cat": "biz",   "action": "business", "income": 250_000_000},
     "нейросеть": {"name": "🤖 Сервер ИИ",       "price": 5_000_000_000, "cat": "biz",   "action": "business", "income": 500_000_000},
+    "sec_bunker": {"name": "🛡 Подземный Бункер", "price": 10_000_000_000, "cat": "biz", "action": "business", "income": 100_000_000, "desc": "Полностью защищает от краж /steal!"},
     "империя":   {"name": "🌌 Межзвездная Империя", "price": 25_000_000_000, "cat": "biz", "action": "business", "income": 2_500_000_000},
+    "мегакорп":  {"name": "🏢 Мегакорпорация",   "price": 50_000_000_000, "cat": "biz", "action": "business", "income": 5_000_000_000},
+    "звездные_врата": {"name": "🌌 Звёздные Врата", "price": 150_000_000_000, "cat": "biz", "action": "business", "income": 15_000_000_000},
+    "сфера_дайсона": {"name": "☀️ Сфера Дайсона", "price": 500_000_000_000, "cat": "biz", "action": "business", "income": 50_000_000_000},
+    "сингулярность": {"name": "🌀 Генератор Сингулярности", "price": 1_500_000_000_000, "cat": "biz", "action": "business", "income": 150_000_000_000},
+    "мультивселенная": {"name": "🔮 Мультивселенский Хаб", "price": 5_000_000_000_000, "cat": "biz", "action": "business", "income": 500_000_000_000},
 
     # МАШИНЫ
     "самокат":   {"name": "🛴 Электросамокат",  "price": 1_500,      "cat": "cars",  "action": "car", "income": 50},
@@ -245,21 +256,44 @@ def get_sell_confirm_kb(item_id: str):
     return builder.as_markup()
 
 
-def get_category_kb(category: str, data: dict, base_tax: float):
+def get_category_kb(category: str, data: dict, base_tax: float, page: int = 0):
     builder = InlineKeyboardBuilder()
     tax_rate = _calc_user_tax(data, base_tax)
     balance = data.get("balance", 0)
 
-    for item_id, info in ITEMS.items():
-        if info.get("cat") != category:
-            continue
+    cat_items = [(item_id, info) for item_id, info in ITEMS.items() if info.get("cat") == category]
+    per_page = 5
+    total_pages = max(1, (len(cat_items) + per_page - 1) // per_page)
+    
+    if page < 0:
+        page = 0
+    if page >= total_pages:
+        page = total_pages - 1
+
+    start_idx = page * per_page
+    end_idx = start_idx + per_page
+    page_items = cat_items[start_idx:end_idx]
+
+    for item_id, info in page_items:
         final_price = _calc_final_price(info, balance, tax_rate)
         builder.button(
             text=f"{info['name']} — {final_price} сыр.",
-            callback_data=f"buy_{item_id}",
+            callback_data=f"buy_{item_id}_{page}",
         )
-    builder.button(text="⬅️ Назад", callback_data="shop_main")
     builder.adjust(1)
+
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton(text="⬅️ Пред.", callback_data=f"shop_cat_{category}_{page-1}"))
+    if total_pages > 1:
+        nav_buttons.append(types.InlineKeyboardButton(text=f"[ {page+1} / {total_pages} ]", callback_data="none"))
+    if page < total_pages - 1:
+        nav_buttons.append(types.InlineKeyboardButton(text="След. ➡️", callback_data=f"shop_cat_{category}_{page+1}"))
+    
+    if nav_buttons:
+        builder.row(*nav_buttons)
+
+    builder.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="shop_main"))
     return builder.as_markup()
 
 
@@ -294,14 +328,14 @@ async def _render_main_shop(message: types.Message, data: dict, *, as_new: bool 
         await _safe_edit(message, text, reply_markup=kb)
 
 
-async def _render_category(message: types.Message, data: dict, category: str):
+async def _render_category(message: types.Message, data: dict, category: str, page: int = 0):
     base_tax = await get_global_tax()
     cat_name = CATEGORY_NAMES.get(category, "?")
     text = (
         f"📂 <b>Категория: {cat_name}</b>\n\n"
         "Выбери товар для покупки (цены указаны с учётом твоего налога):"
     )
-    await _safe_edit(message, text, reply_markup=get_category_kb(category, data, base_tax))
+    await _safe_edit(message, text, reply_markup=get_category_kb(category, data, base_tax, page=page))
 
 
 async def _render_sell_menu(message: types.Message, data: dict):
@@ -355,17 +389,22 @@ async def shop_to_inv(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("shop_cat_"))
 async def show_category(callback: types.CallbackQuery):
     await callback.answer()
-    category = callback.data.removeprefix("shop_cat_")
+    parts = callback.data.split("_")
+    category = parts[2]
+    page = int(parts[3]) if len(parts) > 3 else 0
     if category not in CATEGORY_NAMES:
         return
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    await _render_category(callback.message, data, category)
+    await _render_category(callback.message, data, category, page=page)
 
 
 # Обработчик подтверждения покупки: ставим раньше общего, чтобы parse был чистый
 @router.callback_query(F.data.startswith("buy_conf_"))
 async def process_buy_confirmed(callback: types.CallbackQuery):
-    await _process_buy(callback, item_id=callback.data.removeprefix("buy_conf_"), confirmed=True)
+    parts = callback.data.split("_")
+    item_id = parts[2]
+    page = int(parts[3]) if len(parts) > 3 else 0
+    await _process_buy(callback, item_id=item_id, page=page, confirmed=True)
 
 
 @router.callback_query(F.data.startswith("buy_"))
@@ -373,10 +412,13 @@ async def process_buy(callback: types.CallbackQuery):
     # buy_conf_ уже обработан выше, а здесь оставшиеся "buy_xxx"
     if callback.data.startswith("buy_conf_"):
         return
-    await _process_buy(callback, item_id=callback.data.removeprefix("buy_"), confirmed=False)
+    parts = callback.data.split("_")
+    item_id = parts[1]
+    page = int(parts[2]) if len(parts) > 2 else 0
+    await _process_buy(callback, item_id=item_id, page=page, confirmed=False)
 
 
-async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: bool):
+async def _process_buy(callback: types.CallbackQuery, item_id: str, page: int, confirmed: bool):
     item = ITEMS.get(item_id)
     if not item:
         return await callback.answer("Товар не найден.", show_alert=True)
@@ -428,10 +470,10 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
     # Подтверждение для дорогих покупок
     if final_price > CONFIRM_THRESHOLD and not confirmed:
         builder = InlineKeyboardBuilder()
-        builder.button(text="✅ Да, купить", callback_data=f"buy_conf_{item_id}")
+        builder.button(text="✅ Да, купить", callback_data=f"buy_conf_{item_id}_{page}")
         builder.button(
             text="❌ Отмена",
-            callback_data=f"shop_cat_{item.get('cat', 'other')}",
+            callback_data=f"shop_cat_{item.get('cat', 'other')}_{page}",
         )
         builder.adjust(1)
         await callback.answer()
@@ -469,7 +511,7 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
 
     # Обновляем экран категории актуальными данными
     fresh = await get_user_data(chat_id, user_id)
-    await _render_category(callback.message, fresh, item.get("cat", "other"))
+    await _render_category(callback.message, fresh, item.get("cat", "other"), page=page)
 
 
 @router.callback_query(F.data == "shop_sell_menu")
