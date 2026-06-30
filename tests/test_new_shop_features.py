@@ -6,6 +6,7 @@ import pets
 import chances
 import user_manager
 import economy_features
+import diseases
 
 def test_new_items_exist():
     # Verify new businesses exist
@@ -43,6 +44,11 @@ def test_new_items_exist():
     assert "hamster" in pets.PETS_SHOP
     assert "fox" in pets.PETS_SHOP
     assert "unicorn" in pets.PETS_SHOP
+
+    # Verify new other items exist
+    assert "lockpick" in shop.ITEMS
+    assert "mask" in shop.ITEMS
+    assert "medkit" in shop.ITEMS
 
 @pytest.mark.asyncio
 async def test_unicorn_win_chance_boost():
@@ -159,3 +165,74 @@ async def test_steal_bunker_protection():
         msg = args[0]
         assert "Victim" in msg
         assert msg.startswith("🛡")
+
+@pytest.mark.asyncio
+async def test_heal_command_success():
+    message = MagicMock()
+    message.chat.id = 123
+    message.from_user.id = 111
+    message.from_user.full_name = "John"
+    message.answer = AsyncMock()
+
+    user_data = {
+        "inventory": {"medkit": 1},
+        "diseases": {"hiv": 9999999999}
+    }
+
+    with patch("user_manager.get_db"), \
+         patch("user_manager.get_user_data", new_callable=AsyncMock, return_value=user_data), \
+         patch("user_manager.remove_item_from_inventory", new_callable=AsyncMock, return_value=True) as mock_remove, \
+         patch("user_manager.update_user_field", new_callable=AsyncMock) as mock_update, \
+         patch("diseases.is_top_1_hooker", new_callable=AsyncMock, return_value=False):
+
+        await diseases.cmd_heal(message)
+
+        # Assert medkit was removed
+        mock_remove.assert_called_once_with(123, 111, "medkit")
+        # Assert diseases field was cleared
+        mock_update.assert_called_once_with(123, 111, "diseases", {})
+        # Assert user got success message
+        message.answer.assert_called_once()
+        args, kwargs = message.answer.call_args
+        assert "вылечился" in args[0]
+
+@pytest.mark.asyncio
+async def test_heal_command_no_medkit():
+    message = MagicMock()
+    message.chat.id = 123
+    message.from_user.id = 111
+    message.from_user.full_name = "John"
+    message.answer = AsyncMock()
+
+    user_data = {
+        "inventory": {"medkit": 0},
+        "diseases": {"hiv": 9999999999}
+    }
+
+    with patch("user_manager.get_user_data", new_callable=AsyncMock, return_value=user_data):
+        await diseases.cmd_heal(message)
+
+        message.answer.assert_called_once()
+        args, kwargs = message.answer.call_args
+        assert "нет Аптечки" in args[0]
+
+@pytest.mark.asyncio
+async def test_heal_command_already_healthy():
+    message = MagicMock()
+    message.chat.id = 123
+    message.from_user.id = 111
+    message.from_user.full_name = "John"
+    message.answer = AsyncMock()
+
+    user_data = {
+        "inventory": {"medkit": 1},
+        "diseases": {}
+    }
+
+    with patch("user_manager.get_user_data", new_callable=AsyncMock, return_value=user_data), \
+         patch("diseases.is_top_1_hooker", new_callable=AsyncMock, return_value=False):
+        await diseases.cmd_heal(message)
+
+        message.answer.assert_called_once()
+        args, kwargs = message.answer.call_args
+        assert "здоровы" in args[0]

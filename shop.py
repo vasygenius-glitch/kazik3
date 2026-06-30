@@ -88,6 +88,9 @@ ITEMS: dict[str, dict] = {
     # ПРОЧЕЕ
     "вип":       {"name": "💎 Статус VIP",      "price": 1_000_000, "cat": "other", "action": "other"},
     "condom":    {"name": "🎈 Презерватив",     "price": 340,       "cat": "other", "action": "other"},
+    "lockpick":  {"name": "🗝 Отмычка",          "price": 15_000,    "cat": "other", "action": "other", "desc": "Увеличивает шанс кражи на +15% (одноразовая)."},
+    "mask":      {"name": "🎭 Маска вора",       "price": 25_000,    "cat": "other", "action": "other", "desc": "Снижает штраф при неудачной краже (одноразовая)."},
+    "medkit":    {"name": "💊 Аптечка",          "price": 10_000,    "cat": "other", "action": "other", "desc": "Полностью вылечивает все ЗППП. Использовать: /heal"},
 }
 
 CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}

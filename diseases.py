@@ -193,3 +193,28 @@ async def cmd_std(message: types.Message):
             text += f"🦠 <b>{d_info['name']}</b> (Осталось: {rem_min} мин.)\n<i>{d_info['desc']}</i>\n\n"
 
     await message.answer(text)
+
+
+@router.message(Command("heal", "cure"))
+async def cmd_heal(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    full_name = escape_html(message.from_user.full_name)
+
+    from user_manager import get_user_data, remove_item_from_inventory, update_user_field
+    data = await get_user_data(chat_id, user_id)
+    inventory = data.get("inventory") or {}
+
+    if inventory.get("medkit", 0) <= 0:
+        return await message.answer("❌ У вас нет Аптечки! Купите её в магазине `/shop`.")
+
+    active = await get_active_diseases(chat_id, user_id, u_data=data)
+    if not active:
+        return await message.answer("✅ Вы абсолютно здоровы, использовать Аптечку не требуется!")
+
+    success = await remove_item_from_inventory(chat_id, user_id, "medkit")
+    if not success:
+        return await message.answer("Ошибка при использовании аптечки.")
+
+    await update_user_field(chat_id, user_id, "diseases", {})
+    await message.answer(f"💊 <b>{full_name}</b> использовал Аптечку и полностью вылечился от всех заболеваний!")
