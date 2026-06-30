@@ -11,11 +11,17 @@ router = Router()
 
 log_buffer = []
 
+_log_chat_id_cache = None
+
 async def get_log_chat_id():
+    global _log_chat_id_cache
+    if _log_chat_id_cache is not None:
+        return _log_chat_id_cache
     db = get_db()
     doc = await db.collection('bot_settings').document('logchat').get()
     if doc.exists:
-        return doc.to_dict().get('chat_id')
+        _log_chat_id_cache = doc.to_dict().get('chat_id')
+        return _log_chat_id_cache
     return None
 
 @router.message(Command("setlogchat"))
@@ -34,6 +40,8 @@ async def cmd_setlogchat(message: types.Message):
         chat_id = message.chat.id
 
     db = get_db()
+    global _log_chat_id_cache
+    _log_chat_id_cache = chat_id
     from utils import fire_and_forget
     fire_and_forget(db.collection('bot_settings').document('logchat').set({'chat_id': chat_id}, merge=True))
     await message.answer(f"✅ Чат {chat_id} успешно назначен глобальным Лог-Чатом.")

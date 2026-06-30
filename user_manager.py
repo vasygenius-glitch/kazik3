@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # КОНСТАНТЫ
 # ============================================================
-CACHE_TTL: float = 60.0
+CACHE_TTL: float = 300.0
 MAX_CACHE_SIZE: int = 1000
 FLUSH_BATCH_SIZE: int = 100
 FLUSH_INTERVAL: float = 15.0
@@ -717,7 +717,10 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         # Болезни
         if 'candidiasis' in active_diseases:
             base_bonus //= 2
-        # (зарезервировано) hpv может в будущем влиять на питомца
+
+        # Бонус хомяка
+        if pet_id == 'hamster' and 'hpv' not in active_diseases:
+            base_bonus += 500
 
         # Эффекты лобби
         if lobby_type == 'golden':
@@ -751,6 +754,8 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         card_boost = int((base_bonus + extra_income) * meme_mult) + meme_flat
 
         total = base_bonus + extra_income - tax_amt + card_boost
+        if inventory.get('kovcheg', 0) > 0:
+            total = int(total * 1.2)
         if total <= 0:
             total = 0
 

@@ -75,6 +75,12 @@ async def cmd_steal(message: types.Message, bot: Bot):
     stealth_lvl = data.get('skills', {}).get('stealth', 0)
     chance += (stealth_lvl * 3) # +15% макс
 
+    # Питомец Лиса
+    pet = data.get('pet') or {}
+    pet_id = pet.get('id') if isinstance(pet, dict) else None
+    if pet_id == 'fox' and 'hpv' not in active_diseases:
+        chance += 15
+
     inventory = data.get('inventory', {})
     has_lockpick = inventory.get('lockpick', 0) > 0
     if has_lockpick:

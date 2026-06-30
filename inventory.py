@@ -25,7 +25,7 @@ def get_inventory_main_kb(inventory, biz_levels):
             info = ITEMS[item_id]
             if info.get('action') == 'business':
                 level = biz_levels.get(item_id, 1)
-                text = f"{info['name']} (Ур. {level})"
+                text = f"{info['name']} (Ур. {level}) ({count} шт)"
             else:
                 text = f"{info['name']} ({count} шт)"
             builder.button(text=text, callback_data=f"inv_item_{item_id}")
@@ -91,26 +91,29 @@ async def inv_item_info(callback: types.CallbackQuery):
     biz_levels = data.get('biz_levels', {})
     
     text = f"📦 <b>Предмет:</b> {info['name']}\n"
+    qty = inventory.get(item_id, 0)
+    text += f"🎒 <b>Количество:</b> {qty} шт.\n"
+    if info.get('desc'):
+        text += f"✨ <b>Эффект:</b> {info['desc']}\n"
     if info.get('action') == 'business':
         level = biz_levels.get(item_id, 1)
         level_multiplier = 1.0 + 0.5 * (level - 1)
         income = int(info.get('income', 0) * level_multiplier)
         text += f"📈 <b>Уровень:</b> {level} / {MAX_BIZ_LEVEL}\n"
-        text += f"💸 <b>Доход в час:</b> {income} сыр.\n"
+        text += f"💸 <b>Доход в час (за шт):</b> {income} сыр. (Всего: {income * qty} сыр./ч)\n"
         
         # Calculate total invested for sell info
         total_invested = info['price']
         for l in range(1, level):
             total_invested += int(info['price'] * 0.5 * l)
         sell_price = int(total_invested * 0.75)
-        text += f"💵 <b>Цена продажи:</b> {sell_price} сыр. (75% от всех вложений)\n\n"
+        text += f"💵 <b>Цена продажи:</b> {sell_price} сыр. за шт. (75% от всех вложений)\n\n"
         
         if level < MAX_BIZ_LEVEL:
             text += f"<i>Улучшение увеличит базовый доход на +50%.</i>"
     else:
-        text += f"Количество: {inventory[item_id]} шт.\n"
         sell_price = int(info['price'] * 0.75)
-        text += f"💵 <b>Цена продажи:</b> {sell_price} сыр.\n"
+        text += f"💵 <b>Цена продажи:</b> {sell_price} сыр. за шт.\n"
 
     await callback.message.edit_text(text, reply_markup=get_item_kb(item_id, biz_levels.get(item_id, 1)))
 

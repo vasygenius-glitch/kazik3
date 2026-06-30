@@ -185,8 +185,8 @@ async def restore_database(backup_doc_id: str):
 async def backup_database_task():
     logger.info("🚀 Background database backup task started.")
     while True:
-        # Run every hour
-        await asyncio.sleep(3600)
+        # Run every 24 hours
+        await asyncio.sleep(86400)
         try:
             await backup_database()
         except Exception as e:

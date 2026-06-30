@@ -44,17 +44,18 @@ async def get_top_1_hooker(chat_id: int):
     db = get_db()
     try:
         users_ref = db.collection('chats').document(str(chat_id)).collection('users')
-        docs = await users_ref.get()
+        docs = await users_ref.order_by('escort_count', direction='DESCENDING').limit(20).get()
         top_hooker_id = 0
-        max_count = 0
         for doc in docs:
             data = doc.to_dict()
             count = data.get('escort_count', 0)
-            if count > max_count and not data.get('hide_in_top') and not data.get('is_banned'):
-                max_count = count
+            if count <= 0:
+                break
+            if not data.get('hide_in_top') and not data.get('is_banned'):
                 top_hooker_id = int(doc.id)
+                break
 
-        global_cache.set(cache_key, top_hooker_id, ttl=300) # Кэшируем на 5 минут
+        global_cache.set(cache_key, top_hooker_id, ttl=600) # Кэшируем на 10 минут
         return top_hooker_id
     except Exception as e:
         return 0

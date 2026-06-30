@@ -51,3 +51,24 @@ async def set_game_chance(game_name: str, percentage: int):
     from utils import fire_and_forget
     fire_and_forget(ref.set({game_name: percentage}, merge=True))
 
+async def get_user_win_chance(chat_id: int, user_id: int, game_name: str, base_chance: int = 35) -> int:
+    chance = await get_game_chance(game_name)
+    target_chance = base_chance if chance == -1 else chance
+
+    try:
+        from user_manager import get_user_data
+        from diseases import get_active_diseases
+        
+        data = await get_user_data(chat_id, user_id)
+        if data:
+            pet = data.get('pet') or {}
+            pet_id = pet.get('id') if isinstance(pet, dict) else None
+            if pet_id == 'unicorn':
+                active_diseases = await get_active_diseases(chat_id, user_id, data)
+                if 'hpv' not in active_diseases:
+                    target_chance += 10
+    except Exception:
+        pass
+    
+    return max(0, min(target_chance, 100))
+

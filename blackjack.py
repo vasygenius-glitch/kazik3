@@ -11,7 +11,7 @@ from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
-from chances import get_game_chance
+from chances import get_user_win_chance
 
 router = Router()
 
@@ -178,8 +178,7 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
     secure_random = secrets.SystemRandom()
 
-    chance = await get_game_chance('blackjack')
-    target_chance = 35 if chance == -1 else chance
+    target_chance = await get_user_win_chance(callback.message.chat.id, game['user_id'], 'blackjack', 35)
     if is_creator:
         target_win = True
     else:

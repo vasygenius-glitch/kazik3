@@ -9,9 +9,12 @@ from user_manager import get_user_data, update_user_balance, update_user_field
 router = Router()
 
 PETS_SHOP = {
-    "cat": {"name": "🐱 Кот", "price": 1000000, "bonus": "Дает +20% к заработку на /work"},
-    "dog": {"name": "🐶 Собака", "price": 2000000, "bonus": "Снижает глобальный налог на 5%"},
-    "dragon": {"name": "🐉 Дракон", "price": 50000000, "bonus": "Дает +10% к победе в /crime и защищает от коллекторов!"}
+    "hamster": {"name": "🐹 Хомяк", "price": 500_000, "bonus": "Приносит 500 сыроежек каждый день на халяву"},
+    "cat": {"name": "🐱 Кот", "price": 1_000_000, "bonus": "Дает +20% к заработку на /work"},
+    "dog": {"name": "🐶 Собака", "price": 2_000_000, "bonus": "Снижает глобальный налог на 5%"},
+    "fox": {"name": "🦊 Лиса", "price": 15_000_000, "bonus": "Дает +15% к успеху кражи /steal"},
+    "dragon": {"name": "🐉 Дракон", "price": 50_000_000, "bonus": "Дает +10% к победе в /crime и защищает от коллекторов!"},
+    "unicorn": {"name": "🦄 Единорог", "price": 150_000_000, "bonus": "Дает +10% к шансу победы во всех казино-играх!"}
 }
 
 @router.message(Command("pets"))

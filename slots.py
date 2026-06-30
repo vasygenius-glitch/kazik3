@@ -9,7 +9,7 @@ from user_manager import get_user_data, update_user_balance
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
-from chances import get_game_chance
+from chances import get_user_win_chance
 
 router = Router()
 secure_random = secrets.SystemRandom()
@@ -98,8 +98,7 @@ async def process_slots_confirm(callback: types.CallbackQuery):
                 await msg.edit_text(get_slots_frame(temp_slots, f"Вращение: {status}", bet, casino_title))
             except Exception: break
     
-        chance = await get_game_chance('slots')
-        target_chance = 35 if chance == -1 else chance
+        target_chance = await get_user_win_chance(chat_id, user_id, 'slots', 35)
         is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
         is_forced_win = False
         if is_creator:

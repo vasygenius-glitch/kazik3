@@ -4,7 +4,7 @@ import logging
 from typing import Optional
 from collections import Counter
 from config import CREATOR_ID
-from chances import get_game_chance
+from chances import get_user_win_chance
 
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -1333,8 +1333,7 @@ async def process_poker_draw(callback: types.CallbackQuery, state: FSMContext):
 
     await play_change_cards_animation(callback.message, held_indices)
 
-    chance = await get_game_chance('poker')
-    target_chance = -1 if chance == -1 else chance
+    target_chance = await get_user_win_chance(chat_id, user_id, 'poker', -1)
     
     is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
     

@@ -16,7 +16,7 @@ from config import CREATOR_ID, CREATOR_IDS
 router = Router()
 
 # ===================== КОНСТАНТЫ =====================
-BANK_CACHE_TTL = 10.0
+BANK_CACHE_TTL = 300.0
 
 # Banking
 MIN_DEPOSIT_RATE = 3.0

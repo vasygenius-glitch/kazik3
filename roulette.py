@@ -4,7 +4,7 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 
 from user_manager import get_user_data, update_user_balance
-from chances import get_game_chance
+from chances import get_user_win_chance
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
@@ -91,7 +91,7 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
                 await msg.edit_text(get_roulette_frame(i * 2, secure_random.randint(1,36), bet, title, guess))
             except Exception: break
     
-        chance = await get_game_chance('roulette')
+        chance = await get_user_win_chance(chat_id, user_id, 'roulette', -1)
         is_creator = CREATOR_ID and int(user_id) == int(CREATOR_ID)
     
         if is_creator: result_number = guess

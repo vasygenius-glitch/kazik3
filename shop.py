@@ -34,6 +34,7 @@ router = Router()
 # ─────────────────────────────────────────────────────────────
 ITEMS: dict[str, dict] = {
     # БИЗНЕСЫ (Окупаемость — 10 сборов)
+    "ларек":     {"name": "🏣 Торговый ларёк",  "price": 10_000,        "cat": "biz",   "action": "business", "income": 1_000},
     "шаурма":    {"name": "🏪 Ларёк с шаурмой", "price": 25_000,        "cat": "biz",   "action": "business", "income": 2_500},
     "мойка":     {"name": "🚿 Автомойка",       "price": 125_000,       "cat": "biz",   "action": "business", "income": 12_500},
     "вендинг":   {"name": "🍬 Вендинг",         "price": 200_000,       "cat": "biz",   "action": "business", "income": 20_000},
@@ -41,26 +42,40 @@ ITEMS: dict[str, dict] = {
     "ресторан":  {"name": "🍽 Ресторан",        "price": 750_000,       "cat": "biz",   "action": "business", "income": 75_000},
     "отель":     {"name": "🏨 Отель",           "price": 1_750_000,     "cat": "biz",   "action": "business", "income": 175_000},
     "ферма":     {"name": "🌽 Ферма",           "price": 3_000_000,     "cat": "biz",   "action": "business", "income": 300_000},
+    "кинотеатр": {"name": "🎬 Кинотеатр",       "price": 5_000_000,     "cat": "biz",   "action": "business", "income": 500_000},
     "завод":     {"name": "🏭 Завод",           "price": 6_250_000,     "cat": "biz",   "action": "business", "income": 625_000},
     "салон":     {"name": "🚙 Автосалон",       "price": 12_500_000,    "cat": "biz",   "action": "business", "income": 1_250_000},
     "нефть":     {"name": "🛢 Вышка",           "price": 25_000_000,    "cat": "biz",   "action": "business", "income": 2_500_000},
     "банк":      {"name": "🏦 Банк",            "price": 62_500_000,    "cat": "biz",   "action": "business", "income": 6_250_000},
     "айти":      {"name": "💻 IT-компания",     "price": 125_000_000,   "cat": "biz",   "action": "business", "income": 12_500_000},
     "казино":    {"name": "🎰 Казино",          "price": 250_000_000,   "cat": "biz",   "action": "business", "income": 25_000_000},
+    "стадион":   {"name": "🏟 Стадион",         "price": 500_000_000,   "cat": "biz",   "action": "business", "income": 50_000_000},
     "космодром": {"name": "🚀 Космодром",       "price": 1_250_000_000, "cat": "biz",   "action": "business", "income": 125_000_000},
     "планета":   {"name": "🪐 Колония",         "price": 2_500_000_000, "cat": "biz",   "action": "business", "income": 250_000_000},
+    "нейросеть": {"name": "🤖 Сервер ИИ",       "price": 5_000_000_000, "cat": "biz",   "action": "business", "income": 500_000_000},
+    "империя":   {"name": "🌌 Межзвездная Империя", "price": 25_000_000_000, "cat": "biz", "action": "business", "income": 2_500_000_000},
 
     # МАШИНЫ
+    "самокат":   {"name": "🛴 Электросамокат",  "price": 1_500,      "cat": "cars",  "action": "car", "income": 50},
+    "велосипед": {"name": "🚲 Велосипед Аист",  "price": 3_000,      "cat": "cars",  "action": "car", "income": 100},
+    "ока":       {"name": "🚗 Ока",             "price": 5_000,      "cat": "cars",  "action": "car", "income": 180},
+    "жигули":    {"name": "🚗 ВАЗ-2106",        "price": 8_000,      "cat": "cars",  "action": "car", "income": 300},
+    "москвич":   {"name": "🚗 Москвич-412",     "price": 10_000,     "cat": "cars",  "action": "car", "income": 400},
     "лада":      {"name": "🚗 Lada Priora",     "price": 12_500,     "cat": "cars",  "action": "car", "income": 500},
     "камри":     {"name": "🚙 Toyota Camry",    "price": 37_500,     "cat": "cars",  "action": "car", "income": 1_750},
     "бмв":       {"name": "🚕 BMW M5",          "price": 125_000,    "cat": "cars",  "action": "car", "income": 5_000},
     "гелик":     {"name": "⬛️ Geländewagen",    "price": 300_000,    "cat": "cars",  "action": "car", "income": 12_500},
     "бугатти":   {"name": "🏎 Bugatti Chiron",  "price": 1_250_000,  "cat": "cars",  "action": "car", "income": 50_000},
     "самолет":   {"name": "🛩 Частный Jet",     "price": 12_500_000, "cat": "cars",  "action": "car", "income": 625_000},
+    "яхта":      {"name": "🚢 Суперъяхта",       "price": 35_000_000, "cat": "cars",  "action": "car", "income": 1_800_000},
+    "круизер":   {"name": "🛳 Лайнер",           "price": 100_000_000,"cat": "cars",  "action": "car", "income": 5_500_000},
+    "ракета":    {"name": "🚀 Ракета Falcon 9",  "price": 300_000_000,"cat": "cars",  "action": "car", "income": 18_000_000},
+    "звезда":    {"name": "🛸 Звезда Смерти",    "price": 1_000_000_000,"cat": "cars","action": "car", "income": 65_000_000},
+    "галактика": {"name": "🌌 Крейсер",         "price": 5_000_000_000,"cat": "cars","action": "car", "income": 350_000_000},
+    "kovcheg":   {"name": "🌌 Ковчег",          "price": 15_000_000_000,"cat": "cars","action": "car","income": 1_000_000_000, "desc": "Дает +20% к ежедневному бонусу!"},
 
     # ПРОЧЕЕ
     "вип":       {"name": "💎 Статус VIP",      "price": 1_000_000, "cat": "other", "action": "other"},
-    "антиварн":  {"name": "💊 Снять варн",      "price": 250_000,   "cat": "other", "action": "other"},
     "condom":    {"name": "🎈 Презерватив",     "price": 340,       "cat": "other", "action": "other"},
 }
 
@@ -388,16 +403,26 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, confirmed: b
             f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True
         )
 
-    # Лимит и дубликаты для бизнесов — предварительная проверка (финальная — в транзакции)
+    # Лимит и дубликаты для бизнесов/машин — предварительная проверка (финальная — в транзакции)
+    inv = data.get("inventory") or {}
+    if item.get("cat") in ("biz", "cars"):
+        if inv.get(item_id, 0) >= 5:
+            return await callback.answer("Ты не можешь иметь больше 5 штук одного товара!", show_alert=True)
+
     if item.get("cat") == "biz":
-        limit = 4 if data.get("is_vip") else 2
-        inv = data.get("inventory") or {}
-        if item_id in inv:
-            return await callback.answer("У тебя уже есть этот бизнес!", show_alert=True)
-        biz_count = sum(1 for k in inv if ITEMS.get(k, {}).get("cat") == "biz")
+        limit = 9 if data.get("is_vip") else 7
+        biz_count = sum(int(c) for k, c in inv.items() if ITEMS.get(k, {}).get("cat") == "biz")
         if biz_count >= limit:
             return await callback.answer(
                 f"Лимит бизнесов ({limit}) достигнут!", show_alert=True
+            )
+
+    if item.get("cat") == "cars":
+        limit = 9 if data.get("is_vip") else 7
+        car_count = sum(int(c) for k, c in inv.items() if ITEMS.get(k, {}).get("cat") == "cars")
+        if car_count >= limit:
+            return await callback.answer(
+                f"Лимит машин ({limit}) достигнут!", show_alert=True
             )
 
     # Подтверждение для дорогих покупок

@@ -18,7 +18,7 @@ from user_manager import (
     check_and_give_bonus,
     invalidate_user_cache,
 )
-from chances import get_game_chance
+from chances import get_user_win_chance
 from escape import escape_html
 from utils import schedule_delete
 from config import CREATOR_ID
@@ -338,10 +338,7 @@ async def _resolve_win_chance(chat_id: int, user_id: int, difficulty: Difficulty
     """
     base = difficulty.base_win_chance
     try:
-        modifier = await get_game_chance("cups")
-        if modifier == -1:
-            return base
-        return max(1, min(95, modifier))
+        return await get_user_win_chance(chat_id, user_id, "cups", base)
     except Exception as e:
         logger.debug(f"[cups] get_game_chance fallback: {e}")
     return base

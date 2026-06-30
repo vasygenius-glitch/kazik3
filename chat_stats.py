@@ -27,10 +27,39 @@ async def increment_message_count(chat_id: int, user_id: int, full_name: str):
         _stats_batch[chat_id][user_id]["count"] += 1
         _stats_batch[chat_id][user_id]["full_name"] = full_name
 
+_initialized_stats_users = set()
+
+async def _update_stats_bg(chat_id, user_id, ref, data, current_time, is_new=False, db_data=None):
+    try:
+        from google.cloud import firestore
+        if is_new:
+            await ref.set({
+                'all_time': data["count"],
+                'week': data["count"],
+                'join_date': current_time,
+                'full_name': data["full_name"]
+            })
+        else:
+            if db_data is not None:
+                await ref.update({
+                    'all_time': db_data.get('all_time', 0) + data["count"],
+                    'week': db_data.get('week', 0) + data["count"],
+                    'full_name': data["full_name"]
+                })
+            else:
+                await ref.update({
+                    'all_time': firestore.Increment(data["count"]),
+                    'week': firestore.Increment(data["count"]),
+                    'full_name': data["full_name"]
+                })
+    except Exception as e:
+        print(f"Error updating stats for user {user_id} in chat {chat_id}: {e}")
+        _initialized_stats_users.discard((chat_id, user_id))
+
 async def flush_stats_task():
     """Background task to periodically flush message stats to the DB."""
     while True:
-        await asyncio.sleep(30)
+        await asyncio.sleep(60)
         async with _batch_lock:
             # Copy and clear the batch
             if not _stats_batch:
@@ -47,22 +76,18 @@ async def flush_stats_task():
             for user_id, data in users.items():
                 try:
                     ref = db.collection('chats').document(str(chat_id)).collection('stats').document(str(user_id))
-                    doc = await ref.get()
-
-                    if doc.exists:
-                        db_data = doc.to_dict()
-                        fire_and_forget(ref.update({
-                            'all_time': db_data.get('all_time', 0) + data["count"],
-                            'week': db_data.get('week', 0) + data["count"],
-                            'full_name': data["full_name"]
-                        }))
+                    if (chat_id, user_id) in _initialized_stats_users:
+                        # Fast path: direct increment update, 0 reads
+                        fire_and_forget(_update_stats_bg(chat_id, user_id, ref, data, current_time, is_new=False))
                     else:
-                        fire_and_forget(ref.set({
-                            'all_time': data["count"],
-                            'week': data["count"],
-                            'join_date': current_time,
-                            'full_name': data["full_name"]
-                        }))
+                        # Slow path (first time seen this session): read to see if exists
+                        doc = await ref.get()
+                        if doc.exists:
+                            _initialized_stats_users.add((chat_id, user_id))
+                            fire_and_forget(_update_stats_bg(chat_id, user_id, ref, data, current_time, is_new=False, db_data=doc.to_dict()))
+                        else:
+                            _initialized_stats_users.add((chat_id, user_id))
+                            fire_and_forget(_update_stats_bg(chat_id, user_id, ref, data, current_time, is_new=True))
                 except Exception as e:
                     print(f"Error flushing stats for user {user_id} in chat {chat_id}: {e}")
 
@@ -141,9 +166,9 @@ async def weekly_reset_task(bot: Bot):
                     db = get_db()
                     from diseases import get_active_diseases
                     from user_manager import update_user_balance
-                    chats = await db.collection('chats').get()
-                    for chat in chats:
-                        chat_id = int(chat.id)
+                    from whitelist import get_whitelist
+                    whitelist = await get_whitelist()
+                    for chat_id in whitelist.keys():
                         # ОПТИМИЗАЦИЯ: Ищем только тех, у кого ЕСТЬ болезни
                         users = await db.collection('chats').document(str(chat_id)).collection('users').where('diseases.scabies', '!=', None).get()
                         for user in users:
