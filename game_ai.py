@@ -10,27 +10,11 @@
 #     после чего вызывается mark_dirty(uid), а фоновый flush сам сбрасывает
 #     всё в Firestore пакетом раз в 15 секунд.
 #
-# Модель предсказания:
-#   - Марковская цепь переменного порядка (order 1..N) с бэк-оффом.
-#   - Частотный анализ, детектор паттернов, антиповторный эвристический слой.
-#   - Экспоненциальное сглаживание (недавние ходы весомее старых).
-#   - Контр-стратегия: система предсказывает ход игрока и выбирает ход,
-#     который его "бьёт" по заданной таблице побед конкретной игры.
-#
-# Формат ai_memory (компактный, укладывается в лимиты Firestore):
-#   {
-#     "v": 2,                       # версия схемы
-#     "h": "10212010",              # история ходов (строка символов-алфавита)
-#     "t": {"1|0": 12, "0|2": 3},   # счётчики переходов order-1 (плоский словарь)
-#     "t2": {"10|2": 4},            # счётчики переходов order-2 (опционально)
-#     "n": 42,                      # всего сыгранных ходов
-#     "w": 20,                      # побед ИИ
-#     "l": 15,                      # поражений ИИ
-#     "d": 7,                       # ничьих
-#     "last": 1700000000,           # ts последнего обновления
-#     "streak": 3,                  # текущая серия (знак = чья серия)
-#     "prof": "aggressive"          # предполагаемый профиль игрока
-#   }
+# Модель предсказания (Улучшенная версия 3):
+#   - Марковская цепь переменного порядка (order 1..3) с бэк-оффом.
+#   - Динамическое Hedge-обновление весов экспертов на основе их точности.
+#   - Математический выбор хода по максимизации математического ожидания исхода (EV).
+#   - Экспоненциальное сглаживание, поиск циклов, эвристическая эксплорация.
 # ============================================================================
 
 from __future__ import annotations
@@ -70,46 +54,45 @@ logger.setLevel(logging.INFO)
 # Максимальная длина хранимой истории ходов (символов) — контроль размера документа.
 MAX_HISTORY_LEN = 120
 
-# Максимальное число ключей переходов, которое храним в словарях t / t2.
-# Если превышаем — «обрезаем» самые редкие ключи, чтобы не раздувать документ.
+# Максимальное число ключей переходов, которое храним в словарях t / t2 / t3.
 MAX_TRANSITION_KEYS = 200
 MAX_TRANSITION_KEYS_ORDER2 = 120
+MAX_TRANSITION_KEYS_ORDER3 = 90
 
-# Максимальный порядок марковской цепи, который используется по умолчанию.
-DEFAULT_MAX_ORDER = 2
+# Порядок марковской цепи по умолчанию.
+DEFAULT_MAX_ORDER = 3
 
 # Коэффициент экспоненциального сглаживания недавних ходов.
-# Чем ближе к 1.0 — тем «длиннее память»; чем меньше — тем важнее свежие ходы.
 RECENCY_DECAY = 0.92
 
 # Сила аддитивного сглаживания (Лапласа) для вероятностей переходов.
 LAPLACE_ALPHA = 0.35
 
-# Веса источников предсказания при смешивании (blend).
+# Базовые (стартовые) веса — приор, который адаптируется Hedge-движком.
 BLEND_WEIGHTS = {
-    "markov2": 0.45,   # марковская цепь порядка 2
-    "markov1": 0.30,   # марковская цепь порядка 1
-    "freq": 0.15,      # глобальная частота ходов
-    "pattern": 0.10,   # детектор повторяющихся паттернов
+    "markov3": 0.28,
+    "markov2": 0.26,
+    "markov1": 0.18,
+    "freq":    0.12,
+    "pattern": 0.16,
 }
 
-# Порог уверенности, ниже которого система считает предсказание "слабым"
-# и добавляет элемент случайности (эксплорация), чтобы не быть предсказуемой.
-LOW_CONFIDENCE_THRESHOLD = 0.40
+# Скорость обучения адаптивных весов (Hedge). Больше -> быстрее переобучается.
+EXPERT_LEARNING_RATE = 0.9
+# Минимальный/сглаживающий вес эксперта, чтобы он не «умирал» навсегда.
+EXPERT_FLOOR = 0.02
+# Порог EV, ниже которого включаем эксплорацию.
+LOW_EV_THRESHOLD = 0.05
 
 # Доля случайности при слабой уверенности.
 EXPLORATION_EPSILON = 0.12
 
 # Версия схемы ai_memory.
-AI_MEMORY_SCHEMA_VERSION = 2
+AI_MEMORY_SCHEMA_VERSION = 3
 
 
 # ============================================================================
 # ОПИСАНИЕ ИГРЫ (GameSpec)
-# ----------------------------------------------------------------------------
-# Каждая игра описывается набором допустимых ходов (алфавит) и таблицей побед:
-# beats[move] -> множество ходов, которые данный ход побеждает.
-# Это позволяет ИИ, предсказав ход игрока, выбрать контр-ход.
 # ============================================================================
 
 @dataclass
@@ -126,12 +109,12 @@ class GameSpec:
     def __post_init__(self) -> None:
         if not self.moves:
             raise ValueError("GameSpec.moves не может быть пустым")
-        # Гарантируем, что все ходы — односимвольные (для компактной строки истории).
+        # Гарантируем, что все ходы — односимвольные.
         for m in self.moves:
             if len(m) != 1:
                 raise ValueError(
                     f"Ход '{m}' в игре '{self.key}' должен быть односимвольным "
-                    f"для компактного хранения. Используйте алфавит из 1 символа."
+                    f"для компактного хранения."
                 )
         # Дедуп.
         seen = set()
@@ -147,25 +130,18 @@ class GameSpec:
             norm[m] = list(self.beats.get(m, []))
         self.beats = norm
 
-    # ------------------------------------------------------------------ util
     def is_valid_move(self, move: str) -> bool:
         return move in self.moves
 
     def counter_move(self, predicted_player_move: str) -> str:
-        """
-        Возвращает ход ИИ, который бьёт предсказанный ход игрока.
-        Если такого нет (или игра не симметрична) — возвращает случайный ход.
-        """
+        """Возвращает ход ИИ, который бьёт предсказанный ход игрока."""
         for m in self.moves:
             if predicted_player_move in self.beats.get(m, []):
                 return m
         return random.choice(self.moves)
 
     def outcome(self, ai_move: str, player_move: str) -> int:
-        """
-        Определяет исход раунда с точки зрения ИИ.
-        Возвращает: +1 — победа ИИ, -1 — поражение ИИ, 0 — ничья.
-        """
+        """+1 — победа ИИ, -1 — поражение ИИ, 0 — ничья."""
         if ai_move == player_move:
             return 0
         if player_move in self.beats.get(ai_move, []):
@@ -185,9 +161,6 @@ class GameSpec:
 
 # ============================================================================
 # РЕЕСТР ИГР
-# ----------------------------------------------------------------------------
-# Здесь регистрируются конкретные игры. Пока предзаданы «болванки», которые
-# легко заменить/дополнить под финальный выбор (наперстки, блэкджек и т.д.).
 # ============================================================================
 
 class GameRegistry:
@@ -218,128 +191,111 @@ class GameRegistry:
 
 # --------------------------- Предустановленные игры -------------------------
 
-# 1) Наперстки (Thimbles): игрок выбирает наперсток 0/1/2, ИИ прячет шарик.
-#    Ходы игрока — куда он ткнёт; ИИ хочет спрятать шарик там, куда игрок НЕ ткнёт.
-#    Здесь "beats" интерпретируется иначе — логика контр-хода задаётся в адаптере игры.
 THIMBLES = GameRegistry.register(
     GameSpec(
         key="thimbles",
         name="Наперстки",
         moves=["0", "1", "2"],
-        beats={},           # для наперстков контр-логика особая (см. адаптер ниже)
+        beats={},
         symmetric=False,
-        max_order=2,
+        max_order=3,
     )
 )
 
-# 2) Камень-ножницы-бумага (демо симметричной игры для теста движка).
 RPS = GameRegistry.register(
     GameSpec(
         key="rps",
         name="Камень-Ножницы-Бумага",
-        moves=["r", "s", "p"],   # rock, scissors, paper
+        moves=["r", "s", "p"],
         beats={
-            "r": ["s"],          # камень бьёт ножницы
-            "s": ["p"],          # ножницы бьют бумагу
-            "p": ["r"],          # бумага бьёт камень
+            "r": ["s"],
+            "s": ["p"],
+            "p": ["r"],
         },
         symmetric=True,
-        max_order=2,
+        max_order=3,
     )
 )
 
-# 3) Чёт-нечет / орёл-решка (бинарная игра для быстрого прогнозирования).
 COINFLIP = GameRegistry.register(
     GameSpec(
         key="coinflip",
         name="Орёл-Решка",
         moves=["0", "1"],
-        beats={"0": ["0"], "1": ["1"]},  # ИИ "угадывает" -> совпадение = победа ИИ
+        beats={"0": ["0"], "1": ["1"]},
         symmetric=False,
-        max_order=2,
+        max_order=3,
     )
 )
 
-# 4) Блэкджек (Blackjack): игрок выбирает взять карту ('h' - hit) или остановиться ('s' - stand).
 BLACKJACK = GameRegistry.register(
     GameSpec(
         key="blackjack",
         name="Блэкджек",
-        moves=["h", "s"],  # 'h' - hit, 's' - stand
-        beats={},          # несимметричная
+        moves=["h", "s"],
+        beats={},
         symmetric=False,
-        max_order=2,
+        max_order=3,
     )
 )
 
 
-
 # ============================================================================
 # СТРУКТУРА ПАМЯТИ ИИ (AIMemory)
-# ----------------------------------------------------------------------------
-# Обёртка над плоским словарём ai_memory, который лежит внутри документа юзера.
-# Отвечает за сериализацию/десериализацию, обрезку размеров и обновление.
 # ============================================================================
 
 def default_ai_memory() -> Dict[str, Any]:
-    """
-    Возвращает дефолтную структуру ai_memory для нового пользователя.
-    Именно её нужно добавить в дефолтный документ user_manager.py.
-    """
     return {
         "v": AI_MEMORY_SCHEMA_VERSION,
-        "h": "",             # история ходов (строка)
-        "t": {},             # переходы order-1: "prev|cur" -> count
-        "t2": {},            # переходы order-2: "p2p1|cur" -> count
-        "n": 0,              # всего ходов
-        "w": 0,              # победы ИИ
-        "l": 0,              # поражения ИИ
-        "d": 0,              # ничьи
-        "last": 0,           # ts последнего обновления
-        "streak": 0,         # текущая серия (>0 серия ИИ, <0 серия игрока)
-        "prof": "unknown",   # профиль игрока
+        "h": "",
+        "t": {},
+        "t2": {},
+        "t3": {},
+        "wts": {},          # адаптивные веса предсказателей
+        "n": 0,
+        "w": 0,
+        "l": 0,
+        "d": 0,
+        "last": 0,
+        "streak": 0,
+        "prof": "unknown",
     }
 
 
 class AIMemory:
-    """
-    Объектная обёртка над ai_memory-словарём.
-
-    ВАЖНО: этот объект работает ТОЛЬКО в оперативной памяти. Сохранение в
-    Firestore обеспечивается механизмом mark_dirty()+background flush внутри
-    user_manager.py. Сам AIMemory в БД не пишет.
-    """
-
-    __slots__ = ("v", "h", "t", "t2", "n", "w", "l", "d", "last", "streak", "prof")
+    __slots__ = ("v", "h", "t", "t2", "t3", "wts",
+                 "n", "w", "l", "d", "last", "streak", "prof")
 
     def __init__(self, data: Optional[Dict[str, Any]] = None) -> None:
         data = data or default_ai_memory()
-        self.v: int = int(data.get("v", AI_MEMORY_SCHEMA_VERSION))
-        self.h: str = str(data.get("h", ""))
-        self.t: Dict[str, int] = dict(data.get("t", {}))
-        self.t2: Dict[str, int] = dict(data.get("t2", {}))
-        self.n: int = int(data.get("n", 0))
-        self.w: int = int(data.get("w", 0))
-        self.l: int = int(data.get("l", 0))
-        self.d: int = int(data.get("d", 0))
-        self.last: int = int(data.get("last", 0))
-        self.streak: int = int(data.get("streak", 0))
-        self.prof: str = str(data.get("prof", "unknown"))
+        self.v = int(data.get("v", AI_MEMORY_SCHEMA_VERSION))
+        self.h = str(data.get("h", ""))
+        self.t = dict(data.get("t", {}))
+        self.t2 = dict(data.get("t2", {}))
+        self.t3 = dict(data.get("t3", {}))
+        self.wts = {k: float(v) for k, v in dict(data.get("wts", {})).items()}
+        self.n = int(data.get("n", 0))
+        self.w = int(data.get("w", 0))
+        self.l = int(data.get("l", 0))
+        self.d = int(data.get("d", 0))
+        self.last = int(data.get("last", 0))
+        self.streak = int(data.get("streak", 0))
+        self.prof = str(data.get("prof", "unknown"))
 
-    # --------------------------------------------------------------- factory
     @classmethod
-    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "AIMemory":
-        mem = cls(data)
-        mem.migrate()
-        return mem
+    def from_dict(cls, data): 
+        m = cls(data)
+        m.migrate()
+        return m
 
     def to_dict(self) -> Dict[str, Any]:
-        """Компактная сериализация обратно в поле ai_memory документа."""
         return {
             "v": self.v,
             "h": self.h,
             "t": self.t,
             "t2": self.t2,
+            "t3": self.t3,
+            "wts": {k: round(v, 5) for k, v in self.wts.items()},
             "n": self.n,
             "w": self.w,
             "l": self.l,
@@ -349,104 +305,60 @@ class AIMemory:
             "prof": self.prof,
         }
 
-    # --------------------------------------------------------------- migrate
     def migrate(self) -> None:
-        """Миграция старых версий схемы к текущей."""
         if self.v < 2:
-            # v1 -> v2: добавили t2 (order-2) и prof.
-            if not isinstance(self.t2, dict):
-                self.t2 = {}
-            if not self.prof:
-                self.prof = "unknown"
-            self.v = AI_MEMORY_SCHEMA_VERSION
+            if not isinstance(self.t2, dict): self.t2 = {}
+            if not self.prof: self.prof = "unknown"
+        if self.v < 3:
+            if not isinstance(self.t3, dict): self.t3 = {}
+            if not isinstance(self.wts, dict): self.wts = {}
+        self.v = AI_MEMORY_SCHEMA_VERSION
 
-    # ----------------------------------------------------------------- utils
-    def history_list(self) -> List[str]:
-        return list(self.h)
+    def last_move(self):  return self.h[-1] if self.h else None
+    def last_two(self):   return self.h[-2:] if len(self.h) >= 2 else None
+    def last_three(self): return self.h[-3:] if len(self.h) >= 3 else None
+    def total_games(self): return self.n
+    def winrate_ai(self):  return self.w / self.n if self.n > 0 else 0.0
+    def history_list(self): return list(self.h)
 
-    def last_move(self) -> Optional[str]:
-        return self.h[-1] if self.h else None
-
-    def last_two(self) -> Optional[str]:
-        return self.h[-2:] if len(self.h) >= 2 else None
-
-    def total_games(self) -> int:
-        return self.n
-
-    def winrate_ai(self) -> float:
-        if self.n <= 0:
-            return 0.0
-        return self.w / self.n
-
-    # ------------------------------------------------------------- обновление
     def record_move(self, player_move: str) -> None:
-        """
-        Регистрирует новый ход игрока: обновляет историю и счётчики переходов.
-        НЕ пишет в БД — только меняет объект в памяти.
-        """
-        prev1 = self.last_move()
-        prev2 = self.last_two()
-
-        # order-1
-        if prev1 is not None:
-            key1 = f"{prev1}|{player_move}"
-            self.t[key1] = self.t.get(key1, 0) + 1
-
-        # order-2
-        if prev2 is not None and len(prev2) == 2:
-            key2 = f"{prev2}|{player_move}"
-            self.t2[key2] = self.t2.get(key2, 0) + 1
-
-        # история
-        self.h += player_move
-        if len(self.h) > MAX_HISTORY_LEN:
-            self.h = self.h[-MAX_HISTORY_LEN:]
-
+        p1, p2, p3 = self.last_move(), self.last_two(), self.last_three()
+        if p1 is not None:
+            k = f"{p1}|{player_move}"; self.t[k] = self.t.get(k, 0) + 1
+        if p2 and len(p2) == 2:
+            k = f"{p2}|{player_move}"; self.t2[k] = self.t2.get(k, 0) + 1
+        if p3 and len(p3) == 3:
+            k = f"{p3}|{player_move}"; self.t3[k] = self.t3.get(k, 0) + 1
+        self.h = (self.h + player_move)[-MAX_HISTORY_LEN:]
         self.n += 1
         self.last = int(time.time())
-
-        # контроль размеров словарей
         self._trim_transitions()
 
     def record_outcome(self, outcome: int) -> None:
-        """
-        Регистрирует исход раунда с точки зрения ИИ:
-        +1 победа ИИ, -1 поражение, 0 ничья. Обновляет серии.
-        """
         if outcome > 0:
-            self.w += 1
-            self.streak = self.streak + 1 if self.streak >= 0 else 1
+            self.w += 1; self.streak = self.streak + 1 if self.streak >= 0 else 1
         elif outcome < 0:
-            self.l += 1
-            self.streak = self.streak - 1 if self.streak <= 0 else -1
+            self.l += 1; self.streak = self.streak - 1 if self.streak <= 0 else -1
         else:
             self.d += 1
-            # ничья серию не сбрасывает жёстко, но затухает к нулю
-            if self.streak > 0:
-                self.streak -= 1
-            elif self.streak < 0:
-                self.streak += 1
+            self.streak += -1 if self.streak > 0 else (1 if self.streak < 0 else 0)
         self.last = int(time.time())
 
     def _trim_transitions(self) -> None:
-        """Если словари переходов раздулись — оставляем только самые частые ключи."""
-        if len(self.t) > MAX_TRANSITION_KEYS:
-            top = sorted(self.t.items(), key=lambda kv: kv[1], reverse=True)[:MAX_TRANSITION_KEYS]
-            self.t = dict(top)
-        if len(self.t2) > MAX_TRANSITION_KEYS_ORDER2:
-            top2 = sorted(self.t2.items(), key=lambda kv: kv[1], reverse=True)[:MAX_TRANSITION_KEYS_ORDER2]
-            self.t2 = dict(top2)
+        def trim(d, cap):
+            if len(d) > cap:
+                return dict(sorted(d.items(), key=lambda kv: kv[1], reverse=True)[:cap])
+            return d
+        self.t  = trim(self.t,  MAX_TRANSITION_KEYS)
+        self.t2 = trim(self.t2, MAX_TRANSITION_KEYS_ORDER2)
+        self.t3 = trim(self.t3, MAX_TRANSITION_KEYS_ORDER3)
 
     def estimate_document_size(self) -> int:
-        """Грубая оценка размера сериализованного ai_memory в байтах."""
         return len(json.dumps(self.to_dict(), ensure_ascii=False).encode("utf-8"))
 
 
 # ============================================================================
 # ПРЕДСКАЗАТЕЛИ (Predictors)
-# ----------------------------------------------------------------------------
-# Каждый предсказатель отдаёт распределение вероятностей по следующему ходу
-# игрока в виде dict[move] -> prob. Затем движок смешивает их с весами.
 # ============================================================================
 
 class BasePredictor:
@@ -457,7 +369,6 @@ class BasePredictor:
     def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
         raise NotImplementedError
 
-    # ------------------------------------------------------------ helper
     @staticmethod
     def uniform(spec: GameSpec) -> Dict[str, float]:
         p = 1.0 / len(spec.moves)
@@ -465,7 +376,6 @@ class BasePredictor:
 
     @staticmethod
     def normalize(dist: Dict[str, float], spec: GameSpec) -> Dict[str, float]:
-        # гарантируем присутствие всех ходов
         full = {m: max(0.0, dist.get(m, 0.0)) for m in spec.moves}
         s = sum(full.values())
         if s <= 0:
@@ -473,67 +383,42 @@ class BasePredictor:
         return {m: v / s for m, v in full.items()}
 
 
-class MarkovOrder1Predictor(BasePredictor):
-    """Марковская цепь порядка 1 с аддитивным сглаживанием."""
+class MarkovPredictor(BasePredictor):
+    """Марковская цепь порядка `order` с плавным бэк-оффом к младшему порядку."""
 
-    name = "markov1"
+    def __init__(self, order: int, fallback: Optional["MarkovPredictor"] = None):
+        self.order = order
+        self.name = f"markov{order}"
+        self._fallback = fallback
+        self._table_attr = {1: "t", 2: "t2", 3: "t3"}[order]
 
-    def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
-        prev = mem.last_move()
-        if prev is None:
-            return self.uniform(spec)
-        counts = {}
-        total = 0.0
-        for m in spec.moves:
-            c = mem.t.get(f"{prev}|{m}", 0) + LAPLACE_ALPHA
-            counts[m] = c
-            total += c
-        if total <= 0:
-            return self.uniform(spec)
-        return {m: c / total for m, c in counts.items()}
-
-
-class MarkovOrder2Predictor(BasePredictor):
-    """Марковская цепь порядка 2 с бэк-оффом к order-1 при нехватке данных."""
-
-    name = "markov2"
-
-    def __init__(self) -> None:
-        self._fallback = MarkovOrder1Predictor()
+    def _ctx(self, mem: AIMemory):
+        return {1: mem.last_move, 2: mem.last_two, 3: mem.last_three}[self.order]()
 
     def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
-        ctx = mem.last_two()
-        if ctx is None or len(ctx) < 2:
-            return self._fallback.predict(mem, spec)
+        ctx = self._ctx(mem)
+        if ctx is None or len(ctx) < self.order:
+            return self._fallback.predict(mem, spec) if self._fallback else self.uniform(spec)
 
-        counts = {}
-        total = 0.0
-        observed = 0
+        table = getattr(mem, self._table_attr)
+        counts, total, observed = {}, 0.0, 0
         for m in spec.moves:
-            c = mem.t2.get(f"{ctx}|{m}", 0)
+            c = table.get(f"{ctx}|{m}", 0)
             observed += c
-            c += LAPLACE_ALPHA
-            counts[m] = c
-            total += c
+            counts[m] = c + LAPLACE_ALPHA
+            total += counts[m]
 
-        # Если по контексту order-2 почти нет наблюдений — используем order-1.
-        if observed < 3:
-            o1 = self._fallback.predict(mem, spec)
-            o2 = {m: c / total for m, c in counts.items()} if total > 0 else self.uniform(spec)
-            # линейное смешивание с бэк-оффом
-            beta = min(1.0, observed / 3.0)
-            return self.normalize(
-                {m: beta * o2[m] + (1 - beta) * o1[m] for m in spec.moves}, spec
-            )
-
-        return {m: c / total for m, c in counts.items()}
+        hi = {m: c / total for m, c in counts.items()} if total > 0 else self.uniform(spec)
+        if self._fallback is None:
+            return hi
+        # Бэк-офф: чем меньше наблюдений в этом контексте, тем сильнее доверяем младшему порядку.
+        lo = self._fallback.predict(mem, spec)
+        beta = min(1.0, observed / (3.0 * self.order))
+        return self.normalize({m: beta * hi[m] + (1 - beta) * lo[m] for m in spec.moves}, spec)
 
 
 class FrequencyPredictor(BasePredictor):
-    """
-    Глобальная частота ходов с экспоненциальным затуханием:
-    недавние ходы важнее старых.
-    """
+    """Глобальная частота ходов с экспоненциальным затуханием."""
 
     name = "freq"
 
@@ -543,7 +428,6 @@ class FrequencyPredictor(BasePredictor):
         weights = defaultdict(float)
         n = len(mem.h)
         for i, move in enumerate(mem.h):
-            # чем свежее ход (больше i), тем больше вес
             w = RECENCY_DECAY ** (n - 1 - i)
             if move in spec.moves:
                 weights[move] += w
@@ -554,11 +438,7 @@ class FrequencyPredictor(BasePredictor):
 
 
 class PatternPredictor(BasePredictor):
-    """
-    Детектор повторяющихся паттернов: ищет последний суффикс истории среди
-    прошлых вхождений и смотрит, какой ход следовал за ним.
-    Позволяет ловить циклы вида "012012012" или "aabbaabb".
-    """
+    """Детектор повторяющихся паттернов (N-граммы)."""
 
     name = "pattern"
 
@@ -574,12 +454,10 @@ class PatternPredictor(BasePredictor):
         scores = defaultdict(float)
         found_any = False
 
-        # Пробуем суффиксы разной длины; длинные совпадения ценнее.
         for L in range(min(self.max_len, len(h) - 1), self.min_len - 1, -1):
             suffix = h[-L:]
-            weight = float(L)  # длинный паттерн — выше вес
-            # ищем все прошлые вхождения suffix, кроме самого хвоста
-            search_zone = h[:-1]  # чтобы не поймать сам себя целиком
+            weight = float(L)
+            search_zone = h[:-1]
             idx = 0
             while True:
                 pos = search_zone.find(suffix, idx)
@@ -600,9 +478,6 @@ class PatternPredictor(BasePredictor):
 
 # ============================================================================
 # ПРОФИЛИРОВАНИЕ ИГРОКА
-# ----------------------------------------------------------------------------
-# Простейший классификатор поведения: агрессивный/осторожный/повторяющийся/
-# случайный. Используется только для аналитики и лёгкой подстройки стратегии.
 # ============================================================================
 
 def classify_player_profile(mem: AIMemory, spec: GameSpec) -> str:
@@ -610,30 +485,26 @@ def classify_player_profile(mem: AIMemory, spec: GameSpec) -> str:
         return "unknown"
 
     h = mem.h
-    # 1) склонность к повтору одного и того же хода
     counts = Counter(h)
     most_common_move, most_common_count = counts.most_common(1)[0]
     repeat_ratio = most_common_count / len(h)
 
-    # 2) склонность повторять предыдущий ход подряд
     same_as_prev = sum(1 for i in range(1, len(h)) if h[i] == h[i - 1])
     streak_ratio = same_as_prev / max(1, len(h) - 1)
 
-    # 3) энтропия распределения ходов (мера случайности)
     total = len(h)
     ent = 0.0
     for m in spec.moves:
         p = counts.get(m, 0) / total
         if p > 0:
             ent -= p * math.log(p, len(spec.moves) if len(spec.moves) > 1 else 2)
-    # ent в [0,1]: 1 — максимально случайно
 
     if ent > 0.92:
         return "random"
     if streak_ratio > 0.55:
-        return "sticky"        # часто повторяет один и тот же ход подряд
+        return "sticky"
     if repeat_ratio > 0.55:
-        return "biased"        # явно любимый ход
+        return "biased"
     if ent < 0.6:
         return "predictable"
     return "balanced"
@@ -641,138 +512,116 @@ def classify_player_profile(mem: AIMemory, spec: GameSpec) -> str:
 
 # ============================================================================
 # ДВИЖОК ПРЕДСКАЗАНИЯ (GameAIEngine)
-# ----------------------------------------------------------------------------
-# Смешивает предсказатели, применяет эксплорацию и выбирает контр-ход.
 # ============================================================================
 
 @dataclass
 class Prediction:
-    """Результат работы движка."""
-
-    predicted_player_move: str          # наиболее вероятный ход игрока
-    ai_move: str                        # выбранный ход ИИ (контр-ход)
-    confidence: float                   # уверенность [0..1]
-    distribution: Dict[str, float]      # итоговое распределение по ходам игрока
-    used_exploration: bool              # была ли применена случайность
-    profile: str                        # профиль игрока
+    predicted_player_move: str
+    ai_move: str
+    confidence: float
+    distribution: Dict[str, float]
+    used_exploration: bool
+    profile: str
+    per_predictor: Dict[str, Dict[str, float]] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
 
 
 class GameAIEngine:
-    """
-    Основной движок. Объединяет предсказатели и выдаёт итоговое решение.
-    Хранит предсказатели, не хранит состояние конкретного игрока (оно в AIMemory).
-    """
-
-    def __init__(
-        self,
-        weights: Optional[Dict[str, float]] = None,
-        exploration_epsilon: float = EXPLORATION_EPSILON,
-        low_conf_threshold: float = LOW_CONFIDENCE_THRESHOLD,
-        rng: Optional[random.Random] = None,
-    ) -> None:
-        self.weights = dict(weights or BLEND_WEIGHTS)
-        self.exploration_epsilon = exploration_epsilon
-        self.low_conf_threshold = low_conf_threshold
+    def __init__(self, weights=None, rng=None):
+        self.base_weights = dict(weights or BLEND_WEIGHTS)
         self.rng = rng or random.Random()
-
+        m1 = MarkovPredictor(1)
+        m2 = MarkovPredictor(2, fallback=m1)
+        m3 = MarkovPredictor(3, fallback=m2)
         self.predictors: Dict[str, BasePredictor] = {
-            "markov2": MarkovOrder2Predictor(),
-            "markov1": MarkovOrder1Predictor(),
+            "markov3": m3,
+            "markov2": m2,
+            "markov1": m1,
             "freq": FrequencyPredictor(),
             "pattern": PatternPredictor(),
         }
 
-    # --------------------------------------------------------------- predict
+    def _effective_weights(self, mem: AIMemory) -> Dict[str, float]:
+        eff = {}
+        for name, base in self.base_weights.items():
+            eff[name] = base * mem.wts.get(name, 1.0)
+        s = sum(eff.values()) or 1.0
+        return {k: v / s for k, v in eff.items()}
+
     def predict(self, mem: AIMemory, spec: GameSpec) -> Prediction:
-        """
-        Главный метод предсказания. Возвращает Prediction с ходом ИИ.
-        """
-        # 1) Собираем распределения от всех предсказателей.
-        dists: Dict[str, Dict[str, float]] = {}
-        for key, predictor in self.predictors.items():
+        dists = {}
+        for key, p in self.predictors.items():
             try:
-                dists[key] = predictor.predict(mem, spec)
+                dists[key] = p.predict(mem, spec)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Предсказатель %s упал: %s", key, e)
                 dists[key] = BasePredictor.uniform(spec)
 
-        # 2) Смешиваем с весами.
-        blended = self._blend(dists, spec)
+        weights = self._effective_weights(mem)
+        blended = self._blend(dists, weights, spec)
 
-        # 3) Определяем наиболее вероятный ход игрока и уверенность.
-        predicted_move, confidence = self._argmax_conf(blended, spec)
+        # Ход ИИ выбираем по матожиданию исхода против ВСЕГО распределения.
+        ai_move, best_ev = self._choose_by_ev(blended, spec)
+        predicted_move, _ = self._argmax(blended, spec)
 
-        # 4) Эксплорация: если уверенность низкая, иногда действуем случайно,
-        #    чтобы ИИ сам не стал предсказуемым.
         used_exploration = False
-        ai_move = self._choose_counter(predicted_move, spec)
-        if confidence < self.low_conf_threshold and self.rng.random() < self.exploration_epsilon:
-            ai_move = self.rng.choice(spec.moves)
-            used_exploration = True
+        if best_ev < LOW_EV_THRESHOLD:
+            # реально неуверенны — подмешиваем случайность
+            if self.rng.random() < EXPLORATION_EPSILON:
+                ai_move = self.rng.choice(spec.moves)
+                used_exploration = True
 
+        confidence = max(0.0, min(1.0, best_ev))
         profile = classify_player_profile(mem, spec)
 
         return Prediction(
             predicted_player_move=predicted_move,
             ai_move=ai_move,
             confidence=round(confidence, 4),
-            distribution={m: round(p, 4) for m, p in blended.items()},
+            distribution={m: round(v, 4) for m, v in blended.items()},
             used_exploration=used_exploration,
             profile=profile,
-            meta={
-                "n": mem.n,
-                "winrate_ai": round(mem.winrate_ai(), 4),
-                "streak": mem.streak,
-                "per_predictor": {
-                    k: {mm: round(pp, 3) for mm, pp in v.items()} for k, v in dists.items()
-                },
-            },
+            per_predictor=dists,
+            meta={"n": mem.n, "winrate_ai": round(mem.winrate_ai(), 4),
+                  "streak": mem.streak, "weights": {k: round(v, 3) for k, v in weights.items()}},
         )
 
-    # ---------------------------------------------------------------- helpers
-    def _blend(self, dists: Dict[str, Dict[str, float]], spec: GameSpec) -> Dict[str, float]:
+    def update_experts(self, mem: AIMemory, per_predictor: Dict[str, Dict[str, float]],
+                       actual_move: str) -> None:
+        """Hedge-обновление весов по фактическому ходу игрока."""
+        for name, dist in per_predictor.items():
+            reward = dist.get(actual_move, 0.0)
+            w = mem.wts.get(name, 1.0) * math.exp(EXPERT_LEARNING_RATE * (reward - 0.5))
+            mem.wts[name] = max(EXPERT_FLOOR, w)
+        # нормализация к среднему = 1
+        vals = list(mem.wts.values())
+        avg = sum(vals) / len(vals) if vals else 1.0
+        if avg > 0:
+            mem.wts = {k: v / avg for k, v in mem.wts.items()}
+
+    def _blend(self, dists, weights, spec):
         blended = {m: 0.0 for m in spec.moves}
-        total_w = 0.0
         for key, dist in dists.items():
-            w = self.weights.get(key, 0.0)
-            if w <= 0:
-                continue
-            total_w += w
+            w = weights.get(key, 0.0)
             for m in spec.moves:
                 blended[m] += w * dist.get(m, 0.0)
-        if total_w <= 0:
-            return BasePredictor.uniform(spec)
-        # нормализация
         s = sum(blended.values())
-        if s <= 0:
-            return BasePredictor.uniform(spec)
-        return {m: v / s for m, v in blended.items()}
+        return {m: v / s for m, v in blended.items()} if s > 0 else BasePredictor.uniform(spec)
 
-    def _argmax_conf(self, dist: Dict[str, float], spec: GameSpec) -> Tuple[str, float]:
-        best_move = spec.moves[0]
-        best_p = -1.0
-        for m in spec.moves:
-            p = dist.get(m, 0.0)
-            if p > best_p:
-                best_p = p
-                best_move = m
-        # уверенность = отрыв лидера от равномерного распределения (нормированный)
-        uniform_p = 1.0 / len(spec.moves)
-        confidence = (best_p - uniform_p) / (1.0 - uniform_p) if len(spec.moves) > 1 else best_p
-        confidence = max(0.0, min(1.0, confidence))
-        return best_move, confidence
+    def _choose_by_ev(self, dist, spec):
+        best_move, best_ev = spec.moves[0], -2.0
+        for ai_move in spec.moves:
+            ev = sum(dist[pm] * spec.outcome(ai_move, pm) for pm in spec.moves)
+            if ev > best_ev:
+                best_ev, best_move = ev, ai_move
+        return best_move, best_ev
 
-    def _choose_counter(self, predicted_player_move: str, spec: GameSpec) -> str:
-        counters = spec.all_counters(predicted_player_move)
-        if counters:
-            return self.rng.choice(counters)
-        # если игра не описывает "кто кого бьёт" — вернём предсказанный ход
-        # (используется адаптерами игр вроде наперстков/coinflip).
-        return predicted_player_move
+    def _argmax(self, dist, spec):
+        best = max(spec.moves, key=lambda m: dist.get(m, 0.0))
+        return best, dist.get(best, 0.0)
 
 
-# Глобальный singleton-движок (можно переопределить при необходимости).
+# Глобальный singleton-движок.
 _engine_singleton: Optional[GameAIEngine] = None
 
 
@@ -785,10 +634,6 @@ def get_engine() -> GameAIEngine:
 
 # ============================================================================
 # ЭКСПОРТИРУЕМЫЕ ФУНКЦИИ: ОБУЧЕНИЕ И ПРОГНОЗ
-# ----------------------------------------------------------------------------
-# Это высокоуровневый API, который вызывает игровой код бота. Функции работают
-# с сырым dict ai_memory (как он лежит в кэше user_manager.py) и возвращают
-# обновлённый dict — который затем нужно положить обратно в кэш + mark_dirty().
 # ============================================================================
 
 def train_on_move(
@@ -796,14 +641,6 @@ def train_on_move(
     player_move: str,
     game_key: str,
 ) -> Dict[str, Any]:
-    """
-    Обучение модели на одном ходе игрока.
-
-    :param ai_memory: текущий dict ai_memory из документа пользователя (или None).
-    :param player_move: ход игрока (символ из алфавита игры).
-    :param game_key: ключ зарегистрированной игры.
-    :return: обновлённый dict ai_memory для записи обратно в кэш.
-    """
     spec = GameRegistry.get(game_key)
     if not spec.is_valid_move(player_move):
         raise ValueError(f"Недопустимый ход '{player_move}' для игры '{game_key}'")
@@ -818,10 +655,6 @@ def register_outcome(
     ai_memory: Optional[Dict[str, Any]],
     outcome: int,
 ) -> Dict[str, Any]:
-    """
-    Регистрирует исход раунда (для статистики и серий).
-    :param outcome: +1 победа ИИ, -1 поражение, 0 ничья.
-    """
     mem = AIMemory.from_dict(ai_memory)
     mem.record_outcome(int(outcome))
     return mem.to_dict()
@@ -831,20 +664,6 @@ def predict_move(
     ai_memory: Optional[Dict[str, Any]],
     game_key: str,
 ) -> Dict[str, Any]:
-    """
-    Прогнозирует ход игрока и выбирает ход ИИ.
-
-    :return: dict с полями:
-        {
-          "predicted_player_move": "...",
-          "ai_move": "...",
-          "confidence": 0.0..1.0,
-          "distribution": {...},
-          "used_exploration": bool,
-          "profile": "...",
-          "meta": {...}
-        }
-    """
     spec = GameRegistry.get(game_key)
     mem = AIMemory.from_dict(ai_memory)
     pred = get_engine().predict(mem, spec)
@@ -864,44 +683,28 @@ def play_round(
     game_key: str,
     player_move: str,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-    """
-    Полный цикл раунда «в один вызов»:
-      1) предсказать ход игрока и выбрать ход ИИ (ДО того как учтём этот ход);
-      2) вычислить исход;
-      3) обучиться на фактическом ходе игрока;
-      4) зарегистрировать исход.
-
-    :return: (обновлённый ai_memory, отчёт о раунде)
-
-    Использование в игровом коде:
-        new_mem, report = play_round(user["ai_memory"], "rps", player_move)
-        user["ai_memory"] = new_mem
-        user_manager.mark_dirty(uid)     # фоновый flush сам сохранит
-    """
     spec = GameRegistry.get(game_key)
     if not spec.is_valid_move(player_move):
         raise ValueError(f"Недопустимый ход '{player_move}' для игры '{game_key}'")
 
     mem = AIMemory.from_dict(ai_memory)
+    engine = get_engine()
 
-    # 1) предсказание ДО учёта нового хода
-    pred = get_engine().predict(mem, spec)
-
-    # 2) исход
+    pred = engine.predict(mem, spec)
     outcome = spec.outcome(pred.ai_move, player_move)
 
-    # 3) обучение на фактическом ходе
+    # hedge-обновление весов экспертов по фактическому ходу
+    engine.update_experts(mem, pred.per_predictor, player_move)
+
     mem.record_move(player_move)
     mem.prof = classify_player_profile(mem, spec)
-
-    # 4) регистрация исхода
     mem.record_outcome(outcome)
 
     report = {
         "ai_move": pred.ai_move,
         "player_move": player_move,
         "predicted_player_move": pred.predicted_player_move,
-        "outcome": outcome,  # +1 ИИ выиграл, -1 проиграл, 0 ничья
+        "outcome": outcome,
         "outcome_text": {1: "ai_win", -1: "player_win", 0: "draw"}[outcome],
         "confidence": pred.confidence,
         "profile": pred.profile,
@@ -921,12 +724,10 @@ def play_round(
 
 
 def reset_ai_memory() -> Dict[str, Any]:
-    """Сброс памяти ИИ (например, по команде игрока «начать заново»)."""
     return default_ai_memory()
 
 
 def get_ai_stats(ai_memory: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """Возвращает читаемую статистику по памяти ИИ конкретного игрока."""
     mem = AIMemory.from_dict(ai_memory)
     return {
         "total_moves": mem.n,
@@ -940,30 +741,15 @@ def get_ai_stats(ai_memory: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         "doc_size_bytes": mem.estimate_document_size(),
         "transition_keys": len(mem.t),
         "transition_keys_order2": len(mem.t2),
+        "transition_keys_order3": len(mem.t3),
     }
 
 
 # ============================================================================
 # ИНТЕГРАЦИЯ С КЭШЕМ user_manager.py
-# ----------------------------------------------------------------------------
-# Ниже — тонкий асинхронный слой-адаптер, который связывает game_ai с вашим
-# user_manager (LRU-кэш + mark_dirty + фоновый flush). Он НЕ пишет в Firestore
-# напрямую: только читает пользователя из кэша, меняет ai_memory в памяти и
-# помечает документ грязным. Реальное сохранение делает фоновый flush.
-#
-# Ожидаемый интерфейс user_manager (адаптируйте имена под ваш модуль):
-#   async def get_user(uid) -> dict          # берёт из кэша (или БД -> кэш)
-#   def mark_dirty(uid) -> None               # помечает грязным для flush
-#   (опционально) def set_user(uid, data)     # обновляет запись в кэше
 # ============================================================================
 
 class UserManagerBridge:
-    """
-    Мост между game_ai и user_manager. Инкапсулирует чтение/запись поля
-    ai_memory внутри документа пользователя, соблюдая правило:
-    менять в памяти -> mark_dirty -> фоновый flush сохранит.
-    """
-
     def __init__(
         self,
         get_user: Callable[[Any], "asyncio.Future"],
@@ -972,13 +758,6 @@ class UserManagerBridge:
         memory_field: str = "ai_memory",
         lock_factory: Optional[Callable[[], "asyncio.Lock"]] = None,
     ) -> None:
-        """
-        :param get_user: async-функция получения документа пользователя из кэша.
-        :param mark_dirty: функция пометки пользователя «грязным».
-        :param set_user: (опц.) функция обновления документа в кэше целиком.
-        :param memory_field: имя поля памяти ИИ в документе.
-        :param lock_factory: (опц.) фабрика asyncio.Lock для защиты от гонок.
-        """
         self._get_user = get_user
         self._mark_dirty = mark_dirty
         self._set_user = set_user
@@ -986,7 +765,6 @@ class UserManagerBridge:
         self._locks: Dict[Any, asyncio.Lock] = {}
         self._lock_factory = lock_factory or (lambda: asyncio.Lock())
 
-    # ------------------------------------------------------------- locking
     def _get_lock(self, uid: Any) -> asyncio.Lock:
         lock = self._locks.get(uid)
         if lock is None:
@@ -994,9 +772,7 @@ class UserManagerBridge:
             self._locks[uid] = lock
         return lock
 
-    # ------------------------------------------------------------- reading
     async def _read_memory(self, uid: Any) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """Возвращает (user_doc, ai_memory_dict). Гарантирует наличие поля."""
         user = await self._maybe_await(self._get_user(uid))
         if user is None:
             raise KeyError(f"Пользователь {uid} не найден в кэше/БД")
@@ -1007,11 +783,10 @@ class UserManagerBridge:
         return user, mem
 
     def _write_memory(self, uid: Any, user: Dict[str, Any], new_mem: Dict[str, Any]) -> None:
-        """Пишет ai_memory обратно В КЭШ и помечает грязным (без записи в БД!)."""
         user[self.memory_field] = new_mem
         if self._set_user is not None:
             self._set_user(uid, user)
-        self._mark_dirty(uid)  # фоновый flush сам сохранит пакетом в Firestore
+        self._mark_dirty(uid)
 
     @staticmethod
     async def _maybe_await(value: Any) -> Any:
@@ -1019,9 +794,7 @@ class UserManagerBridge:
             return await value
         return value
 
-    # --------------------------------------------------------- public API
     async def train(self, uid: Any, game_key: str, player_move: str) -> Dict[str, Any]:
-        """Обучение на одном ходе игрока (в памяти + mark_dirty)."""
         async with self._get_lock(uid):
             user, mem = await self._read_memory(uid)
             new_mem = train_on_move(mem, player_move, game_key)
@@ -1029,16 +802,11 @@ class UserManagerBridge:
             return new_mem
 
     async def predict(self, uid: Any, game_key: str) -> Dict[str, Any]:
-        """Прогноз хода игрока и хода ИИ (чтение из кэша, без записи)."""
         async with self._get_lock(uid):
             _user, mem = await self._read_memory(uid)
             return predict_move(mem, game_key)
 
     async def play(self, uid: Any, game_key: str, player_move: str) -> Dict[str, Any]:
-        """
-        Полный раунд: предсказать -> сыграть -> обучиться -> сохранить в кэш.
-        Возвращает отчёт о раунде. Данные уедут в Firestore фоновым flush'ем.
-        """
         async with self._get_lock(uid):
             user, mem = await self._read_memory(uid)
             new_mem, report = play_round(mem, game_key, player_move)
@@ -1046,7 +814,6 @@ class UserManagerBridge:
             return report
 
     async def register_outcome(self, uid: Any, outcome: int) -> Dict[str, Any]:
-        """Отдельная регистрация исхода (если раунд считается вне play())."""
         async with self._get_lock(uid):
             user, mem = await self._read_memory(uid)
             new_mem = register_outcome(mem, outcome)
@@ -1054,13 +821,11 @@ class UserManagerBridge:
             return new_mem
 
     async def stats(self, uid: Any) -> Dict[str, Any]:
-        """Статистика памяти ИИ игрока."""
         async with self._get_lock(uid):
             _user, mem = await self._read_memory(uid)
             return get_ai_stats(mem)
 
     async def reset(self, uid: Any) -> Dict[str, Any]:
-        """Сброс памяти ИИ игрока (в памяти + mark_dirty)."""
         async with self._get_lock(uid):
             user, _mem = await self._read_memory(uid)
             new_mem = reset_ai_memory()
@@ -1069,35 +834,20 @@ class UserManagerBridge:
 
 
 # ============================================================================
-# ПАТЧ ДЛЯ user_manager.py: ДЕФОЛТНАЯ СТРУКТУРА ПОЛЬЗОВАТЕЛЯ
-# ----------------------------------------------------------------------------
-# Вызовите ensure_ai_memory_field(default_user_dict) внутри функции создания
-# нового пользователя в user_manager.py, чтобы гарантированно добавить поле.
+# ПАТЧ ДЛЯ user_manager.py
 # ============================================================================
 
 def ensure_ai_memory_field(user_doc: Dict[str, Any], field_name: str = "ai_memory") -> Dict[str, Any]:
-    """
-    Гарантирует наличие корректного поля ai_memory в документе пользователя.
-    Идемпотентна: не перетирает существующую валидную память.
-    """
     mem = user_doc.get(field_name)
     if not isinstance(mem, dict) or "v" not in mem:
         user_doc[field_name] = default_ai_memory()
     else:
-        # мягкая миграция при необходимости
         m = AIMemory.from_dict(mem)
         user_doc[field_name] = m.to_dict()
     return user_doc
 
 
 def patch_default_user_structure(default_factory: Callable[[], Dict[str, Any]]) -> Callable[[], Dict[str, Any]]:
-    """
-    Оборачивает вашу функцию создания дефолтного пользователя так, чтобы поле
-    ai_memory всегда присутствовало.
-
-    Пример в user_manager.py:
-        _make_default_user = patch_default_user_structure(_make_default_user)
-    """
     def wrapper() -> Dict[str, Any]:
         doc = default_factory()
         return ensure_ai_memory_field(doc)
@@ -1105,16 +855,10 @@ def patch_default_user_structure(default_factory: Callable[[], Dict[str, Any]]) 
 
 
 # ============================================================================
-# АДАПТЕРЫ КОНКРЕТНЫХ ИГР (готовые «розетки» под будущий выбор)
-# ----------------------------------------------------------------------------
-# Когда вы выберете финальную игру, будет достаточно доработать соответствующий
-# адаптер. Ниже показаны шаблоны для наперстков и coinflip, где логика победы
-# отличается от симметричной RPS.
+# АДАПТЕРЫ КОНКРЕТНЫХ ИГР
 # ============================================================================
 
 class BaseGameAdapter:
-    """Базовый адаптер игры: связывает игровую механику с движком предсказания."""
-
     game_key: str = ""
 
     def __init__(self, bridge: UserManagerBridge) -> None:
@@ -1122,39 +866,28 @@ class BaseGameAdapter:
         self.spec = GameRegistry.get(self.game_key)
 
     async def ai_decide(self, uid: Any) -> Dict[str, Any]:
-        """Возвращает решение ИИ (без изменения статистики)."""
         return await self.bridge.predict(uid, self.game_key)
 
     async def resolve(self, uid: Any, player_move: str) -> Dict[str, Any]:
-        """Разрешает раунд полностью (переопределяется при особой механике)."""
         return await self.bridge.play(uid, self.game_key, player_move)
 
 
 class ThimblesAdapter(BaseGameAdapter):
-    """
-    Наперстки. Игрок выбирает наперсток 0/1/2. ИИ прячет шарик так, чтобы игрок
-    НЕ угадал. Значит ИИ прогнозирует ход игрока и прячет шарик В ДРУГОМ месте.
-    """
-
     game_key = "thimbles"
 
     async def resolve(self, uid: Any, player_pick: str) -> Dict[str, Any]:
         if not self.spec.is_valid_move(player_pick):
             raise ValueError("Наперсток должен быть '0', '1' или '2'")
 
-        # 1) прогнозируем, какой наперсток выберет игрок
         pred = await self.bridge.predict(uid, self.game_key)
         predicted_pick = pred["predicted_player_move"]
 
-        # 2) ИИ прячет шарик там, где игрок (по прогнозу) НЕ выберет
         candidates = [m for m in self.spec.moves if m != predicted_pick]
         ball_position = random.choice(candidates) if candidates else random.choice(self.spec.moves)
 
-        # 3) исход: игрок выигрывает, если угадал позицию шарика
         player_guessed = (player_pick == ball_position)
-        outcome = -1 if player_guessed else 1  # с точки зрения ИИ
+        outcome = -1 if player_guessed else 1
 
-        # 4) обучаемся на фактическом выборе игрока и фиксируем исход
         await self.bridge.train(uid, self.game_key, player_pick)
         await self.bridge.register_outcome(uid, outcome)
 
@@ -1171,11 +904,6 @@ class ThimblesAdapter(BaseGameAdapter):
 
 
 class CoinflipAdapter(BaseGameAdapter):
-    """
-    Орёл-решка. Игрок выбирает 0/1, ИИ пытается угадать выбор игрока.
-    ИИ «выигрывает», если предсказал верно.
-    """
-
     game_key = "coinflip"
 
     async def resolve(self, uid: Any, player_move: str) -> Dict[str, Any]:
@@ -1203,8 +931,6 @@ class CoinflipAdapter(BaseGameAdapter):
 
 
 class RPSAdapter(BaseGameAdapter):
-    """Камень-ножницы-бумага — прямое использование симметричной механики движка."""
-
     game_key = "rps"
 
     async def resolve(self, uid: Any, player_move: str) -> Dict[str, Any]:
@@ -1221,7 +947,6 @@ ADAPTERS: Dict[str, type] = {
 
 
 def build_adapter(game_key: str, bridge: UserManagerBridge) -> BaseGameAdapter:
-    """Фабрика адаптеров игр."""
     if game_key not in ADAPTERS:
         raise KeyError(f"Нет адаптера для игры '{game_key}'. Доступно: {list(ADAPTERS)}")
     return ADAPTERS[game_key](bridge)
@@ -1229,13 +954,9 @@ def build_adapter(game_key: str, bridge: UserManagerBridge) -> BaseGameAdapter:
 
 # ============================================================================
 # ЛОКАЛЬНОЕ ТЕСТИРОВАНИЕ / САМОПРОВЕРКА (без Firestore)
-# ----------------------------------------------------------------------------
-# Позволяет проверить движок офлайн, симулируя игрока с разными паттернами.
 # ============================================================================
 
 class _FakeUserManager:
-    """Простейшая имитация user_manager для локальных тестов."""
-
     def __init__(self) -> None:
         self._store: Dict[Any, Dict[str, Any]] = {}
         self.dirty: set = set()
@@ -1253,7 +974,6 @@ class _FakeUserManager:
 
 
 def _simulate(game_key: str, player_strategy: Callable[[List[str], GameSpec], str], rounds: int = 300) -> None:
-    """Симуляция серии раундов против заданной стратегии игрока."""
     spec = GameRegistry.get(game_key)
     fum = _FakeUserManager()
     bridge = UserManagerBridge(
@@ -1278,33 +998,27 @@ def _simulate(game_key: str, player_strategy: Callable[[List[str], GameSpec], st
 
 
 def _strategy_cyclic(history: List[str], spec: GameSpec) -> str:
-    """Игрок ходит циклически: 0,1,2,0,1,2,... — идеально предсказуемо."""
     return spec.moves[len(history) % len(spec.moves)]
 
 
 def _strategy_biased(history: List[str], spec: GameSpec) -> str:
-    """Игрок в 70% случаев выбирает первый ход, иначе случайно."""
     if random.random() < 0.7:
         return spec.moves[0]
     return random.choice(spec.moves)
 
 
 def _strategy_random(history: List[str], spec: GameSpec) -> str:
-    """Полностью случайный игрок — верхняя граница «непредсказуемости»."""
     return random.choice(spec.moves)
 
 
 def _strategy_sticky(history: List[str], spec: GameSpec) -> str:
-    """Игрок склонен повторять предыдущий ход."""
     if history and random.random() < 0.75:
         return history[-1]
     return random.choice(spec.moves)
 
 
 if __name__ == "__main__":
-    # Быстрая демонстрация: против предсказуемых стратегий winrate ИИ должен
-    # быть заметно выше 0.5; против случайной — около 0.5.
-    print(">>> Демонстрация движка предсказания game_ai.py\n")
+    print(">>> Демонстрация движка предсказания game_ai.py (Версия 3)\n")
 
     for strat_name, strat in [
         ("cyclic", _strategy_cyclic),
