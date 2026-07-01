@@ -382,7 +382,7 @@ async def cmd_rps_stats(message: types.Message):
 
     data = await get_user_data(chat_id, user_id, full_name)
     ai_mem = data.get("ai_memory")
-    stats = get_ai_stats(ai_mem)
+    stats = get_ai_stats(ai_mem, "rps")
 
     profile_desc = PROFILE_TRANSLATIONS.get(stats["profile"], stats["profile"])
 
@@ -394,7 +394,7 @@ async def cmd_rps_stats(message: types.Message):
         f"• Ваших побед над ИИ: <b>{stats['player_wins']}</b>\n"
         f"• Ничьих: <b>{stats['draws']}</b>\n"
         f"• Текущая серия: <b>{stats['streak']}</b>\n"
-        f"• Занимаемый объем памяти: <b>{stats['doc_size_bytes']} байт</b>\n"
+        f"• Занимаемый объем памяти: <b>{stats['slot_size_bytes']} байт</b>\n"
         f"• Уникальных цепочек переходов: <b>{stats['transition_keys']}</b>"
     )
     await message.reply(text)
@@ -413,7 +413,7 @@ async def on_rps_show_stats(callback: types.CallbackQuery):
 
     data = await get_user_data(chat_id, user_id, full_name)
     ai_mem = data.get("ai_memory")
-    stats = get_ai_stats(ai_mem)
+    stats = get_ai_stats(ai_mem, "rps")
 
     profile_desc = PROFILE_TRANSLATIONS.get(stats["profile"], stats["profile"])
 
