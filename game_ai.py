@@ -270,10 +270,10 @@ class AIMemory:
         data = data or default_ai_memory()
         self.v = int(data.get("v", AI_MEMORY_SCHEMA_VERSION))
         self.h = str(data.get("h", ""))
-        self.t = dict(data.get("t", {}))
-        self.t2 = dict(data.get("t2", {}))
-        self.t3 = dict(data.get("t3", {}))
-        self.wts = {k: float(v) for k, v in dict(data.get("wts", {})).items()}
+        self.t = dict(data.get("t") or {})
+        self.t2 = dict(data.get("t2") or {})
+        self.t3 = dict(data.get("t3") or {})
+        self.wts = {k: float(v) for k, v in dict(data.get("wts") or {}).items()}
         self.n = int(data.get("n", 0))
         self.w = int(data.get("w", 0))
         self.l = int(data.get("l", 0))
