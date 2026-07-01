@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 # КОНСТАНТЫ И НАСТРОЙКИ
 # ─────────────────────────────────────────────────────────────────────────────
 MIN_BET = 100
-MAX_BET = 1_000_000
 CREDIT_LIMIT = -5000
 
 # VIP-бонус (10% к чистой прибыли)
@@ -98,8 +97,6 @@ def _parse_bet(text: str) -> Tuple[Optional[int], Optional[str]]:
         return None, "Ставка должна быть числом. Пример: <code>/rps 100</code>"
     if value < MIN_BET:
         return None, f"Минимальная ставка — {MIN_BET} сыроежек."
-    if value > MAX_BET:
-        return None, f"Максимальная ставка — {_format_money(MAX_BET)} сыроежек."
     return value, None
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -407,7 +404,8 @@ async def on_rps_show_stats(callback: types.CallbackQuery):
         f"• Серия: <b>{stats['streak']}</b>\n"
         f"• Узлы связей модели: <b>{stats['transition_keys']}</b>"
     )
-    await callback.answer(text, show_alert=True)
+    await callback.message.answer(text)
+    await callback.answer()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # СБРОС ПАМЯТИ ИИ
