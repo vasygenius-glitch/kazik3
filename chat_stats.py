@@ -286,11 +286,7 @@ async def weekly_reset_task(bot: Bot):
                                 new_capital += subsidy
                                 msg_text += f"🏦 ЦентроЖБРОМ выдал субсидию в размере <b>{subsidy}</b> сыр. (Кредитов: {total_loans_given})."
 
-                            # Жесткая инфляция: Налог на роскошь (сверхприбыль > 500 млн) - 20%
-                            if new_capital > 500000000:
-                                luxury_tax = int((new_capital - 500000000) * 0.20) # 20% с суммы превышающей 500 млн
-                                new_capital -= luxury_tax
-                                msg_text += f"\n💸 <b>Налог на излишки:</b> списано <b>{luxury_tax}</b> сыр. (20% от суммы свыше 500м)."
+
 
                             await banks_ref.document(b_id).update({'capital': new_capital})
 
