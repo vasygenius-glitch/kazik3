@@ -6,12 +6,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from user_manager import get_user_data, update_user_balance
+from user_manager import get_user_data, update_user_balance, set_in_cache, mark_dirty
 from cards import get_random_card, calculate_score, format_cards
 from escape import escape_html
 from config import CREATOR_ID
 from utils import schedule_delete
 from chances import get_user_win_chance
+from game_ai import train_on_move, predict_move, register_outcome
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
@@ -113,6 +117,12 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
             profit = int(bet * 1.5)
             if data.get('is_vip'): profit += int(profit * 0.1)
             await update_user_balance(chat_id, user_id, bet + profit, action="Blackjack Win")
+            try:
+                data['ai_memory'] = register_outcome(data.get('ai_memory'), -1)
+                set_in_cache(chat_id, user_id, data)
+                mark_dirty(chat_id, user_id)
+            except Exception as e:
+                logger.warning(f"Error registering outcome on natural blackjack: {e}")
             text = get_bj_frame(player_cards, dealer_cards, 21, d_score, "🎊 <b>БЛЭКДЖЕК!</b>", full_name, bet, title, False)
             msg = await callback.message.answer(text)
             asyncio.create_task(schedule_delete(msg, callback.message))
@@ -134,6 +144,16 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     if game.get('processing'): return await callback.answer()
     if callback.from_user.id != game['user_id']: return await callback.answer()
 
+    # Train AI on player choosing hit ('h')
+    try:
+        chat_id, user_id = game['chat_id'], game['user_id']
+        data = await get_user_data(chat_id, user_id)
+        data['ai_memory'] = train_on_move(data.get('ai_memory'), 'h', 'blackjack')
+        set_in_cache(chat_id, user_id, data)
+        mark_dirty(chat_id, user_id)
+    except Exception as e:
+        logger.warning(f"Error training AI on hit: {e}")
+
     game['player_cards'].append(get_random_card())
     p_score = calculate_score(game['player_cards'])
     
@@ -147,6 +167,17 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
 
     if p_score > 21:
         await state.clear()
+        
+        # Register outcome: AI (dealer) wins (+1) because player busted
+        try:
+            chat_id, user_id = game['chat_id'], game['user_id']
+            data = await get_user_data(chat_id, user_id)
+            data['ai_memory'] = register_outcome(data.get('ai_memory'), 1)
+            set_in_cache(chat_id, user_id, data)
+            mark_dirty(chat_id, user_id)
+        except Exception as e:
+            logger.warning(f"Error registering outcome on bust: {e}")
+
         text = get_bj_frame(game['player_cards'], game['dealer_cards'], p_score, 0, f"💀 <b>ПЕРЕБОР! -{game['bet']}</b>", game['full_name'], game['bet'], game['title'], False)
         await callback.message.edit_text(text)
     elif p_score == 21:
@@ -166,6 +197,17 @@ async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != game['user_id']: return await callback.answer()
     
     await state.update_data(processing=True)
+    
+    # Train AI on player choosing stand ('s')
+    try:
+        chat_id, user_id = game['chat_id'], game['user_id']
+        data = await get_user_data(chat_id, user_id)
+        data['ai_memory'] = train_on_move(data.get('ai_memory'), 's', 'blackjack')
+        set_in_cache(chat_id, user_id, data)
+        mark_dirty(chat_id, user_id)
+    except Exception as e:
+        logger.warning(f"Error training AI on stand: {e}")
+
     await finish_dealer_turn(callback, game, state)
     await callback.answer()
 
@@ -178,7 +220,30 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
     is_creator = CREATOR_ID and int(game['user_id']) == int(CREATOR_ID)
     secure_random = secrets.SystemRandom()
 
-    target_chance = await get_user_win_chance(callback.message.chat.id, game['user_id'], 'blackjack', 35)
+    chat_id = game['chat_id']
+    user_id = game['user_id']
+    data = await get_user_data(chat_id, user_id)
+
+    # Get target win chance
+    target_chance = await get_user_win_chance(chat_id, user_id, 'blackjack', 35)
+    
+    # AI adaptation: if player is predictable, decrease player win chance
+    try:
+        pred = predict_move(data.get('ai_memory'), 'blackjack')
+        confidence = pred.get('confidence', 0.0)
+        profile = pred.get('profile', 'unknown')
+        
+        # Decrease target chance by up to 15% based on AI confidence
+        adjustment = int(confidence * 15)
+        target_chance = max(10, target_chance - adjustment)
+        
+        ai_info = f"\n🤖 <b>ИИ-Дилер:</b> стиль {profile.capitalize()} | уверенность {int(confidence * 100)}%"
+    except Exception as e:
+        logger.warning(f"Error predicting AI in BJ: {e}")
+        confidence = 0.0
+        profile = 'unknown'
+        ai_info = ""
+
     if is_creator:
         target_win = True
     else:
@@ -224,18 +289,33 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
 
     d_score = calculate_score(dealer_cards)
     bet = game['bet']
-    data = await get_user_data(game['chat_id'], game['user_id'])
 
     if d_score > 21 or p_score > d_score:
         profit = bet
         if data.get('is_vip'): profit += int(profit * 0.1)
         await update_user_balance(game['chat_id'], game['user_id'], bet + profit, action="Blackjack Win")
         res = f"✅ <b>ПОБЕДА! +{profit}</b>"
+        ai_outcome = -1  # AI (dealer) lost
     elif p_score < d_score:
         res = f"❌ <b>ПРОИГРЫШ! -{bet}</b>"
+        ai_outcome = 1  # AI (dealer) won
     else:
         await update_user_balance(game['chat_id'], game['user_id'], bet)
         res = "🤝 <b>НИЧЬЯ!</b>"
+        ai_outcome = 0
+
+    # Register blackjack outcome in AI memory
+    try:
+        data = await get_user_data(chat_id, user_id)
+        data['ai_memory'] = register_outcome(data.get('ai_memory'), ai_outcome)
+        set_in_cache(chat_id, user_id, data)
+        mark_dirty(chat_id, user_id)
+    except Exception as e:
+        logger.warning(f"Error registering outcome in BJ: {e}")
+
+    # Add AI analysis info to the result
+    if ai_info:
+        res += ai_info
 
     text = get_bj_frame(game['player_cards'], dealer_cards, p_score, d_score, res, game['full_name'], bet, game['title'], False)
     try:

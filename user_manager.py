@@ -23,6 +23,7 @@ from collections import OrderedDict
 from db import get_db
 from utils import fire_and_forget
 from admin_logs import log_transaction, check_balance_alert
+from game_ai import default_ai_memory
 
 logger = logging.getLogger(__name__)
 
@@ -454,6 +455,7 @@ def _default_user_data(full_name: str) -> dict:
         'escort_count': 0,
         'meme_cards': {},
         'opened_cases_count': 0,
+        'ai_memory': default_ai_memory(),
     }
 
 

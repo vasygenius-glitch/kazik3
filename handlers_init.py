@@ -4,6 +4,7 @@ from stocks import router as stocks_router
 from seasons import router as seasons_router
 from economy import router as economy_router
 from blackjack import router as blackjack_router
+from rps import router as rps_router
 from roulette import router as roulette_router
 from shop import router as shop_router
 from creator import router as creator_router
@@ -101,6 +102,7 @@ def register_all_handlers(dp: Dispatcher):
     # Остальные модули
     dp.include_router(economy_router)
     dp.include_router(blackjack_router)
+    dp.include_router(rps_router)
     dp.include_router(roulette_router)
     dp.include_router(shop_router)
     dp.include_router(creator_router)
