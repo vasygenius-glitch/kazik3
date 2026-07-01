@@ -176,7 +176,7 @@ async def on_rps_confirm(callback: types.CallbackQuery):
             await callback.answer("Недостаточно средств!", show_alert=True)
             return
 
-        await invalidate_user_cache(chat_id, user_id)
+        invalidate_user_cache(chat_id, user_id)
         
         # Удаляем подтверждающее сообщение
         try:
@@ -229,7 +229,7 @@ async def on_rps_again(callback: types.CallbackQuery):
         await callback.answer("Недостаточно средств!", show_alert=True)
         return
 
-    await invalidate_user_cache(chat_id, user_id)
+    invalidate_user_cache(chat_id, user_id)
 
     # Меняем текущее сообщение на выбор хода
     text = (
@@ -309,7 +309,7 @@ async def on_rps_play(callback: types.CallbackQuery):
         await update_user_balance(chat_id, user_id, bet, action="RPS Draw Refund")
         outcome_text = "🤝 <b>НИЧЬЯ!</b>"
 
-    await invalidate_user_cache(chat_id, user_id)
+    invalidate_user_cache(chat_id, user_id)
 
     # Формируем итоговый фрейм
     streak = totals["streak"]
@@ -422,6 +422,6 @@ async def cmd_rps_reset(message: types.Message):
     data["ai_memory"] = reset_ai_memory()
     set_in_cache(chat_id, user_id, data)
     mark_dirty(chat_id, user_id)
-    await invalidate_user_cache(chat_id, user_id)
+    invalidate_user_cache(chat_id, user_id)
 
     await message.reply("🧠 <b>Память ИИ успешно сброшена!</b> Теперь ИИ начнет обучаться вашему поведению с нуля.")
