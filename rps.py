@@ -59,21 +59,21 @@ def _format_money(value: int) -> str:
     sign = "-" if value < 0 else ""
     return f"{sign}{abs(value):,}".replace(",", " ")
 
-def get_rps_keyboard(bet: int) -> types.InlineKeyboardMarkup:
+def get_rps_keyboard(bet: int, uid: int) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🪨 Камень", callback_data=f"rps_play_{bet}_r")
-    builder.button(text="✂️ Ножницы", callback_data=f"rps_play_{bet}_s")
-    builder.button(text="🧻 Бумага", callback_data=f"rps_play_{bet}_p")
-    builder.button(text="❌ Отмена", callback_data="cas_cancel")
+    builder.button(text="🪨 Камень", callback_data=f"rps_play_{bet}_{uid}_r")
+    builder.button(text="✂️ Ножницы", callback_data=f"rps_play_{bet}_{uid}_s")
+    builder.button(text="🧻 Бумага", callback_data=f"rps_play_{bet}_{uid}_p")
+    builder.button(text="❌ Отмена", callback_data=f"cas_cancel_{uid}")
     builder.adjust(3, 1)
     return builder.as_markup()
 
-def get_post_game_keyboard(bet: int) -> types.InlineKeyboardMarkup:
+def get_post_game_keyboard(bet: int, uid: int) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔁 Ещё раз", callback_data=f"rps_again_{bet}")
-    builder.button(text="2️⃣ Удвоить", callback_data=f"rps_again_{bet * 2}")
-    builder.button(text="📊 Статистика ИИ", callback_data="rps_show_stats")
-    builder.button(text="❌ Выйти", callback_data="cas_cancel")
+    builder.button(text="🔁 Ещё раз", callback_data=f"rps_again_{bet}_{uid}")
+    builder.button(text="2️⃣ Удвоить", callback_data=f"rps_again_{bet * 2}_{uid}")
+    builder.button(text="📊 Статистика ИИ", callback_data=f"rps_stats_{uid}")
+    builder.button(text="❌ Выйти", callback_data=f"cas_cancel_{uid}")
     builder.adjust(2, 2)
     return builder.as_markup()
 
@@ -149,6 +149,12 @@ async def on_rps_confirm(callback: types.CallbackQuery):
         await callback.answer("Ошибка обработки ставки.")
         return
 
+    # --- Проверка: только тот, кто вызвал /rps, может подтвердить ---
+    owner_id = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else None
+    if owner_id and callback.from_user.id != owner_id:
+        await callback.answer("⛔ Это не ваша ставка!", show_alert=True)
+        return
+
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
     message_id = callback.message.message_id
@@ -188,7 +194,7 @@ async def on_rps_confirm(callback: types.CallbackQuery):
             f"Ставка: <b>{_format_money(bet)}</b> сыроежек\n\n"
             f"<i>Сделайте ваш выбор! ИИ уже сделал свой скрытый прогноз.</i>"
         )
-        await callback.message.answer(text, reply_markup=get_rps_keyboard(bet))
+        await callback.message.answer(text, reply_markup=get_rps_keyboard(bet, user_id))
         await callback.answer()
     finally:
         release_confirm_lock(chat_id, message_id)
@@ -203,6 +209,12 @@ async def on_rps_again(callback: types.CallbackQuery):
         bet = int(parts[2])
     except (ValueError, IndexError):
         await callback.answer()
+        return
+
+    # --- Проверка владельца ---
+    owner_id = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else None
+    if owner_id and callback.from_user.id != owner_id:
+        await callback.answer("⛔ Это не ваша игра!", show_alert=True)
         return
 
     chat_id = callback.message.chat.id
@@ -236,9 +248,9 @@ async def on_rps_again(callback: types.CallbackQuery):
         f"<i>Сделайте ваш выбор! ИИ уже сделал свой скрытый прогноз.</i>"
     )
     try:
-        await callback.message.edit_text(text, reply_markup=get_rps_keyboard(bet))
+        await callback.message.edit_text(text, reply_markup=get_rps_keyboard(bet, user_id))
     except Exception:
-        await callback.message.answer(text, reply_markup=get_rps_keyboard(bet))
+        await callback.message.answer(text, reply_markup=get_rps_keyboard(bet, user_id))
     
     await callback.answer()
 
@@ -250,9 +262,15 @@ async def on_rps_play(callback: types.CallbackQuery):
     parts = callback.data.split("_")
     try:
         bet = int(parts[2])
-        player_move = parts[3]
+        owner_id = int(parts[3])
+        player_move = parts[4]
     except (ValueError, IndexError):
         await callback.answer()
+        return
+
+    # --- Проверка владельца ---
+    if callback.from_user.id != owner_id:
+        await callback.answer("⛔ Это не ваша игра!", show_alert=True)
         return
 
     chat_id = callback.message.chat.id
@@ -347,9 +365,9 @@ async def on_rps_play(callback: types.CallbackQuery):
     )
 
     try:
-        await callback.message.edit_text(result_text, reply_markup=get_post_game_keyboard(bet))
+        await callback.message.edit_text(result_text, reply_markup=get_post_game_keyboard(bet, user_id))
     except Exception:
-        await callback.message.answer(result_text, reply_markup=get_post_game_keyboard(bet))
+        await callback.message.answer(result_text, reply_markup=get_post_game_keyboard(bet, user_id))
 
     await callback.answer()
 
@@ -381,8 +399,14 @@ async def cmd_rps_stats(message: types.Message):
     )
     await message.reply(text)
 
-@router.callback_query(F.data == "rps_show_stats")
+@router.callback_query(F.data.startswith("rps_stats_"))
 async def on_rps_show_stats(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    owner_id = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else None
+    if owner_id and callback.from_user.id != owner_id:
+        await callback.answer("⛔ Это не ваша игра!", show_alert=True)
+        return
+
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
     full_name = escape_html(callback.from_user.full_name)
