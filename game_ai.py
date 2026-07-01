@@ -557,14 +557,17 @@ class AIMemoryContainer:
                 key for key, spec in GameRegistry.all().items()
                 if hset and hset <= set(spec.moves)
             ]
-            if len(candidates) == 1:
-                cont.games[candidates[0]] = legacy
-                logger.info("ai_memory v1/v2 мигрирована в слот '%s'.", candidates[0])
-            else:
-                logger.info(
-                    "ai_memory v1/v2 не удалось однозначно привязать к игре "
-                    "(кандидаты: %s) — начата чистая память v3.", candidates,
-                )
+            if candidates:
+                candidates.sort(key=lambda k: len(GameRegistry.get(k).moves))
+                if len(candidates) == 1 or len(GameRegistry.get(candidates[0]).moves) < len(GameRegistry.get(candidates[1]).moves):
+                    best_candidate = candidates[0]
+                    cont.games[best_candidate] = legacy
+                    logger.info("ai_memory v1/v2 мигрирована в слот '%s'.", best_candidate)
+                else:
+                    logger.info(
+                        "ai_memory v1/v2 не удалось однозначно привязать к игре "
+                        "(кандидаты: %s) — начата чистая память v3.", candidates,
+                    )
         return cont
 
     def to_dict(self) -> Dict[str, Any]:
@@ -1600,6 +1603,1237 @@ def _strategy_pattern(history: List[str], spec: GameSpec) -> str:
     pattern_idx = [0, 0, 1, 2, 2]
     idx = pattern_idx[len(history) % len(pattern_idx)]
     return spec.moves[idx % len(spec.moves)]
+
+
+
+# ============================================================================
+# ЧАСТЬ 2: РАСШИРЕНИЯ ДВИЖКА (v3.1)
+# ----------------------------------------------------------------------------
+# Вставить ПЕРЕД блоком `if __name__ == "__main__":`.
+# Все расширения обратно совместимы со схемой памяти v3 и старым API.
+# ============================================================================
+
+import base64
+import zlib
+
+__all__ += [
+    # игры
+    "RPSLS", "DICE", "EVEN_ODD",
+    # предикторы
+    "NGramPredictor", "PeriodicityPredictor",
+    "RotationPredictor", "AntiCounterPredictor",
+    # адаптивный движок
+    "HindsightWeightMixer", "AdaptiveGameAIEngine", "TemperedGameAIEngine",
+    # сложность
+    "DifficultyProfile", "DIFFICULTY_PRESETS", "create_engine_for_difficulty",
+    # аналитика
+    "generate_player_insights", "compute_history_entropy",
+    "compute_stay_rate", "find_dominant_period", "longest_run",
+    # инфраструктура
+    "AIEventBus", "InstrumentedUserManagerBridge", "TokenBucketLimiter",
+    # обслуживание памяти
+    "audit_ai_memory", "compact_ai_memory",
+    "export_ai_memory_blob", "import_ai_memory_blob",
+    "rebuild_memory_from_strings",
+    # адаптеры
+    "RPSLSAdapter", "DiceAdapter", "EvenOddAdapter",
+    # тесты/бенчмарк
+    "run_selftests", "run_benchmark",
+]
+
+
+# ============================================================================
+# 2.1 НОВЫЕ ИГРЫ
+# ============================================================================
+
+# Камень-Ножницы-Бумага-Ящерица-Спок (расширение классики, 5 ходов).
+#   r=камень, p=бумага, s=ножницы, l=ящерица, k=Спок.
+RPSLS = GameRegistry.register(
+    GameSpec(
+        key="rpsls",
+        name="Камень-Ножницы-Бумага-Ящерица-Спок",
+        moves=["r", "p", "s", "l", "k"],
+        beats={
+            "r": ["s", "l"],   # камень бьёт ножницы и ящерицу
+            "p": ["r", "k"],   # бумага бьёт камень и Спока
+            "s": ["p", "l"],   # ножницы бьют бумагу и ящерицу
+            "l": ["k", "p"],   # ящерица бьёт Спока и бумагу
+            "k": ["s", "r"],   # Спок бьёт ножницы и камень
+        },
+        symmetric=True,
+        max_order=2,
+    )
+)
+
+# Угадай кубик: игрок загадывает грань 1..6, ИИ пытается угадать.
+DICE = GameRegistry.register(
+    GameSpec(
+        key="dice",
+        name="Угадай кубик",
+        moves=["1", "2", "3", "4", "5", "6"],
+        beats={},              # guess-игра, логика в DiceAdapter
+        symmetric=False,
+        max_order=2,
+    )
+)
+
+# Чёт-Нечет: бинарная guess-игра (аналог coinflip, отдельный слот памяти).
+EVEN_ODD = GameRegistry.register(
+    GameSpec(
+        key="evenodd",
+        name="Чёт-Нечет",
+        moves=["e", "o"],      # e=чёт, o=нечет
+        beats={},
+        symmetric=False,
+        max_order=2,
+    )
+)
+
+
+# ============================================================================
+# 2.2 УТИЛИТЫ ИСТОРИИ
+# ============================================================================
+
+def rebuild_memory_from_strings(h: str, o: str = "") -> AIMemory:
+    """
+    Восстанавливает полноценный AIMemory (с матрицами переходов) из «сырых»
+    строк истории. Используется для ретроспективного скоринга предикторов.
+    """
+    mem = AIMemory()
+    for i, ch in enumerate(h):
+        mem.record_move(ch)
+        if i < len(o) and o[i] in _OUTCOME_VALUES:
+            mem.record_outcome(_OUTCOME_VALUES[o[i]])
+    return mem
+
+
+def compute_history_entropy(h: str, spec: GameSpec, window: int = 48) -> float:
+    """Нормированная энтропия недавней истории в [0, 1]. 1 = максимум хаоса."""
+    tail = [c for c in h[-window:] if c in spec.moves]
+    if not tail or len(spec.moves) < 2:
+        return 1.0
+    counts = Counter(tail)
+    total = len(tail)
+    ent = 0.0
+    for m in spec.moves:
+        p = counts.get(m, 0) / total
+        if p > 0:
+            ent -= p * math.log(p)
+    return ent / math.log(len(spec.moves))
+
+
+def compute_stay_rate(h: str, window: int = 48) -> Optional[float]:
+    """Доля ходов, повторяющих предыдущий (None, если данных мало)."""
+    tail = h[-window:]
+    if len(tail) < 6:
+        return None
+    same = sum(1 for i in range(1, len(tail)) if tail[i] == tail[i - 1])
+    return same / (len(tail) - 1)
+
+
+def longest_run(h: str) -> Tuple[str, int]:
+    """Самая длинная серия одинаковых ходов подряд: (ход, длина)."""
+    if not h:
+        return "", 0
+    best_c, best_n, cur_c, cur_n = h[0], 1, h[0], 1
+    for ch in h[1:]:
+        if ch == cur_c:
+            cur_n += 1
+        else:
+            cur_c, cur_n = ch, 1
+        if cur_n > best_n:
+            best_c, best_n = cur_c, cur_n
+    return best_c, best_n
+
+
+def find_dominant_period(
+    h: str,
+    min_period: int = 2,
+    max_period: int = 8,
+    window: int = 60,
+    threshold: float = 0.72,
+) -> Optional[Tuple[int, float]]:
+    """
+    Ищет доминирующий период в истории через автокорреляцию совпадений:
+    возвращает (период, сила_совпадения) или None.
+    """
+    tail = h[-window:]
+    n = len(tail)
+    best: Optional[Tuple[int, float]] = None
+    for p in range(min_period, min(max_period, n // 2) + 1):
+        hits, total, w_acc = 0.0, 0.0, 0.0
+        for i in range(p, n):
+            w = RECENCY_DECAY ** (n - 1 - i)
+            w_acc += w
+            if tail[i] == tail[i - p]:
+                hits += w
+            total += w
+        if total <= 0:
+            continue
+        score = hits / total
+        if score >= threshold and (best is None or score > best[1]):
+            best = (p, score)
+    return best
+
+
+# ============================================================================
+# 2.3 НОВЫЕ ПРЕДИКТОРЫ
+# ============================================================================
+
+class NGramPredictor(BasePredictor):
+    """
+    PPM-подобный предиктор переменного порядка. Работает напрямую по строке
+    истории: ищет контексты длины max..1 и смешивает их предсказания через
+    escape-механизм (чем больше наблюдений у длинного контекста, тем меньше
+    массы «протекает» к коротким).
+    """
+
+    name = "ngram"
+
+    def __init__(self, max_order: int = 4, escape: float = 1.2) -> None:
+        self.max_order = max(1, max_order)
+        self.escape = max(0.1, escape)
+
+    @staticmethod
+    def _context_counts(h: str, ctx: str, spec: GameSpec) -> Dict[str, float]:
+        """Считает, какие ходы следовали за вхождениями контекста ctx."""
+        counts: Dict[str, float] = defaultdict(float)
+        L, n = len(ctx), len(h)
+        idx = 0
+        zone = h[:-1]  # последнее вхождение (сам суффикс) без «следующего» хода
+        while True:
+            pos = zone.find(ctx, idx)
+            if pos == -1:
+                break
+            nxt_i = pos + L
+            if nxt_i < n and h[nxt_i] in spec.moves:
+                counts[h[nxt_i]] += RECENCY_DECAY ** (n - 1 - nxt_i)
+            idx = pos + 1
+        return counts
+
+    def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
+        h = mem.h
+        if len(h) < 2:
+            return self.uniform(spec)
+
+        result = {m: 0.0 for m in spec.moves}
+        remaining = 1.0
+        for L in range(min(self.max_order, len(h) - 1), 0, -1):
+            ctx = h[-L:]
+            counts = self._context_counts(h, ctx, spec)
+            total = sum(counts.values())
+            if total <= 0:
+                continue
+            confidence = total / (total + self.escape)
+            dist = self.normalize(
+                {m: counts.get(m, 0.0) + LAPLACE_ALPHA * 0.5 for m in spec.moves},
+                spec,
+            )
+            for m in spec.moves:
+                result[m] += remaining * confidence * dist[m]
+            remaining *= (1.0 - confidence)
+            if remaining < 0.02:
+                break
+
+        # Остаток вероятностной массы — на равномерное распределение.
+        k = len(spec.moves)
+        for m in spec.moves:
+            result[m] += remaining / k
+        return self.normalize(result, spec)
+
+
+class PeriodicityPredictor(BasePredictor):
+    """
+    Детектор циклов через автокорреляцию: если игрок ходит с периодом p
+    (например, «r p s r p s ...»), предсказывает ход, стоявший p шагов назад.
+    """
+
+    name = "period"
+
+    def __init__(self, min_period: int = 2, max_period: int = 8) -> None:
+        self.min_period = min_period
+        self.max_period = max_period
+
+    def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
+        h = mem.h
+        found = find_dominant_period(
+            h, self.min_period, self.max_period, threshold=0.60
+        )
+        if not found:
+            return self.uniform(spec)
+        period, strength = found
+        candidate = h[-period]
+        if candidate not in spec.moves:
+            return self.uniform(spec)
+        k = len(spec.moves)
+        p_main = strength
+        p_rest = (1.0 - p_main) / (k - 1) if k > 1 else 0.0
+        dist = {m: p_rest for m in spec.moves}
+        dist[candidate] = p_main
+        return self.normalize(dist, spec)
+
+
+class RotationPredictor(BasePredictor):
+    """
+    Детектор ротационных стратегий: игрок сдвигает ход на фиксированный шаг
+    по алфавиту игры (в RPS очень распространено: «после камня — бумага,
+    после бумаги — ножницы»). Оценивает все сдвиги d и выбирает лучший.
+    """
+
+    name = "rotation"
+
+    def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
+        h = [c for c in mem.h[-40:] if c in spec.moves]
+        k = len(spec.moves)
+        if len(h) < 5 or k < 2:
+            return self.uniform(spec)
+
+        index = {m: i for i, m in enumerate(spec.moves)}
+        scores = [0.0] * k
+        total = 0.0
+        n = len(h)
+        for i in range(1, n):
+            w = RECENCY_DECAY ** (n - 1 - i)
+            total += w
+            d = (index[h[i]] - index[h[i - 1]]) % k
+            scores[d] += w
+        if total <= 0:
+            return self.uniform(spec)
+
+        best_d = max(range(k), key=lambda d: scores[d])
+        strength = scores[best_d] / total
+        if strength < 0.45:
+            return self.uniform(spec)
+
+        predicted = spec.moves[(index[h[-1]] + best_d) % k]
+        p_rest = (1.0 - strength) / (k - 1) if k > 1 else 0.0
+        dist = {m: p_rest for m in spec.moves}
+        dist[predicted] = strength
+        return self.normalize(dist, spec)
+
+
+class AntiCounterPredictor(BasePredictor):
+    """
+    Level-k рассуждение: продвинутый игрок пытается контрить прошлый ход ИИ,
+    предполагая, что ИИ повторит контр к его последнему ходу. Предсказываем
+    «контр контра». Работает только для игр с таблицей побед.
+    """
+
+    name = "anticounter"
+
+    def predict(self, mem: AIMemory, spec: GameSpec) -> Dict[str, float]:
+        if not spec.has_beats_table() or not mem.h:
+            return self.uniform(spec)
+        last = mem.last_move()
+        if last is None or last not in spec.moves:
+            return self.uniform(spec)
+
+        # Шаг 1: наивный ИИ сыграл бы контр к last.
+        counters_to_last = spec.all_counters(last)
+        if not counters_to_last:
+            return self.uniform(spec)
+        # Шаг 2: игрок сыграет контр к этому контру.
+        expected: Dict[str, float] = defaultdict(float)
+        for ai_c in counters_to_last:
+            for player_c in spec.all_counters(ai_c):
+                expected[player_c] += 1.0
+        if not expected:
+            return self.uniform(spec)
+        return self.normalize(
+            {m: expected.get(m, 0.0) + LAPLACE_ALPHA for m in spec.moves}, spec
+        )
+
+
+# ============================================================================
+# 2.4 ОНЛАЙН-АДАПТАЦИЯ ВЕСОВ (Hedge / ретроспективный скоринг)
+# ============================================================================
+
+class HindsightWeightMixer:
+    """
+    Оценивает качество каждого предиктора «задним числом»: реплеит последние
+    W ходов игрока и считает лог-лосс каждого предиктора. Затем строит веса
+    по алгоритму Hedge (экспоненциальные мультипликативные веса).
+
+    Полностью stateless относительно пользователя — состояние восстанавливается
+    из строк h/o, поэтому не требует изменения схемы памяти.
+    """
+
+    def __init__(
+        self,
+        predictors: Dict[str, BasePredictor],
+        eta: float = 1.6,
+        window: int = 28,
+        step_decay: float = 0.97,
+        min_history: int = 8,
+    ) -> None:
+        self.predictors = predictors
+        self.eta = eta
+        self.window = window
+        self.step_decay = step_decay
+        self.min_history = min_history
+
+    def compute_weights(self, mem: AIMemory, spec: GameSpec) -> Optional[Dict[str, float]]:
+        h, o = mem.h, mem.o
+        n = len(h)
+        if n < self.min_history:
+            return None
+
+        start = max(1, n - self.window)
+
+        # Прогрев: восстанавливаем состояние памяти на момент start.
+        sim = rebuild_memory_from_strings(h[:start], o[:start])
+
+        losses: Dict[str, float] = {k: 0.0 for k in self.predictors}
+        weight_acc = 0.0
+
+        for i in range(start, n):
+            actual = h[i]
+            if actual not in spec.moves:
+                sim.record_move(actual) if actual else None
+                continue
+            step_w = self.step_decay ** (n - 1 - i)
+            weight_acc += step_w
+            for key, predictor in self.predictors.items():
+                try:
+                    dist = BasePredictor.normalize(predictor.predict(sim, spec), spec)
+                except Exception:  # noqa: BLE001
+                    dist = BasePredictor.uniform(spec)
+                prob = max(1e-6, dist.get(actual, 0.0))
+                losses[key] += step_w * (-math.log(prob))
+            sim.record_move(actual)
+            if i < len(o) and o[i] in _OUTCOME_VALUES:
+                sim.record_outcome(_OUTCOME_VALUES[o[i]])
+
+        if weight_acc <= 0:
+            return None
+
+        avg_loss = {k: v / weight_acc for k, v in losses.items()}
+        best = min(avg_loss.values())
+        raw = {k: math.exp(-self.eta * (v - best)) for k, v in avg_loss.items()}
+        s = sum(raw.values())
+        if s <= 0 or not math.isfinite(s):
+            return None
+        return {k: v / s for k, v in raw.items()}
+
+
+class AdaptiveGameAIEngine(GameAIEngine):
+    """
+    Движок с онлайн-адаптацией весов ансамбля и расширенным набором
+    предикторов. Динамические веса смешиваются со статическими базовыми
+    (коэффициент adaptivity), чтобы избежать переобучения на коротком окне.
+    """
+
+    EXTRA_WEIGHTS = {
+        "ngram": 0.16,
+        "period": 0.10,
+        "rotation": 0.08,
+        "anticounter": 0.06,
+    }
+
+    def __init__(self, *args: Any, adaptivity: float = 0.55, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.adaptivity = max(0.0, min(1.0, adaptivity))
+
+        # Расширяем ансамбль новыми предикторами.
+        self.predictors.update({
+            "ngram": NGramPredictor(),
+            "period": PeriodicityPredictor(),
+            "rotation": RotationPredictor(),
+            "anticounter": AntiCounterPredictor(),
+        })
+        self.weights.update(self.EXTRA_WEIGHTS)
+        self._base_weights = dict(self.weights)
+        self.mixer = HindsightWeightMixer(self.predictors)
+
+    def predict(self, mem: AIMemory, spec: GameSpec) -> Prediction:
+        dynamic: Optional[Dict[str, float]] = None
+        try:
+            dynamic = self.mixer.compute_weights(mem, spec)
+        except Exception:  # noqa: BLE001
+            logger.exception("HindsightWeightMixer упал — используются базовые веса.")
+
+        if dynamic:
+            a = self.adaptivity
+            base_sum = sum(self._base_weights.values()) or 1.0
+            self.weights = {
+                k: (1.0 - a) * (self._base_weights.get(k, 0.0) / base_sum)
+                + a * dynamic.get(k, 0.0)
+                for k in self.predictors
+            }
+        try:
+            pred = super().predict(mem, spec)
+        finally:
+            self.weights = dict(self._base_weights)
+
+        if dynamic:
+            pred.meta["dynamic_weights"] = {k: round(v, 3) for k, v in dynamic.items()}
+        return pred
+
+
+class TemperedGameAIEngine(GameAIEngine):
+    """
+    Движок с температурным сэмплированием ответа: вместо жадного выбора хода
+    с максимальным EV сэмплирует ход из softmax(EV / T). Используется для
+    «мягких» уровней сложности — ИИ играет хорошо, но не идеально.
+    """
+
+    def __init__(self, *args: Any, temperature: float = 0.6, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.temperature = max(0.01, temperature)
+
+    def _best_response(
+        self,
+        dist: Dict[str, float],
+        predicted_move: str,
+        spec: GameSpec,
+    ) -> Tuple[str, float]:
+        if not spec.has_beats_table() or self.temperature <= 0.05:
+            return super()._best_response(dist, predicted_move, spec)
+
+        evs = {
+            ai_m: sum(dist.get(pm, 0.0) * spec.outcome(ai_m, pm) for pm in spec.moves)
+            for ai_m in spec.moves
+        }
+        max_ev = max(evs.values())
+        exp_w = {m: math.exp((ev - max_ev) / self.temperature) for m, ev in evs.items()}
+        total = sum(exp_w.values())
+        r = self.rng.random() * total
+        acc = 0.0
+        for m, w in exp_w.items():
+            acc += w
+            if r <= acc:
+                return m, evs[m]
+        return max(evs, key=evs.get), max_ev  # численный fallback
+
+
+# ============================================================================
+# 2.5 УРОВНИ СЛОЖНОСТИ
+# ============================================================================
+
+@dataclass
+class DifficultyProfile:
+    """Профиль сложности ИИ."""
+
+    key: str
+    name: str
+    exploration: float          # базовая эпсилон-эксплорация
+    temperature: float          # температура сэмплирования ответа (0 = жадно)
+    adaptive: bool              # использовать ли адаптивный ансамбль
+    adaptivity: float = 0.55    # сила онлайн-адаптации весов
+    description: str = ""
+
+
+DIFFICULTY_PRESETS: Dict[str, DifficultyProfile] = {
+    "easy": DifficultyProfile(
+        key="easy", name="Лёгкий",
+        exploration=0.30, temperature=1.4, adaptive=False,
+        description="ИИ часто ошибается и почти не запоминает привычки игрока.",
+    ),
+    "normal": DifficultyProfile(
+        key="normal", name="Обычный",
+        exploration=EXPLORATION_EPSILON, temperature=0.5, adaptive=False,
+        description="Стандартный ансамбль предикторов, умеренная случайность.",
+    ),
+    "hard": DifficultyProfile(
+        key="hard", name="Сложный",
+        exploration=0.06, temperature=0.15, adaptive=True, adaptivity=0.5,
+        description="Расширенный ансамбль + онлайн-адаптация весов.",
+    ),
+    "brutal": DifficultyProfile(
+        key="brutal", name="Безжалостный",
+        exploration=0.02, temperature=0.01, adaptive=True, adaptivity=0.7,
+        description="Максимальная эксплуатация паттернов, почти без случайности.",
+    ),
+}
+
+
+def create_engine_for_difficulty(
+    difficulty: str = "normal",
+    rng: Optional[random.Random] = None,
+) -> GameAIEngine:
+    """Фабрика движка под уровень сложности."""
+    profile = DIFFICULTY_PRESETS.get(difficulty)
+    if profile is None:
+        raise KeyError(
+            f"Неизвестная сложность '{difficulty}'. "
+            f"Доступно: {list(DIFFICULTY_PRESETS)}"
+        )
+    if profile.adaptive:
+        return AdaptiveGameAIEngine(
+            exploration_epsilon=profile.exploration,
+            adaptivity=profile.adaptivity,
+            rng=rng,
+        )
+    if profile.temperature > 0.05:
+        return TemperedGameAIEngine(
+            exploration_epsilon=profile.exploration,
+            temperature=profile.temperature,
+            rng=rng,
+        )
+    return GameAIEngine(exploration_epsilon=profile.exploration, rng=rng)
+
+
+# ============================================================================
+# 2.6 ИНСАЙТЫ ОБ ИГРОКЕ (человекочитаемая аналитика)
+# ============================================================================
+
+_MOVE_LABELS: Dict[str, Dict[str, str]] = {
+    "rps": {"r": "камень", "s": "ножницы", "p": "бумага"},
+    "rpsls": {"r": "камень", "p": "бумага", "s": "ножницы",
+              "l": "ящерица", "k": "Спок"},
+    "coinflip": {"0": "орёл", "1": "решка"},
+    "evenodd": {"e": "чёт", "o": "нечет"},
+    "thimbles": {"0": "левый", "1": "средний", "2": "правый"},
+}
+
+
+def _move_label(game_key: str, move: str) -> str:
+    return _MOVE_LABELS.get(game_key, {}).get(move, move)
+
+
+def generate_player_insights(
+    ai_memory: Optional[Dict[str, Any]],
+    game_key: str,
+    max_items: int = 6,
+) -> List[str]:
+    """
+    Человекочитаемые наблюдения о стиле игрока — можно показывать в профиле
+    или использовать для «подколок» от бота.
+    """
+    spec = GameRegistry.get(game_key)
+    cont = AIMemoryContainer.from_dict(ai_memory)
+    mem = cont.game(game_key)
+    insights: List[str] = []
+
+    if mem.n < 10:
+        return ["Недостаточно данных: сыграйте ещё несколько раундов."]
+
+    # 1) Любимый ход.
+    counts = Counter(c for c in mem.h[-60:] if c in spec.moves)
+    if counts:
+        fav, fav_n = counts.most_common(1)[0]
+        share = fav_n / sum(counts.values())
+        if share > 0.45:
+            insights.append(
+                f"Явный фаворит: «{_move_label(game_key, fav)}» — "
+                f"{share:.0%} недавних ходов."
+            )
+
+    # 2) Склонность повторять ход.
+    stay = compute_stay_rate(mem.h)
+    if stay is not None:
+        if stay > 0.55:
+            insights.append(f"Часто повторяет предыдущий ход ({stay:.0%} случаев).")
+        elif stay < 0.15 and len(spec.moves) > 2:
+            insights.append("Почти никогда не повторяет ход дважды подряд — "
+                            "это тоже предсказуемо!")
+
+    # 3) Периодичность.
+    period = find_dominant_period(mem.h)
+    if period:
+        insights.append(
+            f"Обнаружен цикл с периодом {period[0]} "
+            f"(совпадение {period[1]:.0%})."
+        )
+
+    # 4) Энтропия / предсказуемость.
+    ent = compute_history_entropy(mem.h, spec)
+    if ent < 0.55:
+        insights.append("Стиль игры сильно предсказуем — ИИ этим пользуется.")
+    elif ent > 0.93:
+        insights.append("Ходы близки к случайным — модель почти бессильна.")
+
+    # 5) Самая длинная серия.
+    run_move, run_len = longest_run(mem.h)
+    if run_len >= 4:
+        insights.append(
+            f"Рекордная серия: «{_move_label(game_key, run_move)}» "
+            f"{run_len} раз(а) подряд."
+        )
+
+    # 6) Реакция на поражение (WSLS-паттерн).
+    L = min(len(mem.h), len(mem.o))
+    if L >= 10:
+        shift_after_loss, losses = 0.0, 0.0
+        for i in range(L - 1):
+            if mem.o[i] == "W":  # победа ИИ = поражение игрока
+                losses += 1
+                if mem.h[i + 1] != mem.h[i]:
+                    shift_after_loss += 1
+        if losses >= 5:
+            rate = shift_after_loss / losses
+            if rate > 0.7:
+                insights.append(
+                    f"После поражения почти всегда меняет ход ({rate:.0%})."
+                )
+            elif rate < 0.3:
+                insights.append(
+                    f"Упрямо повторяет ход даже после поражения "
+                    f"({1 - rate:.0%} случаев)."
+                )
+
+    # 7) Текущая серия.
+    if mem.streak >= 4:
+        insights.append(f"ИИ выигрывает {mem.streak} раунд(ов) подряд.")
+    elif mem.streak <= -4:
+        insights.append(f"Игрок выигрывает {-mem.streak} раунд(ов) подряд!")
+
+    return insights[:max_items] if insights else [
+        "Стиль игры сбалансирован — явных слабостей не найдено."
+    ]
+
+
+# ============================================================================
+# 2.7 ШИНА СОБЫТИЙ (телеметрия)
+# ============================================================================
+
+# Стандартные события.
+EVENT_ROUND_PLAYED = "round_played"
+EVENT_MEMORY_RESET = "memory_reset"
+EVENT_EXPLORATION_USED = "exploration_used"
+EVENT_PLAYER_EXPLOITING = "player_exploiting"   # игрок «читает» ИИ
+
+EventHandler = Callable[[str, Dict[str, Any]], Any]
+
+
+class AIEventBus:
+    """
+    Простая шина событий для телеметрии/логирования/ачивок.
+    Поддерживает синхронные и асинхронные обработчики; падение обработчика
+    не влияет на игровой процесс.
+    """
+
+    def __init__(self) -> None:
+        self._handlers: Dict[str, List[EventHandler]] = defaultdict(list)
+
+    def subscribe(self, event: str, handler: EventHandler) -> None:
+        self._handlers[event].append(handler)
+
+    def unsubscribe(self, event: str, handler: EventHandler) -> None:
+        try:
+            self._handlers[event].remove(handler)
+        except ValueError:
+            pass
+
+    def emit(self, event: str, payload: Dict[str, Any]) -> None:
+        for handler in list(self._handlers.get(event, ())):
+            try:
+                result = handler(event, payload)
+                if inspect.isawaitable(result):
+                    try:
+                        loop = asyncio.get_running_loop()
+                        loop.create_task(self._guard(result))
+                    except RuntimeError:
+                        logger.warning(
+                            "Async-обработчик '%s' проигнорирован: нет event loop.",
+                            event,
+                        )
+            except Exception:  # noqa: BLE001
+                logger.exception("Обработчик события '%s' упал.", event)
+
+    @staticmethod
+    async def _guard(coro: Awaitable[Any]) -> None:
+        try:
+            await coro
+        except Exception:  # noqa: BLE001
+            logger.exception("Async-обработчик события упал.")
+
+
+class InstrumentedUserManagerBridge(UserManagerBridge):
+    """
+    Мост с телеметрией: эмитит события в AIEventBus после ключевых операций.
+    Полностью совместим с UserManagerBridge (drop-in замена).
+    """
+
+    def __init__(self, *args: Any, event_bus: Optional[AIEventBus] = None,
+                 **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.event_bus = event_bus or AIEventBus()
+
+    def _emit_round(self, uid: Any, game_key: str, report: Dict[str, Any]) -> None:
+        payload = {"uid": uid, "game": game_key, "report": report}
+        self.event_bus.emit(EVENT_ROUND_PLAYED, payload)
+        if report.get("used_exploration"):
+            self.event_bus.emit(EVENT_EXPLORATION_USED, payload)
+        recent = report.get("meta", {}).get("recent_winrate_ai")
+        if recent is not None and recent < 0.35:
+            self.event_bus.emit(EVENT_PLAYER_EXPLOITING, payload)
+
+    async def play(self, uid: Any, game_key: str, player_move: str) -> Dict[str, Any]:
+        report = await super().play(uid, game_key, player_move)
+        self._emit_round(uid, game_key, report)
+        return report
+
+    async def play_custom(self, uid: Any, game_key: str,
+                          resolver: CustomResolver) -> Dict[str, Any]:
+        report = await super().play_custom(uid, game_key, resolver)
+        self._emit_round(uid, game_key, report)
+        return report
+
+    async def reset(self, uid: Any, game_key: Optional[str] = None) -> Dict[str, Any]:
+        result = await super().reset(uid, game_key)
+        self.event_bus.emit(EVENT_MEMORY_RESET, {"uid": uid, "game": game_key})
+        return result
+
+
+# ============================================================================
+# 2.8 RATE-LIMITER (анти-спам)
+# ============================================================================
+
+class TokenBucketLimiter:
+    """
+    Token-bucket лимитер частоты игр на пользователя. Хранит состояние только
+    в памяти, при переполнении словаря вытесняет самые старые записи.
+
+        limiter = TokenBucketLimiter(rate=0.5, burst=3)  # 1 игра / 2 сек
+        if not limiter.allow(uid):
+            return "Слишком быстро! Подождите немного."
+    """
+
+    __slots__ = ("rate", "burst", "max_entries", "_state")
+
+    def __init__(self, rate: float = 1.0, burst: int = 5,
+                 max_entries: int = 10_000) -> None:
+        self.rate = max(0.01, rate)          # токенов в секунду
+        self.burst = max(1, burst)           # ёмкость ведра
+        self.max_entries = max(100, max_entries)
+        self._state: Dict[Any, Tuple[float, float]] = {}  # uid -> (tokens, ts)
+
+    def allow(self, uid: Any, cost: float = 1.0) -> bool:
+        now = time.monotonic()
+        tokens, ts = self._state.get(uid, (float(self.burst), now))
+        tokens = min(float(self.burst), tokens + (now - ts) * self.rate)
+        if tokens >= cost:
+            self._state[uid] = (tokens - cost, now)
+            self._evict_if_needed()
+            return True
+        self._state[uid] = (tokens, now)
+        return False
+
+    def retry_after(self, uid: Any, cost: float = 1.0) -> float:
+        """Через сколько секунд запрос будет разрешён."""
+        tokens, ts = self._state.get(uid, (float(self.burst), time.monotonic()))
+        deficit = cost - tokens
+        return max(0.0, deficit / self.rate)
+
+    def _evict_if_needed(self) -> None:
+        if len(self._state) <= self.max_entries:
+            return
+        oldest = sorted(self._state.items(), key=lambda kv: kv[1][1])
+        for uid, _ in oldest[: len(self._state) - self.max_entries // 2]:
+            del self._state[uid]
+
+
+# ============================================================================
+# 2.9 ОБСЛУЖИВАНИЕ ПАМЯТИ: АУДИТ, КОМПАКТИФИКАЦИЯ, ЭКСПОРТ
+# ============================================================================
+
+def audit_ai_memory(ai_memory: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Диагностика памяти: размеры, потенциальные проблемы, рекомендации.
+    Ничего не изменяет.
+    """
+    cont = AIMemoryContainer.from_dict(ai_memory)
+    issues: List[str] = []
+    games_report: Dict[str, Any] = {}
+
+    for key, mem in cont.games.items():
+        slot_issues: List[str] = []
+        if not GameRegistry.has(key):
+            slot_issues.append("игра не зарегистрирована (осиротевший слот)")
+        if len(mem.h) >= MAX_HISTORY_LEN:
+            slot_issues.append("история достигла лимита (нормально)")
+        if abs(len(mem.h) - mem.n) > MAX_HISTORY_LEN:
+            slot_issues.append("счётчик n сильно расходится с историей")
+        rounds = mem.total_games()
+        if rounds > 0 and abs(rounds - mem.n) > rounds * 0.5 + 10:
+            slot_issues.append("число исходов сильно расходится с числом ходов")
+        size = mem.estimate_size()
+        if size > 12_000:
+            slot_issues.append(f"слот крупный ({size} байт) — стоит компактифицировать")
+        games_report[key] = {
+            "size_bytes": size,
+            "moves": mem.n,
+            "rounds": rounds,
+            "issues": slot_issues,
+        }
+        issues.extend(f"{key}: {msg}" for msg in slot_issues)
+
+    total = cont.estimate_document_size()
+    if total > 60_000:
+        issues.append(f"общий размер ai_memory {total} байт — близко к лимитам")
+
+    return {
+        "schema_version": cont.v,
+        "total_size_bytes": total,
+        "games_count": len(cont.games),
+        "games": games_report,
+        "issues": issues,
+        "healthy": not issues,
+    }
+
+
+def compact_ai_memory(
+    ai_memory: Optional[Dict[str, Any]],
+    history_keep: int = 80,
+    transitions_keep: int = 120,
+    drop_orphans: bool = True,
+) -> Dict[str, Any]:
+    """
+    Компактифицирует память: укорачивает истории, оставляет только самые
+    частые переходы, опционально удаляет слоты незарегистрированных игр.
+    Возвращает новый dict — положите его обратно и вызовите mark_dirty().
+    """
+    cont = AIMemoryContainer.from_dict(ai_memory)
+    for key in list(cont.games):
+        if drop_orphans and not GameRegistry.has(key):
+            del cont.games[key]
+            continue
+        mem = cont.games[key]
+        mem.h = mem.h[-history_keep:]
+        mem.o = mem.o[-history_keep:]
+        if len(mem.t) > transitions_keep:
+            top = sorted(mem.t.items(), key=lambda kv: kv[1], reverse=True)
+            mem.t = dict(top[:transitions_keep])
+        keep2 = max(20, transitions_keep * 2 // 3)
+        if len(mem.t2) > keep2:
+            top2 = sorted(mem.t2.items(), key=lambda kv: kv[1], reverse=True)
+            mem.t2 = dict(top2[:keep2])
+    return cont.to_dict()
+
+
+def export_ai_memory_blob(ai_memory: Optional[Dict[str, Any]]) -> str:
+    """Экспорт памяти в компактный base64-blob (zlib): бэкапы, перенос."""
+    cont = AIMemoryContainer.from_dict(ai_memory)
+    raw = json.dumps(cont.to_dict(), ensure_ascii=False,
+                     separators=(",", ":")).encode("utf-8")
+    return base64.b64encode(zlib.compress(raw, level=9)).decode("ascii")
+
+
+def import_ai_memory_blob(blob: str) -> Dict[str, Any]:
+    """Импорт памяти из blob, созданного export_ai_memory_blob()."""
+    try:
+        raw = zlib.decompress(base64.b64decode(blob.encode("ascii")))
+        data = json.loads(raw.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"Повреждённый blob памяти ИИ: {exc}") from exc
+    return AIMemoryContainer.from_dict(data).to_dict()
+
+
+# ============================================================================
+# 2.10 АДАПТЕРЫ НОВЫХ ИГР
+# ============================================================================
+
+class RPSLSAdapter(BaseGameAdapter):
+    """Камень-Ножницы-Бумага-Ящерица-Спок: симметричная механика с beats."""
+
+    game_key = "rpsls"
+
+
+class DiceAdapter(BaseGameAdapter):
+    """
+    Угадай кубик: игрок загадывает грань 1..6, ИИ угадывает.
+    Победа ИИ при совпадении (базовый шанс 1/6, модель его повышает).
+    """
+
+    game_key = "dice"
+
+    async def resolve(self, uid: Any, player_move: str) -> Dict[str, Any]:
+        if not self.spec.is_valid_move(player_move):
+            raise ValueError("Грань кубика должна быть от '1' до '6'")
+
+        def resolver(pred: Prediction, spec: GameSpec) -> Tuple[str, int, Dict[str, Any]]:
+            ai_guess = pred.ai_move
+            ai_correct = (ai_guess == player_move)
+            outcome = 1 if ai_correct else -1
+            return player_move, outcome, {
+                "ai_guess": ai_guess,
+                "ai_correct": ai_correct,
+                "outcome_for_ai": outcome,
+            }
+
+        return await self.bridge.play_custom(uid, self.game_key, resolver)
+
+
+class EvenOddAdapter(BaseGameAdapter):
+    """Чёт-Нечет: бинарная guess-игра, ИИ выигрывает при совпадении."""
+
+    game_key = "evenodd"
+
+    async def resolve(self, uid: Any, player_move: str) -> Dict[str, Any]:
+        if not self.spec.is_valid_move(player_move):
+            raise ValueError("Ход должен быть 'e' (чёт) или 'o' (нечет)")
+
+        def resolver(pred: Prediction, spec: GameSpec) -> Tuple[str, int, Dict[str, Any]]:
+            ai_guess = pred.ai_move
+            ai_correct = (ai_guess == player_move)
+            outcome = 1 if ai_correct else -1
+            return player_move, outcome, {
+                "ai_guess": ai_guess,
+                "ai_correct": ai_correct,
+                "outcome_for_ai": outcome,
+            }
+
+        return await self.bridge.play_custom(uid, self.game_key, resolver)
+
+
+# Регистрируем адаптеры в общей фабрике.
+ADAPTERS.update({
+    "rpsls": RPSLSAdapter,
+    "dice": DiceAdapter,
+    "evenodd": EvenOddAdapter,
+})
+
+
+# ============================================================================
+# 2.11 БЕНЧМАРК: СРАВНЕНИЕ ДВИЖКОВ ПРОТИВ РАЗНЫХ СТРАТЕГИЙ
+# ============================================================================
+
+# Стратегии-симуляторы игрока: f(history, outcomes, spec, rng) -> move.
+BenchStrategy = Callable[[List[str], List[int], GameSpec, random.Random], str]
+
+
+def _bench_cyclic(h: List[str], o: List[int], spec: GameSpec,
+                  rng: random.Random) -> str:
+    return spec.moves[len(h) % len(spec.moves)]
+
+
+def _bench_biased(h: List[str], o: List[int], spec: GameSpec,
+                  rng: random.Random) -> str:
+    return spec.moves[0] if rng.random() < 0.7 else rng.choice(spec.moves)
+
+
+def _bench_sticky(h: List[str], o: List[int], spec: GameSpec,
+                  rng: random.Random) -> str:
+    if h and rng.random() < 0.75:
+        return h[-1]
+    return rng.choice(spec.moves)
+
+
+def _bench_rotation(h: List[str], o: List[int], spec: GameSpec,
+                    rng: random.Random) -> str:
+    """Игрок сдвигает ход на +1 по алфавиту (популярная «хитрость»)."""
+    if not h:
+        return rng.choice(spec.moves)
+    idx = spec.moves.index(h[-1]) if h[-1] in spec.moves else 0
+    return spec.moves[(idx + 1) % len(spec.moves)]
+
+
+def _bench_wsls(h: List[str], o: List[int], spec: GameSpec,
+                rng: random.Random) -> str:
+    """Win-stay/lose-shift с точки зрения игрока (o — исходы для ИИ)."""
+    if not h or not o:
+        return rng.choice(spec.moves)
+    player_won = o[-1] < 0
+    if player_won and rng.random() < 0.85:
+        return h[-1]
+    others = [m for m in spec.moves if m != h[-1]] or spec.moves
+    return rng.choice(others)
+
+
+def _bench_pattern(h: List[str], o: List[int], spec: GameSpec,
+                   rng: random.Random) -> str:
+    pattern = [0, 0, 1, 2, 2, 1]
+    return spec.moves[pattern[len(h) % len(pattern)] % len(spec.moves)]
+
+
+def _bench_random(h: List[str], o: List[int], spec: GameSpec,
+                  rng: random.Random) -> str:
+    return rng.choice(spec.moves)
+
+
+BENCH_STRATEGIES: Dict[str, BenchStrategy] = {
+    "cyclic": _bench_cyclic,
+    "biased": _bench_biased,
+    "sticky": _bench_sticky,
+    "rotation": _bench_rotation,
+    "wsls": _bench_wsls,
+    "pattern": _bench_pattern,
+    "random": _bench_random,
+}
+
+
+def simulate_engine_vs_strategy(
+    engine: GameAIEngine,
+    game_key: str,
+    strategy: BenchStrategy,
+    rounds: int = 400,
+    seed: int = 42,
+) -> float:
+    """
+    Быстрая синхронная симуляция (без bridge/asyncio) — возвращает winrate ИИ.
+    Для guess-игр без таблицы побед ИИ выигрывает при совпадении хода.
+    """
+    spec = GameRegistry.get(game_key)
+    mem = AIMemory()
+    rng = random.Random(seed)
+    history: List[str] = []
+    outcomes: List[int] = []
+
+    for _ in range(rounds):
+        pred = engine.predict(mem, spec)
+        move = strategy(history, outcomes, spec, rng)
+        if spec.has_beats_table():
+            outcome = spec.outcome(pred.ai_move, move)
+        else:
+            outcome = 1 if pred.ai_move == move else -1
+        mem.record_move(move)
+        mem.prof = classify_player_profile(mem, spec)
+        mem.record_outcome(outcome)
+        history.append(move)
+        outcomes.append(outcome)
+
+    return mem.winrate_ai()
+
+
+def run_benchmark(
+    game_key: str = "rps",
+    rounds: int = 400,
+    seed: int = 7,
+    verbose: bool = True,
+) -> Dict[str, Dict[str, float]]:
+    """
+    Сравнивает базовый и адаптивный движки против всех стратегий.
+    Возвращает {engine_name: {strategy_name: winrate}}.
+    """
+    engines: Dict[str, GameAIEngine] = {
+        "base": GameAIEngine(rng=random.Random(seed)),
+        "adaptive": AdaptiveGameAIEngine(rng=random.Random(seed)),
+        "brutal": create_engine_for_difficulty("brutal", rng=random.Random(seed)),
+    }
+    results: Dict[str, Dict[str, float]] = {}
+
+    for engine_name, engine in engines.items():
+        row: Dict[str, float] = {}
+        for strat_name, strat in BENCH_STRATEGIES.items():
+            row[strat_name] = simulate_engine_vs_strategy(
+                engine, game_key, strat, rounds=rounds, seed=seed
+            )
+        results[engine_name] = row
+
+    if verbose:
+        spec = GameRegistry.get(game_key)
+        strat_names = list(BENCH_STRATEGIES)
+        print(f"\n=== БЕНЧМАРК: {spec.name} ({game_key}), {rounds} раундов ===")
+        header = f"{'engine':<10}" + "".join(f"{s:>10}" for s in strat_names)
+        print(header)
+        print("-" * len(header))
+        for engine_name, row in results.items():
+            line = f"{engine_name:<10}" + "".join(
+                f"{row[s]:>10.3f}" for s in strat_names
+            )
+            print(line)
+        baseline = 1.0 / len(spec.moves)
+        print(f"(базовая линия случайной игры ~ {baseline:.3f})")
+
+    return results
+
+
+# ============================================================================
+# 2.12 SELF-ТЕСТЫ (быстрая проверка корректности без внешних зависимостей)
+# ============================================================================
+
+def run_selftests(verbose: bool = True) -> bool:
+    """
+    Набор быстрых инвариант-тестов. Возвращает True при успехе,
+    бросает AssertionError при провале.
+    """
+    def check(name: str, cond: bool) -> None:
+        assert cond, f"SELFTEST FAILED: {name}"
+        if verbose:
+            print(f"  [ok] {name}")
+
+    if verbose:
+        print(">>> Запуск self-тестов game_ai...")
+
+    # --- GameSpec / исходы -------------------------------------------------
+    rps = GameRegistry.get("rps")
+    check("rps: камень бьёт ножницы", rps.outcome("r", "s") == 1)
+    check("rps: ножницы проигрывают камню", rps.outcome("s", "r") == -1)
+    check("rps: ничья", rps.outcome("p", "p") == 0)
+
+    rpsls = GameRegistry.get("rpsls")
+    check("rpsls: Спок бьёт камень", rpsls.outcome("k", "r") == 1)
+    check("rpsls: ящерица бьёт Спока", rpsls.outcome("l", "k") == 1)
+    check("rpsls: бумага проигрывает ножницам", rpsls.outcome("p", "s") == -1)
+    check("rpsls: у каждого хода ровно 2 жертвы",
+          all(len(rpsls.beats[m]) == 2 for m in rpsls.moves))
+
+    # --- Память: сериализация round-trip ------------------------------------
+    mem = AIMemory()
+    for ch in "rpsrpsrrp":
+        mem.record_move(ch)
+        mem.record_outcome(random.choice([1, -1, 0]))
+    restored = AIMemory.from_dict(mem.to_dict())
+    check("память: история сохраняется", restored.h == mem.h)
+    check("память: счётчики сохраняются",
+          (restored.n, restored.w + restored.l + restored.d)
+          == (mem.n, mem.w + mem.l + mem.d))
+
+    # --- Контейнер: миграция и вытеснение ------------------------------------
+    legacy = {"h": "rpsrps", "t": {"r|p": 2}, "n": 6, "w": 2, "l": 2, "d": 2}
+    migrated = AIMemoryContainer.from_dict(legacy)
+    check("миграция v2->v3: история попала в слот rps",
+          migrated.games.get("rps") is not None
+          and migrated.games["rps"].h == "rpsrps")
+
+    cont = AIMemoryContainer()
+    for i in range(MAX_GAMES_IN_MEMORY + 3):
+        slot = cont.game(f"rps") if i == 0 else cont.games.setdefault(
+            f"fake_{i}", AIMemory()
+        )
+        slot.last = i
+    cont._evict_if_needed(keep="rps")
+    check("LRU-вытеснение слотов работает",
+          len(cont.games) <= MAX_GAMES_IN_MEMORY)
+
+    # --- Предикторы: валидные распределения ----------------------------------
+    test_mem = rebuild_memory_from_strings("rpsrpsrpsrps", "WLDWLDWLDWLD")
+    for predictor in (NGramPredictor(), PeriodicityPredictor(),
+                      RotationPredictor(), AntiCounterPredictor()):
+        dist = BasePredictor.normalize(predictor.predict(test_mem, rps), rps)
+        s = sum(dist.values())
+        check(f"{predictor.name}: распределение нормировано",
+              abs(s - 1.0) < 1e-9 and all(v >= 0 for v in dist.values()))
+
+    # Циклический игрок должен быть пойман периодическим предиктором.
+
+    pdist = PeriodicityPredictor().predict(test_mem, rps)
+    check("period: верное предсказание цикла", max(pdist, key=pdist.get) == "r")
+
+    # --- HindsightWeightMixer ----------------------------------------------
+    mixer = HindsightWeightMixer(AdaptiveGameAIEngine().predictors)
+    weights = mixer.compute_weights(test_mem, rps)
+    check("mixer: веса посчитаны", weights is not None and len(weights) > 0)
+
+    # --- Difficulty presets ------------------------------------------------
+    for diff in DIFFICULTY_PRESETS:
+        engine = create_engine_for_difficulty(diff)
+        check(f"difficulty: создан движок для {diff}", engine is not None)
+
+    # --- Insights ----------------------------------------------------------
+    insights = generate_player_insights(test_mem.to_dict(), "rps")
+    check("insights: сгенерированы инсайты", len(insights) > 0)
+
+    # --- TokenBucketLimiter ------------------------------------------------
+    limiter = TokenBucketLimiter(rate=10, burst=5)
+    check("limiter: разрешен первый запрос", limiter.allow("user1"))
+    check("limiter: корректное время ожидания", limiter.retry_after("user1") == 0)
+
+    # --- Compact / Audit / Export ------------------------------------------
+    audit = audit_ai_memory(test_mem.to_dict())
+    check("audit: отчет сформирован", audit["healthy"] is True)
+
+    compacted = compact_ai_memory(test_mem.to_dict())
+    check("compact: память компактифицирована", compacted is not None)
+
+    blob = export_ai_memory_blob(test_mem.to_dict())
+    imported = import_ai_memory_blob(blob)
+    check("export/import: blob восстановлен", imported["v"] == AI_MEMORY_SCHEMA_VERSION)
+
+    if verbose:
+        print(">>> Все self-тестов успешно пройдены!")
+    return True
 
 
 if __name__ == "__main__":
