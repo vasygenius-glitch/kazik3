@@ -114,6 +114,8 @@ async def cmd_help(message: types.Message):
     text = (
         "📜 <b>ПОЛНЫЙ СПИСОК КОМАНД БОТА</b> 📜\n\n"
         "🚀 <b>ПОСЛЕДНИЕ ОБНОВЛЕНИЯ:</b>\n"
+        "• 🤖 <b>ИИ-ПРОТИВНИК (Версия 3):</b> Обыграй ИИ в <code>/rps</code>! ИИ использует цепи Маркова 3-го порядка и Hedge-алгоритм адаптации весов, чтобы изучить твои привычки ходов. Статистика: <code>/rps_stats</code>, сброс: <code>/rps_reset</code>.\n"
+        "• 🃏 <b>УМНЫЙ БЛЭКДЖЕК:</b> <code>/bj</code> — Дилер подстраивается под твой стиль игры на основе прогнозов ИИ!\n"
         "• 📈 <b>КРАШ-АВИАТОР:</b> <code>/crash</code>\n"
         "• 🃏 <b>ВИДЕО-ПОКЕР:</b> <code>/poker</code>\n"
         "• 📈 <b>Фондовая Биржа:</b> <code>/stocks</code> — Инвестируй в ГазСыр и SpaceMilk!\n"
@@ -145,7 +147,7 @@ async def cmd_help(message: types.Message):
         "🛡 <b>КЛАНЫ:</b> <code>/clan</code>, "
         "<code>Брак</code>, <code>Развод</code>, <code>Подарок</code>.\n\n"
 
-        "🎰 <b>ИГРЫ:</b> <code>/poker</code>, <code>/crash</code>, <code>/bj</code>, <code>/slots</code>, "
+        "🎰 <b>ИГРЫ:</b> <code>/rps</code>, <code>/poker</code>, <code>/crash</code>, <code>/bj</code>, <code>/slots</code>, "
         "<code>/roulette</code>, <code>Вызвать на дуэль</code>, <code>/lottery</code>.\n\n"
 
         "👮 <b>АДМИНКА:</b> <code>мут</code>, <code>бан</code>, "
