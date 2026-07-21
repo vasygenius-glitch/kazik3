@@ -503,6 +503,75 @@ async def cmd_spy(message: types.Message):
     except ValueError:
         await message.answer("ID группы должен быть числом.")
 
+@router.message(Command("spy_get", "spy_logs", "spy_send"))
+async def cmd_spy_get(message: types.Message):
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Укажите ID группы. Пример: <code>/spy_get -100123456789</code>")
+        return
+
+    try:
+        chat_id = int(args[1])
+    except ValueError:
+        await message.answer("ID группы должен быть числом.")
+        return
+
+    from spy import get_spy_chats
+    spy_chats = await get_spy_chats()
+    if chat_id not in spy_chats:
+        await message.answer(f"❌ Шпионаж для группы <code>{chat_id}</code> не включен. Включите его сначала с помощью <code>/spy {chat_id}</code>.")
+        return
+
+    import os
+    from aiogram.types import BufferedInputFile
+    from config import CREATOR_ID
+    
+    LOGS_DIR = "logs"
+    if not os.path.exists(LOGS_DIR):
+        await message.answer("ℹ️ Директория логов пуста.")
+        return
+        
+    prefix = f"chat_{chat_id}_"
+    log_files = []
+    for file in os.listdir(LOGS_DIR):
+        if file.startswith(prefix) and file.endswith(".txt"):
+            log_files.append(file)
+            
+    if not log_files:
+        await message.answer(f"ℹ️ Для группы <code>{chat_id}</code> пока нет сохраненных сообщений в логах.")
+        return
+        
+    log_files.sort()
+    
+    merged_lines = []
+    for file in log_files:
+        file_path = os.path.join(LOGS_DIR, file)
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                merged_lines.append(f.read())
+        except Exception as e:
+            print(f"Error reading log file {file_path}: {e}")
+            
+    merged_text = "\n".join(merged_lines)
+    
+    if not merged_text.strip():
+        await message.answer(f"ℹ️ Файлы логов для группы <code>{chat_id}</code> пусты.")
+        return
+        
+    try:
+        file_data = BufferedInputFile(merged_text.encode("utf-8"), filename=f"spy_chat_{chat_id}_history.txt")
+        await message.bot.send_document(
+            chat_id=CREATOR_ID,
+            document=file_data,
+            caption=f"👁 Полная история сообщений группы {chat_id} ({len(merged_text)} байт)"
+        )
+        await message.answer(f"✅ Логи группы <code>{chat_id}</code> отправлены вам в личные сообщения!")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка отправки логов в личные сообщения: {e}")
+
 @router.message(Command("allow"))
 async def cmd_allow(message: types.Message, bot: Bot):
     if not is_creator(message):
