@@ -91,6 +91,16 @@ ITEMS: dict[str, dict] = {
     "lockpick":  {"name": "🗝 Отмычка",          "price": 15_000,    "cat": "other", "action": "other", "desc": "Увеличивает шанс кражи на +15% (одноразовая)."},
     "mask":      {"name": "🎭 Маска вора",       "price": 25_000,    "cat": "other", "action": "other", "desc": "Снижает штраф при неудачной краже (одноразовая)."},
     "medkit":    {"name": "💊 Аптечка",          "price": 10_000,    "cat": "other", "action": "other", "desc": "Полностью вылечивает все ЗППП. Использовать: /heal"},
+
+    # ДИКТОРЫ ТАЙНИЙ БАНИЙ (СЕЗОН 3)
+    "dictor_common":    {"name": "обычный диктор тайний баний", "price": 5_000, "cat": "tayniy_baniy", "action": "other", "desc": "Обычный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_uncommon":  {"name": "необычный диктор тайний баний", "price": 10_000, "cat": "tayniy_baniy", "action": "other", "desc": "Необычный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_rare":      {"name": "редкий диктор тайний баний", "price": 25_000, "cat": "tayniy_baniy", "action": "other", "desc": "Редкий диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_epic":      {"name": "эпический диктор тайний баний", "price": 50_000, "cat": "tayniy_baniy", "action": "other", "desc": "Эпический диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_legendary": {"name": "легендарный диктор тайний баний", "price": 100_000, "cat": "tayniy_baniy", "action": "other", "desc": "Легендарный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_mythic":    {"name": "мифический диктор тайний баний", "price": 250_000, "cat": "tayniy_baniy", "action": "other", "desc": "Мифический диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_cosmic":    {"name": "космический диктор тайний баний", "price": 500_000, "cat": "tayniy_baniy", "action": "other", "desc": "Космический диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_divine":    {"name": "божественный диктор тайний баний", "price": 1_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Божественный диктор тайний баний (черный кролик 🖤🐇)."},
 }
 
 CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}

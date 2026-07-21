@@ -101,6 +101,49 @@ SEASON_TEMPLATES = {
             {"chance": 0.05, "msg": "\n\n🦀 <b>ВАС УКУСИЛ КРАБ!</b> Пришлось купить пластырь за -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
             {"chance": 0.08, "msg": "\n\n🕶️ <b>ВЫ НАШЛИ ЗАБЫТЫЕ ОЧКИ!</b> Продали их за +{value} сыр.", "range": (2000, 8000)},
         ]
+    },
+    "tayniy_baniy": {
+        "id": "tayniy_baniy",
+        "name": "СЕЗОН 3: ДИКТОРЫ ТАЙНИЙ БАНИЙ (BATH 2026)",
+        "emoji": "🛁🧖‍♂️🧼",
+        "description": (
+            "Добро пожаловать в сезон Дикторов Тайний Баний!\n\n"
+            "🛁 <b>ТАЙНЫ БАНИ:</b> Базовый заработок на работе увеличен на 10%!\n\n"
+            "📊 <b>ВЛИЯНИЕ НА МИР:</b>\n"
+            "📈 Базовый заработок: +10%\n"
+            "🍀 Шанс получить редких дикторов!\n"
+            "🔥 Доступны новые команды: /banya_case, /banya_spin, /banya_dictor"
+        ),
+        "multiplier": 1.1,
+        "glitch_chance": 0.0,
+        "strings": {
+            "tax": "🧖‍♂️ Банный сбор (Налог)",
+            "balance": "🧼 Банные коины (Баланс)",
+            "shop": "🛁 Банная лавка",
+            "shop_biz": "🧖‍♂️ Банные комплексы",
+            "shop_cars": "🛢 Бочки для купания",
+            "work": "🧼 Парение веником",
+            "crime": "🧖‍♂️ Подслушивание в бане",
+            "bonus": "🧼 Банное мыло",
+            "profile": "ЛИЧНОЕ ДЕЛО БАНЩИКА",
+            "bank_label": "🛁 Шкафчик в бане",
+            "bank_title": "🏦 БАННЫЕ БАНКИ",
+            "top_winner": "САМЫЙ ЧИСТЫЙ БАНЩИК",
+            "bj_start": "🎰 КАЗИНО 'ТАЙНАЯ БАНЯ'",
+            "bj_win": "🎉 БАННЫЙ ДЖЕКПОТ!",
+            "roulette_start": "🌀 КРУЖЕНИЕ ВЕЙПА...",
+            "job_list": ["вязал березовые веники", "поддавал пару в печь", "массажировал плечи", "разносил квас гостям"],
+            "stocks": {
+                "VEIK": {"name": "Vennik & Co (VEIK)", "ticker": "VEIK", "desc": "Главный производитель березовых веников."},
+                "PAR": {"name": "SteamTech (PAR)", "ticker": "PAR", "desc": "Системы парогенерации нового поколения."},
+            }
+        },
+        "seasonal_disease": {"id": "steam_fever", "name": "Банный Жар", "desc": "Вам слишком жарко. Температура зашкаливает!"},
+        "events": [
+            {"chance": 0.15, "msg": "\n\n🧖‍♂️ <b>ВЫ ОПАРИЛИСЬ ВЕНИКОМ!</b> Тело поет! Получено +{value} сыр.", "range": (5000, 15000)},
+            {"chance": 0.05, "msg": "\n\n🔥 <b>ВЫ ОБОЖГЛИСЬ ПАРОМ!</b> Пришлось купить лед за -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
+            {"chance": 0.08, "msg": "\n\n🧼 <b>ВЫ НАШЛИ ЭЛИТНОЕ МЫЛО!</b> Продали его за +{value} сыр.", "range": (2000, 8000)},
+        ]
     }
 }
 
@@ -265,6 +308,26 @@ async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tup
     if random.random() < 0.03:
         msg += "\n\n👥 <b>ЭХО:</b> Вы слышите шаги сзади... Это вы сами из прошлого! Награда дублирована."
         await update_user_balance(chat_id, user_id, final_value)
+
+    # 5. Дроп дикторов для сезона Дикторов Тайний Баний
+    if cfg.get("id") == "tayniy_baniy":
+        # 8% шанс при работе/крайме найти случайного диктора
+        if random.random() < 0.08:
+            dictors = [
+                {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 40.0},
+                {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 25.0},
+                {"id": "dictor_rare", "name": "редкий диктор тайний баний", "rarity": "Редкий", "color": "🔵", "weight": 15.0},
+                {"id": "dictor_epic", "name": "эпический диктор тайний баний", "rarity": "Эпический", "color": "🟣", "weight": 10.0},
+                {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 5.0},
+                {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 3.0},
+                {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 1.5},
+                {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.5},
+            ]
+            chosen = random.choices(dictors, weights=[d["weight"] for d in dictors], k=1)[0]
+            from user_manager import add_item_to_inventory
+            success = await add_item_to_inventory(chat_id, user_id, chosen["id"])
+            if success:
+                msg += f"\n\n🖤🐇 <b>НАХОДКА!</b> Вы нашли: <code>{chosen['name']}</code> (черный кролик 🖤🐇, {chosen['color']} {chosen['rarity']})! Он добавлен в ваш /inventory."
 
     return final_value, await get_glitch_text(msg)
 
@@ -523,4 +586,182 @@ async def cmd_resort_invest(message: types.Message):
         f"{result_text}\n"
         f"━━━━━━━━━━━━━━━━━━━━"
     )
+
+
+# --- НОВЫЕ БАННЫЕ КОМАНДЫ (Сезон Дикторов Тайний Баний) ---
+
+@router.message(Command("banya_case", "bath_case"))
+async def cmd_banya_case(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "tayniy_baniy":
+        return await message.answer("🛁 Сезон Дикторов Тайний Баний сейчас не активен. Эта команда доступна только в этом сезоне!")
+        
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+        
+    CASE_PRICE = 12000
+    if u_data.get('balance', 0) < CASE_PRICE:
+        return await message.answer(f"💸 Банный кейс стоит <b>{CASE_PRICE}</b> сыроежек. У вас недостаточно средств.")
+        
+    await update_user_balance(chat_id, user_id, -CASE_PRICE, action="Banya Case Open")
+    
+    msg = await message.answer("🛁 <i>Подготавливаем веники... Открываем Банный Кейс...</i> 🧖‍♂️")
+    await asyncio.sleep(1.0)
+    
+    dictors = [
+        {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 40.0},
+        {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 25.0},
+        {"id": "dictor_rare", "name": "редкий диктор тайний баний", "rarity": "Редкий", "color": "🔵", "weight": 15.0},
+        {"id": "dictor_epic", "name": "эпический диктор тайний баний", "rarity": "Эпический", "color": "🟣", "weight": 10.0},
+        {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 5.0},
+        {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 3.0},
+        {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 1.5},
+        {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.5},
+    ]
+    
+    pool = [d for d in dictors]
+    weights = [d["weight"] for d in pool]
+    chosen = random.choices(pool, weights=weights, k=1)[0]
+    
+    from user_manager import add_item_to_inventory
+    success = await add_item_to_inventory(chat_id, user_id, chosen["id"])
+    
+    if not success:
+        await update_user_balance(chat_id, user_id, CASE_PRICE, action="Banya Case Refunded")
+        return await msg.edit_text("❌ Произошла ошибка при открытии кейса. Пожалуйста, попробуйте еще раз.")
+        
+    await msg.edit_text(
+        f"🎁 <b>ОТКРЫТИЕ БАННОГО КЕЙСА:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Стоимость: <b>{CASE_PRICE}</b> сыроежек\n\n"
+        f"🖤🐇 <b>Выпал диктор:</b> <code>{chosen['name']}</code>\n"
+        f"Редкость: <b>{chosen['rarity']}</b> ({chosen['color']} черный кролик 🖤🐇)\n"
+        f"✨ Предмет добавлен в ваш /inventory!\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+@router.message(Command("banya_spin"))
+async def cmd_banya_spin(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "tayniy_baniy":
+        return await message.answer("🛁 Сезон Дикторов Тайний Баний сейчас не активен. Эта команда доступна только в этом сезоне!")
+        
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+        
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/banya_spin [ставка]</code>")
+        
+    try:
+        bet = int(args[1])
+        if bet < 100:
+            return await message.answer("Минимальная ставка — 100 сыроежек.")
+    except ValueError:
+        return await message.answer("Ставка должна быть числом.")
+        
+    if u_data.get('balance', 0) - bet < -5000:
+        return await message.answer("💸 Недостаточно средств! У вас лимит кредита.")
+        
+    await update_user_balance(chat_id, user_id, -bet, action="Banya Spin Bet")
+    
+    msg = await message.answer("🛁 <i>Поддаем жару в печку... Подкидываем дрова...</i> 💨")
+    await asyncio.sleep(1.0)
+    
+    rnd = random.random()
+    if rnd < 0.40:
+        result_msg = "💨 Весь пар ушел в трубу! Ставка сгорела. (0x)"
+        profit = 0
+    elif rnd < 0.70:
+        profit = int(bet * 0.5)
+        result_msg = f"🧼 Нашли кусочек старого мыла: возвращено <b>{profit}</b> сыроежек. (0.5x)"
+    elif rnd < 0.85:
+        profit = int(bet * 1.5)
+        result_msg = f"🌿 Свежий березовый веник! Выигрыш: <b>{profit}</b> сыроежек! (1.5x)"
+    elif rnd < 0.95:
+        profit = int(bet * 2.5)
+        result_msg = f"🍻 Холодное пиво и раки! Прекрасно попарились: выигрыш <b>{profit}</b> сыроежек! (2.5x)"
+    else:
+        profit = int(bet * 5.0)
+        result_msg = f"🧖‍♂️ <b>ЦАРСКИЙ ПАР! ДЖЕКПОТ!</b> Выигрыш: <b>{profit}</b> сыроежек! (5.0x)"
+        
+    if profit > 0:
+        await update_user_balance(chat_id, user_id, profit, action="Banya Spin Win")
+        
+    await msg.edit_text(
+        f"🧖‍♂️ <b>БАННЫЙ СПИН:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Ставка: <b>{bet}</b> сыроежек\n"
+        f"✨ {result_msg}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+@router.message(Command("banya_dictor", "bath_dictor"))
+async def cmd_banya_dictor(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "tayniy_baniy":
+        return await message.answer("🛁 Сезон Дикторов Тайний Баний сейчас не активен. Эта команда доступна только в этом сезоне!")
+        
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+        
+    inventory = u_data.get('inventory', {})
+    
+    owned_dictors = []
+    dictor_ids = [
+        "dictor_common", "dictor_uncommon", "dictor_rare", "dictor_epic",
+        "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine"
+    ]
+    
+    for d_id in dictor_ids:
+        if inventory.get(d_id, 0) > 0:
+            owned_dictors.append(d_id)
+            
+    if not owned_dictors:
+        return await message.answer(
+            "🛁 <b>У вас нет ни одного диктора тайний баний!</b>\n"
+            "Откройте банный кейс: <code>/banya_case</code>"
+        )
+        
+    chosen_id = None
+    for d_id in reversed(dictor_ids):
+        if d_id in owned_dictors:
+            chosen_id = d_id
+            break
+            
+    prefixes = {
+        "dictor_common": "⚪️ Обычный диктор (черный кролик 🖤🐇) лениво бурчит из-под веника: ",
+        "dictor_uncommon": "🟢 Необычный диктор (черный кролик 🖤🐇) бодро говорит, подливая воду: ",
+        "dictor_rare": "🔵 Редкий диктор (черный кролик 🖤🐇) глубокомысленно вздыхает: ",
+        "dictor_epic": "🟣 Эпический диктор (черный кролик 🖤🐇) загадочно шепчет в облаке пара: ",
+        "dictor_legendary": "🟡 Легендарный диктор (черный кролик 🖤🐇) авторитетно провозглашает: ",
+        "dictor_mythic": "🔴 Мифический диктор (черный кролик 🖤🐇) из глубин бани предсказывает: ",
+        "dictor_cosmic": "🌌 Космический диктор (черный кролик 🖤🐇) вещает сквозь звездный туман: ",
+        "dictor_divine": "⚡ Божественный диктор (черный кролик 🖤🐇) громогласно вещает с небесных полков: "
+    }
+    
+    prefix = prefixes.get(chosen_id, "🧖‍♂️ Диктор говорит: ")
+    
+    answers = [
+        "Бесспорно", "Предрешено", "Никаких сомнений", "Определённо да", "Можешь быть уверен в этом",
+        "Мне кажется — «да»", "Вероятнее всего", "Хорошие перспективы", "Знаки говорят — «да»", "Да",
+        "Пока не ясно, попробуй снова", "Спроси позже", "Лучше не рассказывать", "Сейчас нельзя предсказать",
+        "Сконцентрируйся и спроси опять", "Даже не думай", "Мой ответ — «нет»", "По моим данным — «нет»",
+        "Перспективы не очень хорошие", "Весьма сомнительно"
+    ]
+    
+    await message.answer(f"🎱 {prefix}<b>«{random.choice(answers)}»</b>")
+
 
