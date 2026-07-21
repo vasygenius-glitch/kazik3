@@ -668,6 +668,19 @@ async def cmd_banya_case(message: types.Message):
         f"━━━━━━━━━━━━━━━━━━━━"
     )
 
+    async def auto_delete():
+        await asyncio.sleep(60)
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    asyncio.create_task(auto_delete())
+
 @router.message(Command("banya_spin"))
 async def cmd_banya_spin(message: types.Message):
     chat_id = message.chat.id
