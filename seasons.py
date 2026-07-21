@@ -314,14 +314,26 @@ async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tup
         # 8% шанс при работе/крайме найти случайного диктора
         if random.random() < 0.08:
             dictors = [
-                {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 85.0},
-                {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 8.0},
+                {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 45.0},
+                {"id": "dictor_simple", "name": "простой диктор тайний баний", "rarity": "Простой", "color": "⚪", "weight": 25.0},
+                {"id": "dictor_basic", "name": "базовый диктор тайний баний", "rarity": "Базовый", "color": "⚪", "weight": 15.0},
+                {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 6.0},
                 {"id": "dictor_rare", "name": "редкий диктор тайний баний", "rarity": "Редкий", "color": "🔵", "weight": 4.0},
                 {"id": "dictor_epic", "name": "эпический диктор тайний баний", "rarity": "Эпический", "color": "🟣", "weight": 2.0},
-                {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 0.7},
-                {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 0.2},
-                {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 0.08},
-                {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.02},
+                {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 1.5},
+                {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 0.8},
+                {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 0.4},
+                {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.1},
+                {"id": "dictor_shadow", "name": "теневой диктор тайний баний", "rarity": "Теневой", "color": "👤", "weight": 0.03},
+                {"id": "dictor_abyss", "name": "диктор бездны тайний баний", "rarity": "Бездны", "color": "🕳", "weight": 0.03},
+                {"id": "dictor_elder", "name": "древний диктор тайний баний", "rarity": "Древний", "color": "⏳", "weight": 0.03},
+                {"id": "dictor_chaos", "name": "диктор хаоса тайний баний", "rarity": "Хаоса", "color": "🌀", "weight": 0.02},
+                {"id": "dictor_void", "name": "диктор пустоты тайний баний", "rarity": "Пустоты", "color": "🌌", "weight": 0.02},
+                {"id": "dictor_infinity", "name": "бесконечный диктор тайний баний", "rarity": "Бесконечный", "color": "♾", "weight": 0.02},
+                {"id": "dictor_secret", "name": "секретный диктор тайний баний", "rarity": "Секретный", "color": "🤫", "weight": 0.02},
+                {"id": "dictor_emperor", "name": "императорский диктор тайний баний", "rarity": "Императорский", "color": "👑", "weight": 0.01},
+                {"id": "dictor_ghost", "name": "призрачный диктор тайний баний", "rarity": "Призрачный", "color": "👻", "weight": 0.01},
+                {"id": "dictor_immortal", "name": "бессмертный диктор тайний баний", "rarity": "Бессмертный", "color": "🪐", "weight": 0.01},
             ]
             chosen = random.choices(dictors, weights=[d["weight"] for d in dictors], k=1)[0]
             from user_manager import add_item_to_inventory
@@ -613,14 +625,26 @@ async def cmd_banya_case(message: types.Message):
     await asyncio.sleep(1.0)
     
     dictors = [
-        {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 85.0},
-        {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 8.0},
+        {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 45.0},
+        {"id": "dictor_simple", "name": "простой диктор тайний баний", "rarity": "Простой", "color": "⚪", "weight": 25.0},
+        {"id": "dictor_basic", "name": "базовый диктор тайний баний", "rarity": "Базовый", "color": "⚪", "weight": 15.0},
+        {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 6.0},
         {"id": "dictor_rare", "name": "редкий диктор тайний баний", "rarity": "Редкий", "color": "🔵", "weight": 4.0},
         {"id": "dictor_epic", "name": "эпический диктор тайний баний", "rarity": "Эпический", "color": "🟣", "weight": 2.0},
-        {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 0.7},
-        {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 0.2},
-        {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 0.08},
-        {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.02},
+        {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 1.5},
+        {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 0.8},
+        {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 0.4},
+        {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.1},
+        {"id": "dictor_shadow", "name": "теневой диктор тайний баний", "rarity": "Теневой", "color": "👤", "weight": 0.03},
+        {"id": "dictor_abyss", "name": "диктор бездны тайний баний", "rarity": "Бездны", "color": "🕳", "weight": 0.03},
+        {"id": "dictor_elder", "name": "древний диктор тайний баний", "rarity": "Древний", "color": "⏳", "weight": 0.03},
+        {"id": "dictor_chaos", "name": "диктор хаоса тайний баний", "rarity": "Хаоса", "color": "🌀", "weight": 0.02},
+        {"id": "dictor_void", "name": "диктор пустоты тайний баний", "rarity": "Пустоты", "color": "🌌", "weight": 0.02},
+        {"id": "dictor_infinity", "name": "бесконечный диктор тайний баний", "rarity": "Бесконечный", "color": "♾", "weight": 0.02},
+        {"id": "dictor_secret", "name": "секретный диктор тайний баний", "rarity": "Секретный", "color": "🤫", "weight": 0.02},
+        {"id": "dictor_emperor", "name": "императорский диктор тайний баний", "rarity": "Императорский", "color": "👑", "weight": 0.01},
+        {"id": "dictor_ghost", "name": "призрачный диктор тайний баний", "rarity": "Призрачный", "color": "👻", "weight": 0.01},
+        {"id": "dictor_immortal", "name": "бессмертный диктор тайний баний", "rarity": "Бессмертный", "color": "🪐", "weight": 0.01},
     ]
     
     pool = [d for d in dictors]
@@ -721,8 +745,9 @@ async def cmd_banya_dictor(message: types.Message):
     
     owned_dictors = []
     dictor_ids = [
-        "dictor_common", "dictor_uncommon", "dictor_rare", "dictor_epic",
-        "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine"
+        "dictor_common", "dictor_simple", "dictor_basic",
+        "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
+        "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
     ]
     
     for d_id in dictor_ids:
@@ -743,13 +768,25 @@ async def cmd_banya_dictor(message: types.Message):
             
     prefixes = {
         "dictor_common": "⚪️ Обычный диктор (черный кролик 🖤🐇) лениво бурчит из-под веника: ",
+        "dictor_simple": "⚪️ Простой диктор (черный кролик 🖤🐇) скромно пикает на полке: ",
+        "dictor_basic": "⚪️ Базовый диктор (черный кролик 🖤🐇) ровным голосом вещает: ",
         "dictor_uncommon": "🟢 Необычный диктор (черный кролик 🖤🐇) бодро говорит, подливая воду: ",
         "dictor_rare": "🔵 Редкий диктор (черный кролик 🖤🐇) глубокомысленно вздыхает: ",
         "dictor_epic": "🟣 Эпический диктор (черный кролик 🖤🐇) загадочно шепчет в облаке пара: ",
         "dictor_legendary": "🟡 Легендарный диктор (черный кролик 🖤🐇) авторитетно провозглашает: ",
         "dictor_mythic": "🔴 Мифический диктор (черный кролик 🖤🐇) из глубин бани предсказывает: ",
         "dictor_cosmic": "🌌 Космический диктор (черный кролик 🖤🐇) вещает сквозь звездный туман: ",
-        "dictor_divine": "⚡ Божественный диктор (черный кролик 🖤🐇) громогласно вещает с небесных полков: "
+        "dictor_divine": "⚡ Божественный диктор (черный кролик 🖤🐇) громогласно вещает с небесных полков: ",
+        "dictor_shadow": "👤 Теневой диктор (черный кролик 🖤🐇) шепчет из темного угла предбанника: ",
+        "dictor_abyss": "🕳 Диктор бездны (черный кролик 🖤🐇) эхом доносит из бездонной бочки: ",
+        "dictor_elder": "⏳ Древний диктор (черный кролик 🖤🐇) хрипло скрипит вековой мудростью: ",
+        "dictor_chaos": "🌀 Диктор хаоса (черный кролик 🖤🐇) безумно смеется сквозь пар: ",
+        "dictor_void": "🌌 Диктор пустоты (черный кролик 🖤🐇) беззвучно проецирует мысли: ",
+        "dictor_infinity": "♾ Бесконечный диктор (черный кролик 🖤🐇) говорит сразу на всех языках: ",
+        "dictor_secret": "🤫 Секретный диктор (черный кролик 🖤🐇) тайно передает на ухо: ",
+        "dictor_emperor": "👑 Императорский диктор (черный кролик 🖤🐇) величественно повелевает: ",
+        "dictor_ghost": "👻 Призрачный диктор (черный кролик 🖤🐇) леденящим голосом завывает: ",
+        "dictor_immortal": "🪐 Бессмертный диктор (черный кролик 🖤🐇) вечно произносит: "
     }
     
     prefix = prefixes.get(chosen_id, "🧖‍♂️ Диктор говорит: ")
@@ -763,5 +800,56 @@ async def cmd_banya_dictor(message: types.Message):
     ]
     
     await message.answer(f"🎱 {prefix}<b>«{random.choice(answers)}»</b>")
+
+
+@router.message(Command("give_dictor", "grant_dictor"))
+async def cmd_give_dictor(message: types.Message):
+    if message.from_user.id != CREATOR_ID:
+        return
+        
+    args = message.text.split()
+    target_user_id = None
+    dictor_id = None
+    
+    if message.reply_to_message:
+        target_user_id = message.reply_to_message.from_user.id
+        if len(args) >= 2:
+            dictor_id = args[1].lower()
+    else:
+        if len(args) < 3:
+            return await message.answer(
+                "❌ Использование:\n"
+                "1. С ответом на сообщение: <code>/give_dictor [ID_диктора]</code>\n"
+                "2. Без ответа: <code>/give_dictor [ID_пользователя] [ID_диктора]</code>"
+            )
+        try:
+            target_user_id = int(args[1])
+            dictor_id = args[2].lower()
+        except ValueError:
+            return await message.answer("❌ ID пользователя должен быть числом.")
+            
+    from shop import ITEMS
+    if dictor_id and not dictor_id.startswith("dictor_"):
+        if f"dictor_{dictor_id}" in ITEMS:
+            dictor_id = f"dictor_{dictor_id}"
+            
+    if not dictor_id or dictor_id not in ITEMS or not dictor_id.startswith("dictor_"):
+        dictor_list = [k.replace("dictor_", "") for k in ITEMS if k.startswith("dictor_")]
+        return await message.answer(
+            f"❌ Диктор не найден. Доступные ID:\n"
+            f"<code>{', '.join(dictor_list)}</code>"
+        )
+        
+    from user_manager import add_item_to_inventory
+    success = await add_item_to_inventory(message.chat.id, target_user_id, dictor_id)
+    
+    if success:
+        dictor_name = ITEMS[dictor_id]["name"]
+        await message.answer(
+            f"✅ Диктор <b>{dictor_name}</b> успешно выдан пользователю <code>{target_user_id}</code>!"
+        )
+    else:
+        await message.answer("❌ Не удалось выдать диктора (пользователь не найден в БД чата).")
+
 
 

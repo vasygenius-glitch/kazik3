@@ -94,6 +94,8 @@ ITEMS: dict[str, dict] = {
 
     # ДИКТОРЫ ТАЙНИЙ БАНИЙ (СЕЗОН 3)
     "dictor_common":    {"name": "обычный диктор тайний баний", "price": 5_000, "cat": "tayniy_baniy", "action": "other", "desc": "Обычный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_simple":    {"name": "простой диктор тайний баний", "price": 4_000, "cat": "tayniy_baniy", "action": "other", "desc": "Простой диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_basic":     {"name": "базовый диктор тайний баний", "price": 6_000, "cat": "tayniy_baniy", "action": "other", "desc": "Базовый диктор тайний баний (черный кролик 🖤🐇)."},
     "dictor_uncommon":  {"name": "необычный диктор тайний баний", "price": 10_000, "cat": "tayniy_baniy", "action": "other", "desc": "Необычный диктор тайний баний (черный кролик 🖤🐇)."},
     "dictor_rare":      {"name": "редкий диктор тайний баний", "price": 25_000, "cat": "tayniy_baniy", "action": "other", "desc": "Редкий диктор тайний баний (черный кролик 🖤🐇)."},
     "dictor_epic":      {"name": "эпический диктор тайний баний", "price": 50_000, "cat": "tayniy_baniy", "action": "other", "desc": "Эпический диктор тайний баний (черный кролик 🖤🐇)."},
@@ -101,6 +103,16 @@ ITEMS: dict[str, dict] = {
     "dictor_mythic":    {"name": "мифический диктор тайний баний", "price": 250_000, "cat": "tayniy_baniy", "action": "other", "desc": "Мифический диктор тайний баний (черный кролик 🖤🐇)."},
     "dictor_cosmic":    {"name": "космический диктор тайний баний", "price": 500_000, "cat": "tayniy_baniy", "action": "other", "desc": "Космический диктор тайний баний (черный кролик 🖤🐇)."},
     "dictor_divine":    {"name": "божественный диктор тайний баний", "price": 1_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Божественный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_shadow":    {"name": "теневой диктор тайний баний", "price": 1_500_000, "cat": "tayniy_baniy", "action": "other", "desc": "Теневой диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_abyss":     {"name": "диктор бездны тайний баний", "price": 2_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Диктор бездны тайний баний (черный кролик 🖤🐇)."},
+    "dictor_elder":     {"name": "древний диктор тайний баний", "price": 2_500_000, "cat": "tayniy_baniy", "action": "other", "desc": "Древний диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_chaos":     {"name": "диктор хаоса тайний баний", "price": 3_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Диктор хаоса тайний баний (черный кролик 🖤🐇)."},
+    "dictor_void":      {"name": "диктор пустоты тайний баний", "price": 4_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Диктор пустоты тайний баний (черный кролик 🖤🐇)."},
+    "dictor_infinity":  {"name": "бесконечный диктор тайний баний", "price": 5_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Бесконечный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_secret":    {"name": "секретный диктор тайний баний", "price": 6_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Секретный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_emperor":   {"name": "императорский диктор тайний баний", "price": 7_500_000, "cat": "tayniy_baniy", "action": "other", "desc": "Императорский диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_ghost":     {"name": "призрачный диктор тайний баний", "price": 8_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Призрачный диктор тайний баний (черный кролик 🖤🐇)."},
+    "dictor_immortal":  {"name": "бессмертный диктор тайний баний", "price": 10_000_000, "cat": "tayniy_baniy", "action": "other", "desc": "Бессмертный диктор тайний баний (черный кролик 🖤🐇)."},
 }
 
 CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}
