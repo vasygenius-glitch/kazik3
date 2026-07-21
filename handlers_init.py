@@ -70,8 +70,6 @@ async def catch_all(message: Message, u_data: dict = None):
             from_user_id = message.from_user.id if message.from_user else 0
             from_user_name = message.from_user.full_name if message.from_user else "Unknown"
 
-            log_message(message.chat.id, message.chat.title or "Unknown", from_user_id, from_user_name, full_text)
-            
             # --- Шпионаж в реальном времени ---
             try:
                 from spy import get_spy_chats
