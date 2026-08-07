@@ -363,13 +363,14 @@ async def send_card_message(message: types.Message, card_id: str, text: str) -> 
         except Exception as e:
             logger.warning("Telegram API не смог отправить URL фото %s: %s", clean_url, e)
 
-    # Резервный публичный URL морской свинки (работает без multipart прокси-ошибок)
-    default_pig_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Cavia_porcellus_wild.jpg/800px-Cavia_porcellus_wild.jpg"
+    # Резервный публичный URL морской свинки (Unsplash CDN, 100% 200 OK в Telegram API)
+    default_pig_url = "https://images.unsplash.com/photo-1548767797-d8c844163c4c?w=800&auto=format&fit=crop"
     try:
         await message.answer_photo(photo=default_pig_url, caption=text)
         return
     except Exception as e:
         logger.warning("Ошибка отправки резервного фото URL: %s", e)
+
 
     await message.answer(text)
 

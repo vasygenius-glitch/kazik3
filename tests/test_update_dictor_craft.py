@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-# --- ТЕСТЫ КРАФТА И АПГРЕЙДЕРА ДИКТОРОВ (50 ТЕСТОВ) ---
+# --- ТЕСТЫ ИНТЕРАКТИВНОГО КРАФТА И АПГРЕЙДЕРА ДИКТОРОВ ---
 
 DICTOR_RANKS = [
     "dictor_common", "dictor_simple", "dictor_basic",
@@ -14,18 +14,19 @@ DICTOR_RANKS = [
 @pytest.mark.parametrize("rank_idx", range(len(DICTOR_RANKS) - 1))
 async def test_dictor_craft_success_all_ranks(rank_idx):
     """Тест успешного крафта дикторов для каждого ранга от обычного до призрачного (19 тестов)"""
-    from seasons import cmd_banya_craft
+    from seasons import callback_banya_craft_do
     
     curr_rank = DICTOR_RANKS[rank_idx]
     next_rank = DICTOR_RANKS[rank_idx + 1]
 
-    message = AsyncMock()
-    message.chat.id = 12345
-    message.from_user.id = 67890
-    message.text = f"/banya_craft {curr_rank}"
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat.id = 12345
+    callback.from_user.id = 67890
 
-    status_msg = AsyncMock()
-    message.answer.return_value = status_msg
+    # banya_craft_do_{d_id}_{qty}
+    parts = curr_rank.split("_")
+    callback.data = f"banya_craft_do_{parts[0]}_{parts[1]}_1"
 
     user_data = {
         'is_banned': False,
@@ -43,29 +44,29 @@ async def test_dictor_craft_success_all_ranks(rank_idx):
         mock_remove.return_value = True
         mock_add.return_value = True
 
-        await cmd_banya_craft(message)
+        await callback_banya_craft_do(callback)
 
         mock_remove.assert_called_once_with(12345, 67890, curr_rank, count=3)
         mock_add.assert_called_once_with(12345, 67890, next_rank, count=1)
-        status_msg.edit_text.assert_called_once()
-        assert "УСПЕШНЫЙ АПГРЕЙД" in status_msg.edit_text.call_args[0][0]
+        callback.message.edit_text.assert_called_once()
+        assert "РЕЗУЛЬТАТЫ МАССОВОГО АПГРЕЙДА" in callback.message.edit_text.call_args[0][0]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rank_idx", range(len(DICTOR_RANKS) - 1))
 async def test_dictor_craft_failure_all_ranks(rank_idx):
     """Тест неудачи крафта дикторов (19 тестов): сгорают 2 штуки, 1 спасается"""
-    from seasons import cmd_banya_craft
+    from seasons import callback_banya_craft_do
     
     curr_rank = DICTOR_RANKS[rank_idx]
 
-    message = AsyncMock()
-    message.chat.id = 12345
-    message.from_user.id = 67890
-    message.text = f"/banya_craft {curr_rank}"
+    callback = AsyncMock()
+    callback.message = AsyncMock()
+    callback.message.chat.id = 12345
+    callback.from_user.id = 67890
 
-    status_msg = AsyncMock()
-    message.answer.return_value = status_msg
+    parts = curr_rank.split("_")
+    callback.data = f"banya_craft_do_{parts[0]}_{parts[1]}_1"
 
     user_data = {
         'is_banned': False,
@@ -82,11 +83,11 @@ async def test_dictor_craft_failure_all_ranks(rank_idx):
         mock_user_data.return_value = user_data
         mock_remove.return_value = True
 
-        await cmd_banya_craft(message)
+        await callback_banya_craft_do(callback)
 
         mock_remove.assert_called_once_with(12345, 67890, curr_rank, count=2)
         mock_add.assert_not_called()
-        assert "НЕУДАЧА АПГРЕЙДА" in status_msg.edit_text.call_args[0][0]
+        assert "РЕЗУЛЬТАТЫ МАССОВОГО АПГРЕЙДА" in callback.message.edit_text.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -151,24 +152,16 @@ async def test_dictor_craft_command_aliases(cmd_alias):
     message.from_user.id = 67890
     message.text = cmd_alias
 
-    status_msg = AsyncMock()
-    message.answer.return_value = status_msg
-
     with patch('seasons.get_season_config', new_callable=AsyncMock) as mock_cfg, \
-         patch('seasons.get_user_data', new_callable=AsyncMock) as mock_user_data, \
-         patch('user_manager.remove_item_from_inventory', new_callable=AsyncMock) as mock_remove, \
-         patch('user_manager.add_item_to_inventory', new_callable=AsyncMock) as mock_add, \
-         patch('random.random', return_value=0.5):
+         patch('seasons.get_user_data', new_callable=AsyncMock) as mock_user_data:
 
         mock_cfg.return_value = {"active": True, "id": "tayniy_baniy"}
         mock_user_data.return_value = {'is_banned': False, 'inventory': {'dictor_common': 4}}
-        mock_remove.return_value = True
-        mock_add.return_value = True
 
         await cmd_banya_craft(message)
 
-        mock_remove.assert_called_once()
-        mock_add.assert_called_once()
+        message.answer.assert_called_once()
+        assert "АПГРЕЙДЕР ДИКТОРОВ ТАЙНИЙ БАНИЙ" in message.answer.call_args[0][0]
 
 
 @pytest.mark.asyncio
@@ -180,12 +173,13 @@ async def test_dictor_craft_banned_user(test_id):
     message = AsyncMock()
     message.chat.id = 12345
     message.from_user.id = 67890
+    message.text = "/banya_craft"
 
     with patch('seasons.get_season_config', new_callable=AsyncMock) as mock_cfg, \
          patch('seasons.get_user_data', new_callable=AsyncMock) as mock_user_data:
 
         mock_cfg.return_value = {"active": True, "id": "tayniy_baniy"}
-        mock_user_data.return_value = {'is_banned': True}
+        mock_user_data.return_value = {'is_banned': True, 'inventory': {'dictor_common': 5}}
 
         await cmd_banya_craft(message)
 

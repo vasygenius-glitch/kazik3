@@ -839,6 +839,13 @@ async def cmd_banya_dictor(message: types.Message):
 
 
 
+DICTOR_RANKS = [
+    "dictor_common", "dictor_simple", "dictor_basic",
+    "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
+    "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
+]
+
+
 @router.message(Command("banya_craft", "dictor_craft", "upgrade_dictor"))
 async def cmd_banya_craft(message: types.Message):
     chat_id = message.chat.id
@@ -853,26 +860,19 @@ async def cmd_banya_craft(message: types.Message):
         return
         
     inventory = u_data.get('inventory', {})
-    
-    dictor_ranks = [
-        "dictor_common", "dictor_simple", "dictor_basic",
-        "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
-        "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
-    ]
-
     from shop import ITEMS
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-    # Ищем дикторов, у которых есть 3+ штук для крафта
     craftable = []
-    for idx, d_id in enumerate(dictor_ranks[:-1]):
+    for idx, d_id in enumerate(DICTOR_RANKS[:-1]):
         count = inventory.get(d_id, 0)
         if count >= 3:
-            next_id = dictor_ranks[idx + 1]
+            next_id = DICTOR_RANKS[idx + 1]
             craftable.append((d_id, next_id, count))
 
     if not craftable:
         return await message.answer(
-            "🧪 <b>АПГРЕЙДЕР ДИКТОРОВ:</b>\n"
+            "🧪 <b>АПГРЕЙДЕР ДИКТОРОВ ТАЙНИЙ БАНИЙ:</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "Для улучшения необходимо <b>3 одинаковых диктора</b> одного ранга.\n"
             "Рецепт: <b>3 Диктора (Ранг N) ➔ 1 Диктор (Ранг N+1)</b>\n"
@@ -880,52 +880,154 @@ async def cmd_banya_craft(message: types.Message):
             "❌ У вас пока нет 3 одинаковых дикторов. Открывайте кейсы <code>/banya_case</code> или ищите их на работе <code>/work</code>!"
         )
 
-    args = message.text.split()
-    target_d_id = None
-    if len(args) >= 2:
-        req = args[1].lower()
-        if not req.startswith("dictor_"):
-            req = f"dictor_{req}"
-        for d_id, next_id, cnt in craftable:
-            if d_id == req:
-                target_d_id = d_id
-                break
-    
-    if not target_d_id:
-        target_d_id = craftable[0][0]
+    builder = InlineKeyboardBuilder()
+    lines = [
+        "🧪 <b>АПГРЕЙДЕР ДИКТОРОВ ТАЙНИЙ БАНИЙ</b> 🧪\n",
+        "Выберите диктора для улучшения в банной печи:\n"
+    ]
 
-    curr_idx = dictor_ranks.index(target_d_id)
-    next_d_id = dictor_ranks[curr_idx + 1]
-    
-    curr_name = ITEMS.get(target_d_id, {}).get("name", target_d_id)
-    next_name = ITEMS.get(next_d_id, {}).get("name", next_d_id)
+    for d_id, next_id, count in craftable:
+        curr_name = ITEMS.get(d_id, {}).get("name", d_id)
+        next_name = ITEMS.get(next_id, {}).get("name", next_id)
+        lines.append(f"▪️ <b>{curr_name}</b> ({count} шт) ➔ <code>{next_name}</code>")
+        builder.button(
+            text=f"🧪 {curr_name} ({count} шт) ➔ {next_name}",
+            callback_data=f"banya_craft_sel_{d_id}"
+        )
 
+    builder.adjust(1)
+    await message.answer("\n".join(lines), reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("banya_craft_sel_"))
+async def callback_banya_craft_select(callback: types.CallbackQuery):
+    d_id = callback.data.removeprefix("banya_craft_sel_")
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+
+    u_data = await get_user_data(chat_id, user_id)
+    inventory = u_data.get('inventory', {})
+    count = inventory.get(d_id, 0)
+
+    if count < 3:
+        return await callback.answer("❌ У вас недостаточно этих дикторов (нужно минимум 3 шт).", show_alert=True)
+
+    if d_id not in DICTOR_RANKS or DICTOR_RANKS.index(d_id) >= len(DICTOR_RANKS) - 1:
+        return await callback.answer("❌ Нельзя улучшить этот ранг дикторов.", show_alert=True)
+
+    curr_idx = DICTOR_RANKS.index(d_id)
+    next_id = DICTOR_RANKS[curr_idx + 1]
+
+    from shop import ITEMS
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+    curr_name = ITEMS.get(d_id, {}).get("name", d_id)
+    next_name = ITEMS.get(next_id, {}).get("name", next_id)
+
+    max_crafts = count // 3
+    builder = InlineKeyboardBuilder()
+
+    options = [1]
+    if max_crafts >= 2:
+        options.append(2)
+    if max_crafts >= 5:
+        options.append(5)
+    if max_crafts not in options:
+        options.append(max_crafts)
+
+    for c_qty in options:
+        btn_label = f"🔥 ВСЕ ({c_qty} крафтов)" if c_qty == max_crafts else f"🧪 {c_qty} крафт ({c_qty * 3} шт)"
+        builder.button(
+            text=btn_label,
+            callback_data=f"banya_craft_do_{d_id}_{c_qty}"
+        )
+
+    builder.button(text="⬅️ Назад к выбору", callback_data="banya_craft_back")
+    builder.adjust(1)
+
+    text = (
+        f"🔥 <b>НАСТРОЙКА АПГРЕЙДА</b> 🔥\n\n"
+        f"Предмет: <b>{curr_name}</b>\n"
+        f"В наличии: <b>{count} шт.</b> (Максимум крафтов: <b>{max_crafts}</b>)\n"
+        f"Цель: <code>{next_name}</code>\n\n"
+        f"Выберите количество одновременных апгрейдов:"
+    )
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data == "banya_craft_back")
+async def callback_banya_craft_back(callback: types.CallbackQuery):
+    await callback.answer()
+    if callback.message:
+        await cmd_banya_craft(callback.message)
+
+
+@router.callback_query(F.data.startswith("banya_craft_do_"))
+async def callback_banya_craft_do(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) < 5:
+        return await callback.answer()
+
+    d_id = f"{parts[3]}_{parts[4]}"
+    try:
+        qty = int(parts[5])
+    except (ValueError, IndexError):
+        qty = 1
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+
+    u_data = await get_user_data(chat_id, user_id)
+    inventory = u_data.get('inventory', {})
+    count = inventory.get(d_id, 0)
+
+    req_count = qty * 3
+    if count < req_count:
+        return await callback.answer(f"❌ Нужно {req_count} шт., а у вас в наличии {count} шт.", show_alert=True)
+
+    if d_id not in DICTOR_RANKS or DICTOR_RANKS.index(d_id) >= len(DICTOR_RANKS) - 1:
+        return await callback.answer("❌ Ошибка ранга диктора.", show_alert=True)
+
+    curr_idx = DICTOR_RANKS.index(d_id)
+    next_id = DICTOR_RANKS[curr_idx + 1]
+
+    from shop import ITEMS
     from user_manager import remove_item_from_inventory, add_item_to_inventory
 
-    msg = await message.answer(f"🧪 <i>Запускаем Апгрейдер... Помещаем 3x {curr_name} в банную печь...</i> 💨")
-    await asyncio.sleep(1.2)
+    curr_name = ITEMS.get(d_id, {}).get("name", d_id)
+    next_name = ITEMS.get(next_id, {}).get("name", next_id)
 
-    # 85% шанс успеха
-    success = random.random() < 0.85
-    if success:
-        await remove_item_from_inventory(chat_id, user_id, target_d_id, count=3)
-        await add_item_to_inventory(chat_id, user_id, next_d_id, count=1)
-        
-        await msg.edit_text(
-            "✨ <b>УСПЕШНЫЙ АПГРЕЙД!</b> ✨\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"Потрачено: <b>3x {curr_name}</b>\n"
-            f"🖤🐇 Получен диктор высшего уровня: <code>{next_name}</code>!\n"
-            "Предмет добавлен в ваш /inventory."
-        )
-    else:
-        await remove_item_from_inventory(chat_id, user_id, target_d_id, count=2)
-        await msg.edit_text(
-            "💥 <b>НЕУДАЧА АПГРЕЙДА!</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            f"Пар оказался слишком горячим! 2x {curr_name} сгорели в печи.\n"
-            f"1x {curr_name} удалось спасти!"
-        )
+    await callback.answer(f"Запуск {qty} крафтов...")
+
+    success_count = 0
+    fail_count = 0
+
+    for _ in range(qty):
+        if random.random() < 0.85:
+            success_count += 1
+        else:
+            fail_count += 1
+
+    consumed_on_success = success_count * 3
+    consumed_on_fail = fail_count * 2
+    total_consumed = consumed_on_success + consumed_on_fail
+
+    await remove_item_from_inventory(chat_id, user_id, d_id, count=total_consumed)
+    if success_count > 0:
+        await add_item_to_inventory(chat_id, user_id, next_id, count=success_count)
+
+    result_lines = [
+        f"🔥 <b>РЕЗУЛЬТАТЫ МАССОВОГО АПГРЕЙДА!</b> 🔥\n",
+        f"Всего попыток: <b>{qty}</b>",
+        f"Потрачено ингредиентов: <b>{total_consumed}x {curr_name}</b>\n",
+        f"✅ Успешных попыток: <b>{success_count}</b> ➔ Получено: <b>+{success_count}x {next_name}</b>",
+        f"💥 Сгорели в печи (неудачи): <b>{fail_count}</b> (спасен {fail_count}x {curr_name})\n",
+        "Предметы обновлены в вашем /inventory!"
+    ]
+
+    await callback.message.edit_text("\n".join(result_lines))
+
 
 
 @router.message(Command("give_dictor", "grant_dictor"))
