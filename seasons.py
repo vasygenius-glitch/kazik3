@@ -662,7 +662,10 @@ async def execute_batch_banya_case(chat_id: int, user_id: int, count: int, msg: 
 
         d_id = chosen["id"]
         won_counts[d_id] = won_counts.get(d_id, 0) + 1
-        await add_item_to_inventory(chat_id, user_id, d_id, count=1)
+
+    for d_id, qty in won_counts.items():
+        await add_item_to_inventory(chat_id, user_id, d_id, count=qty)
+
 
     # Формируем сводку
     from shop import ITEMS
