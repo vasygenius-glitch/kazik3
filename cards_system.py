@@ -17,6 +17,7 @@ from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from db import get_db
+from config import CREATOR_ID, CREATOR_IDS
 from user_manager import (
     buy_and_open_case_tr,
     open_free_case_tr,
@@ -25,6 +26,7 @@ from user_manager import (
     get_user_meme_bonuses,
     invalidate_user_cache,
 )
+
 
 
 logger = logging.getLogger(__name__)
