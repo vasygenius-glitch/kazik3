@@ -417,7 +417,7 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
 
 
 async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id: int, amount: int):
-    from user_manager import mark_dirty
+    from user_manager import mark_dirty, set_in_cache
     bank_data = await get_bank_info(chat_id, target_banker_id)
     if not bank_data:
         raise ValueError("Банк не найден.")
@@ -445,6 +445,7 @@ async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id
     if current_deposit == 0:
         user_data['deposit_start_time'] = int(time.time())
 
+    set_in_cache(chat_id, user_id, user_data)
     mark_dirty(chat_id, user_id)
 
     new_capital = bank_data.get('capital', 0) + amount
@@ -454,7 +455,7 @@ async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id
 
 
 async def process_withdraw_in_memory(chat_id: int, user_id: int, current_banker_id: int, amount: int):
-    from user_manager import mark_dirty
+    from user_manager import mark_dirty, set_in_cache
     bank_data = await get_bank_info(chat_id, current_banker_id) or {}
     user_data = await get_user_data(chat_id, user_id)
 
@@ -497,9 +498,11 @@ async def process_withdraw_in_memory(chat_id: int, user_id: int, current_banker_
     else:
         user_data['deposit_start_time'] = int(time.time())
 
+    set_in_cache(chat_id, user_id, user_data)
     mark_dirty(chat_id, user_id)
 
     return amount
+
 
 
 
@@ -699,7 +702,7 @@ async def cmd_bank(message: types.Message):
                     return await message.answer("У вас нет средств на банковском счете.")
                 actual_withdraw = min(current_deposit if is_all else amount, current_deposit)
                 
-                from user_manager import mark_dirty
+                from user_manager import mark_dirty, set_in_cache
                 user_data = await get_user_data(chat_id, user_id)
                 user_data['bank_deposit'] = current_deposit - actual_withdraw
                 user_data['balance'] = user_data.get('balance', 0) + actual_withdraw
@@ -709,7 +712,9 @@ async def cmd_bank(message: types.Message):
                     user_data['deposit_start_time'] = int(time.time())
                     if user_data.get('last_daily_time', 0) > 0:
                         user_data['last_daily_time'] = int(time.time())
+                set_in_cache(chat_id, user_id, user_data)
                 mark_dirty(chat_id, user_id)
+
 
                 # --- Логирование снятия со старого системного счета ---
                 try:
