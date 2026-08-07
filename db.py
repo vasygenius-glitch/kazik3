@@ -178,21 +178,23 @@ def init_db(key_path):
         cred = credentials.Certificate(key_path)
         print(f"✅ Загружен ключ Firebase из файла: {key_path}")
 
-    use_firebase = os.environ.get("USE_FIREBASE", "False").lower() == "true"
-    if not use_firebase or not cred:
-        print("⚡ Инициализирована супербыстрая локальная база данных (data/local_db.json). Задержка < 1 мс!")
-        db = MockDB()
-        return db
+    # При наличии ключа подключаем основной Firebase Firestore с реальными балансами
+    if cred:
+        try:
+            if not firebase_admin._apps:
+                firebase_admin.initialize_app(cred)
+            db = firestore_async.client()
+            print("✅ Подключена основная база Firebase Firestore. Все балансы и инвентари доступны!")
+            return db
+        except Exception as e:
+            print(f"⚠️ Переключение на локальную БД из-за ошибки Firebase: {e}")
+            db = MockDB()
+            return db
 
-    try:
-        if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred)
-        db = firestore_async.client()
-        return db
-    except Exception as e:
-        print(f"⚠️ Переключение на локальную БД из-за ошибки Firebase: {e}")
-        db = MockDB()
-        return db
+    print("⚡ Инициализирована локальная база данных (data/local_db.json).")
+    db = MockDB()
+    return db
+
 
 
 def get_db():
