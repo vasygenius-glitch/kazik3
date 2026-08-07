@@ -38,13 +38,13 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
         for attempt in range(1, self.max_retries + 1):
             try:
                 return await make_request(bot, method)
-            except TelegramNetworkError as e:
+            except Exception as e:
                 last_exc = e
                 if attempt < self.max_retries:
                     delay = 1.0 * attempt
                     logger.warning(
-                        "Сетевая ошибка воркера (%s), попытка %s/%s...",
-                        type(e).__name__, attempt, self.max_retries
+                        "Сетевая ошибка воркера (%s: %s), попытка %s/%s...",
+                        type(e).__name__, e, attempt, self.max_retries
                     )
                     await asyncio.sleep(delay)
         raise last_exc
@@ -66,7 +66,7 @@ async def _create_bot() -> Bot:
         server = TelegramAPIServer.from_base(api_url)
         bot = _build_bot(server)
         try:
-            me = await asyncio.wait_for(bot.get_me(), timeout=3.0)
+            me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
             logger.info("✅ Успешно подключено через прокси! Бот: @%s", me.username)
             return bot
         except Exception as e:
@@ -74,14 +74,23 @@ async def _create_bot() -> Bot:
             await bot.session.close()
             
     logger.info("Пробую прямое подключение к api.telegram.org...")
-    bot = _build_bot(PRODUCTION)
-    try:
-        me = await asyncio.wait_for(bot.get_me(), timeout=5.0)
-        logger.info("✅ Успешно подключено напрямую! Бот: @%s", me.username)
-        return bot
-    except Exception as e:
-        await bot.session.close()
-        raise RuntimeError(f"Не удалось запустить бота ни одним способом. Ошибка: {e}")
+    last_error = None
+    for attempt in range(1, 4):
+        bot = _build_bot(PRODUCTION)
+        try:
+            logger.info("Попытка прямого подключения (%s/3)...", attempt)
+            me = await asyncio.wait_for(bot.get_me(), timeout=20.0)
+            logger.info("✅ Успешно подключено напрямую! Бот: @%s", me.username)
+            return bot
+        except Exception as e:
+            last_error = e
+            logger.warning("⚠️ Попытка прямого подключения %s/3 не удалась (%s: %s)", attempt, type(e).__name__, e)
+            await bot.session.close()
+            if attempt < 3:
+                await asyncio.sleep(2.0)
+
+    raise RuntimeError(f"Не удалось запустить бота ни одним способом. Ошибка: {last_error}")
+
 
 
 background_tasks = []
