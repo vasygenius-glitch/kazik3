@@ -66,7 +66,7 @@ async def _create_bot() -> Bot:
         server = TelegramAPIServer.from_base(api_url)
         bot = _build_bot(server)
         try:
-            me = await bot.get_me()
+            me = await asyncio.wait_for(bot.get_me(), timeout=3.0)
             logger.info("✅ Успешно подключено через прокси! Бот: @%s", me.username)
             return bot
         except Exception as e:
@@ -76,12 +76,13 @@ async def _create_bot() -> Bot:
     logger.info("Пробую прямое подключение к api.telegram.org...")
     bot = _build_bot(PRODUCTION)
     try:
-        me = await bot.get_me()
+        me = await asyncio.wait_for(bot.get_me(), timeout=5.0)
         logger.info("✅ Успешно подключено напрямую! Бот: @%s", me.username)
         return bot
     except Exception as e:
         await bot.session.close()
         raise RuntimeError(f"Не удалось запустить бота ни одним способом. Ошибка: {e}")
+
 
 background_tasks = []
 
