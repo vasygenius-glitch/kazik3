@@ -124,8 +124,26 @@ _RARITY_TEMPLATES = [
 _DEFAULT_TEMPLATE = ("COMMON", 0.001, 10, "⚪️ Обычная Карта")
 
 
+PIG_TITLES = [
+    "Свинка Пухляш", "Капитан Морсвак", "Свинка в Маске", "Глава Свинячьей Мафии",
+    "Свинка-Бизнесмен", "Березовый Пацан", "Баняпузик", "Свинка-Шпион", "Император Свинок",
+    "Свинка-Геймер", "Гангстер Пушок", "Пушистый Банщик", "Свинка-Авиатор", "Пророк Свинок",
+    "Свинка Загадка", "Золотая Свинка", "Космический Хрюш", "Мастер Веника", "Свинка-Джазмен",
+    "Свинка Повар", "Свинка Программист", "Капибара-Брат", "Свинка Детектив", "Свинка Самурай"
+]
+
+PIG_DESCS = [
+    "Любит свежий огурчик и тишину перед банным паром.",
+    "Контролирует все поставки березовых веников в районе.",
+    "Легендарная морская свинка Тайний Баний. Приносит горы сыроежек!",
+    "Хитрый хрюшка, нашедший тайный путь к бесконечным кейсам.",
+    "Каждый день приносит стабильный пассивный доход своему хозяину.",
+    "Охраняет подступы к парилке. Очень уважает березовый пар.",
+    "Обладает пушистой шерсткой и невероятным харизматичным взглядом!"
+]
+
 def _build_cards() -> dict:
-    """Собирает полный набор из TOTAL_CARDS карточек (кастомные + автогенерация)."""
+    """Собирает полный набор из TOTAL_CARDS карточек морских свинок."""
     cards = {}
     for i in range(1, TOTAL_CARDS + 1):
         card_id = f"meme_{i}"
@@ -140,11 +158,16 @@ def _build_cards() -> dict:
         else:
             rarity, mult, flat, prefix = _DEFAULT_TEMPLATE
 
+        title_idx = (i - 1) % len(PIG_TITLES)
+        desc_idx = (i - 1) % len(PIG_DESCS)
+        pig_name = f"{prefix}: {PIG_TITLES[title_idx]} #{i}"
+        pig_desc = f"{PIG_DESCS[desc_idx]} (Карточка морской свинки #{i})"
+
         cards[card_id] = {
             "id": card_id,
-            "name": f"{prefix} #{i}",
+            "name": pig_name,
             "rarity": rarity,
-            "description": f"Описание коллекционной карточки #{i}. Замените меня на реальную карту!",
+            "description": pig_desc,
             "bonus_multiplier": mult,
             "bonus_flat": flat,
         }
@@ -152,6 +175,7 @@ def _build_cards() -> dict:
 
 
 CARDS = _build_cards()
+
 
 # Предрасчёт: карточки, сгруппированные по редкости (чтобы не перебирать
 # все 200 карт при каждом открытии кейса).
@@ -377,7 +401,38 @@ FREE_CASE_TRIGGERS = {
     "/бесплатный кейс", "/бонусный кейс"
 }
 
+@router.message(Command("reset_free_case", "reset_bc", "сброс_бк", "reset_case"))
+async def cmd_reset_free_case(message: types.Message):
+    user_id = message.from_user.id
+    if not (int(user_id) in CREATOR_IDS or int(user_id) == CREATOR_ID):
+        return await message.answer("❌ Доступно только Создателю бота.")
+
+    chat_id = message.chat.id
+    target_id = user_id
+    target_name = message.from_user.full_name
+
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = message.reply_to_message.from_user.full_name
+    else:
+        args = message.text.split()
+        if len(args) >= 2:
+            target_input = args[1]
+            from user_manager import get_user_by_username_or_id
+            target_user = await get_user_by_username_or_id(chat_id, target_input)
+            if target_user:
+                target_id = target_user['user_id']
+                target_name = target_user.get('full_name', f"Юзер {target_id}")
+
+    from user_manager import update_user_field, invalidate_user_cache
+    await update_user_field(chat_id, target_id, 'last_free_card_case_ts', 0)
+    invalidate_user_cache(chat_id, target_id)
+
+    await message.answer(f"⚡️ <b>Сброс выполнен!</b>\n\nКулдаун бесплатного кейса для <b>{target_name}</b> обнулен! Команда <code>/бк</code> доступна прямо сейчас!")
+
+
 @router.message(Command("free_case", "freecase", "bonus_case", "bonuscase", "daily_case", "бесплатный_кейс", "бесплатныйкейс", "бк", "бонусный_кейс", "бонусныйкейс"))
+
 @router.message(F.text.func(lambda t: t and t.lower() in FREE_CASE_TRIGGERS))
 async def cmd_free_case(message: types.Message):
 
