@@ -237,14 +237,19 @@ async def cmd_profile(message: types.Message):
 
     await message.answer(text)
 
+import re
+
+def _clean_bank_name(text: str) -> str:
+    return re.sub(r'[^\w\d]', '', str(text).lower().replace("ё", "е"))
+
 def _is_name_match(search: str, target: str) -> bool:
-    s = search.lower().replace("ё", "е").strip()
-    t = target.lower().replace("ё", "е").strip()
+    s = _clean_bank_name(search)
+    t = _clean_bank_name(target)
     if not s or not t:
         return False
     if s in t or t in s or s.startswith(t) or t.startswith(s):
         return True
-    if len(s) >= 4 and len(t) >= 4:
+    if len(s) >= 3 and len(t) >= 3:
         diff = sum(1 for a, b in zip(s, t) if a != b) + abs(len(s) - len(t))
         if diff <= 2:
             return True
@@ -271,7 +276,7 @@ async def get_bank_info(chat_id: int, identifier):
     except Exception:
         pass
 
-    # 2) Поиск по имени с нечетким соответствием (устойчивым к опечаткам "Рыбаош" -> "Рыбайош")
+    # 2) Поиск по имени с очисткой эмодзи и нечетким соответствием ("Рыбаош" -> "🏛 Рыбайош")
     search_name = str(identifier).strip()
     if not search_name:
         return None
@@ -289,10 +294,22 @@ async def get_bank_info(chat_id: int, identifier):
                 set_bank_in_cache(chat_id, identifier, b_data)
                 set_bank_in_cache(chat_id, b_data['banker_id'], b_data)
                 return b_data
+
+        # 3) Запасной случай: если в чате всего 1 банк, выбираем его автоматически
+        if len(docs) == 1:
+            b_data = docs[0].to_dict() or {}
+            try:
+                b_data['banker_id'] = int(docs[0].id)
+            except ValueError:
+                b_data['banker_id'] = docs[0].id
+            set_bank_in_cache(chat_id, identifier, b_data)
+            set_bank_in_cache(chat_id, b_data['banker_id'], b_data)
+            return b_data
     except Exception:
         pass
 
     return get_bank_from_cache(chat_id, identifier)
+
 
 
 
