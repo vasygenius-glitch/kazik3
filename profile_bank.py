@@ -257,58 +257,73 @@ def _is_name_match(search: str, target: str) -> bool:
 
 # ===================== РАБОТА С БАНКАМИ =====================
 async def get_bank_info(chat_id: int, identifier):
-    cached_data = get_bank_from_cache(chat_id, identifier)
-    if cached_data:
-        return cached_data
+    if not identifier:
+        return None
+
+    # 0) Сначала ищем среди ВСЕХ кэшированных банков этого чата
+    search_str = str(identifier).strip()
+    for (c_id, _), entry in list(_bank_cache.items()):
+        if c_id == chat_id and isinstance(entry, dict) and "data" in entry:
+            b_data = entry["data"]
+            b_name = b_data.get('name') or ''
+            b_id = str(b_data.get('banker_id', ''))
+            if (search_str.lower() == b_id or 
+                _is_name_match(search_name=search_str, target=b_name) or 
+                _is_name_match(search_name=search_str, target=b_id)):
+                return b_data
 
     db = get_db()
     banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
 
     # 1) Пробуем по ID банкира
     try:
-        banker_id = int(identifier)
-        doc = await asyncio.wait_for(banks_ref.document(str(banker_id)).get(), timeout=2.0)
+        banker_id = int(search_str)
+        doc = await banks_ref.document(str(banker_id)).get()
         if doc.exists:
-            data = doc.to_dict()
+            data = doc.to_dict() or {}
             data['banker_id'] = banker_id
             set_bank_in_cache(chat_id, banker_id, data)
             return data
     except Exception:
         pass
 
-    # 2) Поиск по имени с очисткой эмодзи и нечетким соответствием ("Рыбаош" -> "🏛 Рыбайош")
-    search_name = str(identifier).strip()
-    if not search_name:
-        return None
+    # 2) Загружаем все банки чата и кэшируем их
     try:
-        docs_raw = await asyncio.wait_for(banks_ref.get(), timeout=2.0)
+        docs_raw = await banks_ref.get()
         docs = await _collect_docs(docs_raw)
         for doc in docs:
             b_data = doc.to_dict() or {}
+            try:
+                b_data['banker_id'] = int(doc.id)
+            except ValueError:
+                b_data['banker_id'] = doc.id
+            set_bank_in_cache(chat_id, doc.id, b_data)
             b_name = b_data.get('name') or ''
-            if b_name and _is_name_match(search_name, b_name):
+            if b_name:
+                set_bank_in_cache(chat_id, b_name, b_data)
+
+        for doc in docs:
+            b_data = doc.to_dict() or {}
+            b_name = b_data.get('name') or ''
+            if b_name and _is_name_match(search_str, b_name):
                 try:
                     b_data['banker_id'] = int(doc.id)
                 except ValueError:
                     b_data['banker_id'] = doc.id
-                set_bank_in_cache(chat_id, identifier, b_data)
-                set_bank_in_cache(chat_id, b_data['banker_id'], b_data)
                 return b_data
 
-        # 3) Запасной случай: если в чате всего 1 банк, выбираем его автоматически
         if len(docs) == 1:
             b_data = docs[0].to_dict() or {}
             try:
                 b_data['banker_id'] = int(docs[0].id)
             except ValueError:
                 b_data['banker_id'] = docs[0].id
-            set_bank_in_cache(chat_id, identifier, b_data)
-            set_bank_in_cache(chat_id, b_data['banker_id'], b_data)
             return b_data
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error("Error in get_bank_info for %s: %s", chat_id, e)
 
-    return get_bank_from_cache(chat_id, identifier)
+    return get_bank_from_cache(chat_id, search_str)
+
 
 
 
