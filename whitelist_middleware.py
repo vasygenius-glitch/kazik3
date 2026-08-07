@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 from whitelist import get_whitelist, log_unauthorized_chat
 from config import CREATOR_ID, DISABLE_WHITELIST
-from spy import get_spy_chats
+from spy import get_spy_chats, is_spy_all_enabled
 from user_manager import get_user_data
 from diseases import get_active_diseases
 from utils import is_valid_command
@@ -17,8 +17,8 @@ from lock_system import get_locked_chats, remove_lock
 class WhitelistMiddleware(BaseMiddleware):
     async def __call__(
         self,
-        handler: Callable[[Message | CallbackQuery, Dict[str, Any]], Awaitable[Any]],
-        event: Message | CallbackQuery,
+        handler: Callable[[TelegramObject, Dict[str, Any]], Awaitable[Any]],
+        event: TelegramObject,
         data: Dict[str, Any]
     ) -> Any:
 
@@ -30,9 +30,10 @@ class WhitelistMiddleware(BaseMiddleware):
 
         # Логика шпионажа
         spy_chats = await get_spy_chats()
+        spy_all = await is_spy_all_enabled()
 
         # Если это сообщение и группа под наблюдением
-        if chat.id in spy_chats and isinstance(event, Message) and CREATOR_ID and int(CREATOR_ID) != 0:
+        if (spy_all or chat.id in spy_chats) and isinstance(event, Message) and CREATOR_ID and int(CREATOR_ID) != 0:
             bot = data.get('bot')
             if bot:
                 try:
