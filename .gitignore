@@ -3,4 +3,7 @@ __pycache__/
 .env
 firebase-key.json
 logs/
+assets/cards/guinea_pigs/
+scratch/
+
 

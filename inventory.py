@@ -17,9 +17,17 @@ router = Router()
 
 MAX_BIZ_LEVEL = 5
 
-def get_inventory_main_kb(inventory, biz_levels):
+def get_inventory_main_kb(inventory, biz_levels, meme_cards=None):
     builder = InlineKeyboardBuilder()
     
+    # Кнопка открытия 12-часового кейса
+    builder.button(text="🎁 Бесплатный кейс карт (12ч)", callback_data="open_free_case_cb")
+
+    meme_cards = meme_cards or {}
+    unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
+    if unique_cards > 0:
+        builder.button(text=f"🎴 Моя коллекция карт ({unique_cards}/200)", callback_data="card_page_0")
+
     for item_id, count in inventory.items():
         if count > 0 and item_id in ITEMS:
             info = ITEMS[item_id]
@@ -56,22 +64,42 @@ async def cmd_inventory(message: types.Message):
 
     inventory = data.get('inventory', {})
     biz_levels = data.get('biz_levels', {})
+    meme_cards = data.get('meme_cards', {}) or {}
 
     has_items = any(count > 0 and item_id in ITEMS for item_id, count in inventory.items())
+    unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
 
-    if not has_items:
-        return await message.answer("🎒 <b>Ваш инвентарь пуст.</b>\nЗагляните в /shop, чтобы купить что-нибудь!")
+    if not has_items and unique_cards == 0:
+        return await message.answer(
+            "🎒 <b>Ваш инвентарь пуст.</b>\n\n"
+            "Загляните в /cases, чтобы получить бесплатный 12-часовой кейс с карточками свинок!"
+        )
 
-    text = "🎒 <b>ВАШ ИНВЕНТАРЬ</b>\n\nНажмите на предмет, чтобы управлять им:"
-    await message.answer(text, reply_markup=get_inventory_main_kb(inventory, biz_levels))
+    total_cards = sum(qty for qty in meme_cards.values() if qty > 0)
+    text = "🎒 <b>ВАШ ИНВЕНТАРЬ И КОЛЛЕКЦИЯ</b>\n\n"
+    if unique_cards > 0:
+        text += f"🎴 <b>Коллекция карточек свинок:</b> <code>{unique_cards}/200</code> (всего {total_cards} шт.)\n\n"
+    text += "Нажмите на предмет для управления или откройте карточки:"
+
+    await message.answer(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards))
 
 @router.callback_query(F.data == "inv_main")
 async def inv_back(callback: types.CallbackQuery):
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
     inventory = data.get('inventory', {})
     biz_levels = data.get('biz_levels', {})
-    text = "🎒 <b>ВАШ ИНВЕНТАРЬ</b>\n\nНажмите на предмет, чтобы управлять им:"
-    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels))
+    meme_cards = data.get('meme_cards', {}) or {}
+
+    unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
+    total_cards = sum(qty for qty in meme_cards.values() if qty > 0)
+    
+    text = "🎒 <b>ВАШ ИНВЕНТАРЬ И КОЛЛЕКЦИЯ</b>\n\n"
+    if unique_cards > 0:
+        text += f"🎴 <b>Коллекция карточек свинок:</b> <code>{unique_cards}/200</code> (всего {total_cards} шт.)\n\n"
+    text += "Нажмите на предмет для управления или откройте карточки:"
+
+    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards))
+
 
 @router.callback_query(F.data == "inv_close")
 async def inv_close(callback: types.CallbackQuery):

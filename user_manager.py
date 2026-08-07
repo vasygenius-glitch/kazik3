@@ -1202,3 +1202,43 @@ async def buy_and_open_case_tr(transaction, chat_id, user_id, price_to_deduct: i
         await ref.update(updates)
 
     return True, None
+
+
+async def open_free_case_tr(transaction, chat_id: int, user_id: int, card_id: str, cooldown_seconds: int = 43200):
+    """
+    Транзакционное открытие бесплатного кейса с проверкой 12-часового кулдауна.
+    """
+    ref = get_user_ref(chat_id, user_id)
+    snapshot = await safe_get_snapshot(transaction, ref)
+    if not snapshot.exists:
+        return False, "Пользователь не найден"
+
+    data = snapshot.to_dict() or {}
+    now = time.time()
+    last_ts = float(data.get('last_free_card_case_ts', 0) or 0)
+    
+    if last_ts > 0 and (now - last_ts < cooldown_seconds):
+        rem = int(cooldown_seconds - (now - last_ts))
+        h = rem // 3600
+        m = (rem % 3600) // 60
+        return False, f"⏳ Бесплатный кейс будет доступен через {h}ч {m}мин!"
+
+
+    meme_cards = dict(data.get('meme_cards') or {})
+    meme_cards[card_id] = meme_cards.get(card_id, 0) + 1
+    
+    opened_count = int(data.get('opened_cases_count', 0) or 0) + 1
+
+    updates = {
+        'last_free_card_case_ts': now,
+        'meme_cards': meme_cards,
+        'opened_cases_count': opened_count
+    }
+
+    if transaction:
+        transaction.update(ref, updates)
+    else:
+        await ref.update(updates)
+
+    return True, None
+

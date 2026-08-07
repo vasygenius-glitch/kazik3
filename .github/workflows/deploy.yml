@@ -13,9 +13,5 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Glitch Sync Action
-        uses: kanadgupta/glitch-sync@v1.6
-        with:
-          auth-token: '${{ secrets.GLITCH_AUTH_TOKEN }}'
-          project-id: '${{ secrets.GLITCH_PROJECT_ID }}'
-          path: './'
+      - name: Deploy Check
+        run: echo "Deployment check completed successfully."

@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import os
+import time
 import random
 from typing import Optional
 
@@ -18,11 +19,13 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import get_db
 from user_manager import (
     buy_and_open_case_tr,
+    open_free_case_tr,
     get_user_data,
     get_user_lock,
     get_user_meme_bonuses,
     invalidate_user_cache,
 )
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +51,13 @@ RARITIES = {
 # Шансы задаются явно для каждого кейса — описание генерируется
 # автоматически и ВСЕГДА совпадает с реальными вероятностями.
 CASES = {
+    "free_case": {
+        "id": "free_case",
+        "name": "🎁 Бесплатный Кейс Карточек (12ч)",
+        "price": 0,
+        "tagline": "Бесплатный кейс с карточками доступен каждые 12 часов!",
+        "chances": {"COMMON": 50, "UNCOMMON": 30, "RARE": 14, "EPIC": 5, "LEGENDARY": 1},
+    },
     "common_case": {
         "id": "common_case",
         "name": "📦 Простой Кейс Карточек",
@@ -63,6 +73,7 @@ CASES = {
         "chances": {"RARE": 70, "EPIC": 25, "LEGENDARY": 5},
     },
 }
+
 
 # Здесь можно переопределить любую карточку вручную.
 CUSTOM_CARDS = {
@@ -181,13 +192,47 @@ def roll_card_from_case(case_info: dict) -> Optional[str]:
     return random.choice(CARDS_BY_RARITY[rarity])
 
 
-def find_card_photo(card_id: str) -> Optional[str]:
-    """Возвращает путь к изображению карты (.jpg/.png/.webp) или None."""
+_CARD_URLS_CACHE = None
+
+def get_card_photo_source(card_id: str) -> Optional[str]:
+    """Возвращает путь к изображению карты или прямую URL-ссылку."""
     for ext in ("jpg", "png", "webp"):
         path = os.path.join(CARDS_ASSETS_DIR, f"{card_id}.{ext}")
         if os.path.exists(path):
             return path
-    return None
+            
+    try:
+        if "_" in card_id:
+            num = int(card_id.split("_")[-1])
+        else:
+            num = int(''.join(filter(str.isdigit, card_id)))
+    except (ValueError, IndexError):
+        num = 1
+
+    pig_key = f"pig_{((num - 1) % 200) + 1:03d}"
+
+    for fname in (f"{pig_key}.jpg", f"pig_{((num - 1) % 200) + 1:02d}.jpg"):
+        pig_path = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs", fname)
+        if os.path.exists(pig_path):
+            return pig_path
+
+    global _CARD_URLS_CACHE
+    if _CARD_URLS_CACHE is None:
+        urls_file = "cards_photos_urls.json"
+        if os.path.exists(urls_file):
+            try:
+                with open(urls_file, "r", encoding="utf-8") as f:
+                    _CARD_URLS_CACHE = json.load(f)
+            except Exception:
+                _CARD_URLS_CACHE = {}
+        else:
+            _CARD_URLS_CACHE = {}
+
+    return _CARD_URLS_CACHE.get(pig_key)
+
+
+def find_card_photo(card_id: str) -> Optional[str]:
+    return get_card_photo_source(card_id)
 
 
 def format_card_bonuses(card: dict) -> str:
@@ -235,23 +280,157 @@ def build_shop_keyboard() -> InlineKeyboardMarkup:
 
 
 async def send_card_message(message: types.Message, card_id: str, text: str) -> None:
-    """Отправляет карточку с фото (если есть) или просто текстом."""
-    photo_path = find_card_photo(card_id)
-    if photo_path:
+    """Отправляет карточку с фото (из локального файла или по URL) или просто текстом."""
+    photo_source = get_card_photo_source(card_id)
+    if photo_source:
         try:
-            await message.answer_photo(photo=FSInputFile(photo_path), caption=text)
+            if photo_source.startswith("http://") or photo_source.startswith("https://"):
+                await message.answer_photo(photo=photo_source, caption=text)
+            else:
+                await message.answer_photo(photo=FSInputFile(photo_source), caption=text)
             return
         except Exception as e:
             logger.warning("Не удалось отправить фото карты %s: %s", card_id, e)
     await message.answer(text)
 
 
+
 # ─────────────────────────────────────────────────────────────
 #  МАГАЗИН КЕЙСОВ (/cases)
 # ─────────────────────────────────────────────────────────────
 
+FREE_CASE_TRIGGERS = {
+    "free_case", "freecase", "bonus_case", "bonuscase", "daily_case",
+    "бесплатный_кейс", "бесплатныйкейс", "бк", "бонусный_кейс", "бонусныйкейс",
+    "бесплатный кейс", "бонусный кейс", "бесплатный кейс свинок", "бк свинок",
+    "/free_case", "/freecase", "/bonus_case", "/bonuscase", "/daily_case",
+    "/бесплатный_кейс", "/бесплатныйкейс", "/бк", "/бонусный_кейс", "/бонусныйкейс",
+    "/бесплатный кейс", "/бонусный кейс"
+}
+
+@router.message(Command("free_case", "freecase", "bonus_case", "bonuscase", "daily_case", "бесплатный_кейс", "бесплатныйкейс", "бк", "бонусный_кейс", "бонусныйкейс"))
+@router.message(F.text.func(lambda t: t and t.lower() in FREE_CASE_TRIGGERS))
+async def cmd_free_case(message: types.Message):
+
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    data = await get_user_data(chat_id, user_id, message.from_user.full_name)
+    if data.get("is_banned"):
+        return
+
+    now = time.time()
+    last_ts = float(data.get("last_free_card_case_ts", 0) or 0)
+    cooldown = 43200
+    
+    if last_ts > 0 and (now - last_ts < cooldown):
+        rem = int(cooldown - (now - last_ts))
+        h = rem // 3600
+        m = (rem % 3600) // 60
+        return await message.answer(f"⏳ <b>Бесплатный кейс карточек еще недоступен!</b>\n\nСледующий подарок можно забрать через: <b>{h}ч {m}мин</b>.")
+
+
+    case_info = CASES["free_case"]
+    card_id = roll_card_from_case(case_info)
+    if not card_id:
+        return await message.answer("Ошибка сервиса карточек.")
+
+    card_info = CARDS[card_id]
+    db = get_db()
+    tr = db.transaction() if db else None
+    
+    async with get_user_lock(chat_id, user_id):
+        success, err = await open_free_case_tr(tr, chat_id, user_id, card_id)
+
+        if success:
+            invalidate_user_cache(chat_id, user_id)
+            
+    if not success:
+        return await message.answer(err)
+
+    msg = await message.answer("🎁 <b>Открываем бесплатный 12-часовой кейс...</b>")
+    for slide in ANIMATION_SLIDES:
+        try:
+            await msg.edit_text(slide)
+        except Exception:
+            pass
+        await asyncio.sleep(ANIMATION_DELAY)
+
+    rarity = card_info["rarity"]
+    result_text = (
+        f"🎁 <b>БЕСПЛАТНЫЙ КЕЙС (12ч) ОТКРЫТ!</b>\n\n"
+        f"🃏 Карточка «<b>{card_info['name']}</b>» добавлена в коллекцию!\n\n"
+        f"💎 Редкость • {get_rarity_name(rarity)}\n"
+        f"{format_card_bonuses(card_info)}"
+    )
+    await send_card_message(message, card_id, result_text)
+
+
+@router.callback_query(F.data == "open_free_case_cb")
+async def callback_open_free_case(callback: CallbackQuery):
+    if callback.message is None:
+        return await callback.answer()
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    
+    data = await get_user_data(chat_id, user_id)
+    if data.get("is_banned"):
+        return await callback.answer("Вы забанены.", show_alert=True)
+
+    now = time.time()
+    last_ts = float(data.get("last_free_card_case_ts", 0) or 0)
+    cooldown = 43200
+    
+    if last_ts > 0 and (now - last_ts < cooldown):
+        rem = int(cooldown - (now - last_ts))
+        h = rem // 3600
+        m = (rem % 3600) // 60
+        return await callback.answer(f"⏳ Бесплатный кейс будет доступен через {h}ч {m}мин!", show_alert=True)
+
+
+    case_info = CASES["free_case"]
+    card_id = roll_card_from_case(case_info)
+    if not card_id:
+        return await callback.answer("Ошибка ролла карточки.", show_alert=True)
+
+    card_info = CARDS[card_id]
+    db = get_db()
+    tr = db.transaction() if db else None
+    
+    async with get_user_lock(chat_id, user_id):
+        success, err = await open_free_case_tr(tr, chat_id, user_id, card_id)
+
+        if success:
+            invalidate_user_cache(chat_id, user_id)
+            
+    if not success:
+        return await callback.answer(err, show_alert=True)
+
+    await callback.answer("Открываем бесплатный кейс...")
+    msg = callback.message
+
+    for slide in ANIMATION_SLIDES:
+        try:
+            await msg.edit_text(slide)
+        except Exception:
+            pass
+        await asyncio.sleep(ANIMATION_DELAY)
+
+    rarity = card_info["rarity"]
+    result_text = (
+        f"🎁 <b>БЕСПЛАТНЫЙ КЕЙС (12ч) ОТКРЫТ!</b>\n\n"
+        f"🃏 Карточка «<b>{card_info['name']}</b>» добавлена в коллекцию!\n\n"
+        f"💎 Редкость • {get_rarity_name(rarity)}\n"
+        f"{format_card_bonuses(card_info)}"
+    )
+    await send_card_message(msg, card_id, result_text)
+
+
+
 @router.message(Command("cases", "card_shop", "кейсы"))
 async def cmd_cases(message: types.Message):
+
     data = await get_user_data(message.chat.id, message.from_user.id, message.from_user.full_name)
     if data.get("is_banned"):
         return
