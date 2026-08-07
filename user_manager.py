@@ -283,14 +283,18 @@ async def _flush_single_user(chat_id, user_id, expected_timestamp) -> None:
 # ============================================================
 # FLUSH В БД
 # ============================================================
-async def flush_user_data() -> None:
-    """Сбрасывает _dirty_cache в Firestore пачками. Безопасен к конкурентному вызову."""
-    if not _dirty_cache:
-        return
+_quota_backoff: float = FLUSH_INTERVAL
 
-    # Если flush уже идёт — другой вызов сбросит наши изменения вместе со своими.
+
+async def flush_user_data() -> bool:
+    """Сбрасывает _dirty_cache в Firestore пачками. Возвращает True, если была поймана квота 429."""
+    if not _dirty_cache:
+        return False
+
     if _flush_lock.locked():
-        return
+        return False
+
+    quota_exceeded_hit = False
 
     async with _flush_lock:
         to_flush = list(_dirty_cache)
@@ -299,8 +303,6 @@ async def flush_user_data() -> None:
             tasks, task_keys = [], []
 
             for key in batch:
-                # Снимаем dirty-флаг ДО записи. Если кто-то модифицирует данные
-                # во время gather — mark_dirty снова поставит флаг.
                 _dirty_cache.discard(key)
                 entry = _user_cache.get(key)
                 if not entry:
@@ -315,8 +317,15 @@ async def flush_user_data() -> None:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for key, result in zip(task_keys, results):
                 if isinstance(result, Exception):
-                    logger.error("⚠️ Ошибка записи пользователя %s: %s", key, result)
+                    err_str = str(result)
+                    if "Quota exceeded" in err_str or "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        quota_exceeded_hit = True
+                        logger.warning("⚠️ Квота записи Firestore (429) превышена для %s. Данные сохранены в памяти.", key)
+                    else:
+                        logger.error("⚠️ Ошибка записи пользователя %s: %s", key, result)
                     _dirty_cache.add(key)  # повторим в следующем тике
+
+    return quota_exceeded_hit
 
 
 def _cleanup_unused_locks() -> None:
@@ -331,7 +340,6 @@ def _cleanup_unused_locks() -> None:
         lock = _user_locks.get(key)
         if lock is None or lock.locked():
             continue
-        # Безопасная проверка ожидающих корутин (если есть атрибут _waiters).
         waiters = getattr(lock, "_waiters", None)
         if waiters:
             continue
@@ -342,21 +350,28 @@ def _cleanup_unused_locks() -> None:
 
 
 async def flush_user_data_task() -> None:
-    """Фоновая периодическая синхронизация + чистка локов."""
+    """Фоновая периодическая синхронизация + чистка локов с защитой от 429 Quota Exceeded."""
+    global _quota_backoff
     while True:
         try:
-            await asyncio.sleep(FLUSH_INTERVAL)
-            await flush_user_data()
+            await asyncio.sleep(_quota_backoff)
+            quota_hit = await flush_user_data()
+            if quota_hit:
+                _quota_backoff = min(120.0, _quota_backoff * 2)
+                logger.warning("⏳ Квота БД (429) исчерпана. Увеличиваем паузу фонового сброса до %.0f сек. Данные игроков в кэше без потерь!", _quota_backoff)
+            else:
+                _quota_backoff = FLUSH_INTERVAL
+
             _cleanup_unused_locks()
         except asyncio.CancelledError:
-            # Финальный flush при остановке
             try:
                 await flush_user_data()
             except Exception as e:
-                logger.error("Final flush failed: %s", e)
-            raise
-        except Exception as e:
-            logger.exception("⚠️ Ошибка фоновой задачи синхронизации: %s", e)
+                logger.error("Final flush on cancellation error: %s", e)
+            break
+        except Exception as exc:
+            logger.error("Ошибка в фоновой задаче сброса БД: %s", exc)
+
 
 
 # ============================================================
