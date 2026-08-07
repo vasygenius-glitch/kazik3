@@ -628,6 +628,56 @@ BANYA_DICTORS_LIST = [
     {"id": "dictor_emperor", "name": "императорский диктор тайний баний", "rarity": "Императорский", "color": "👑", "weight": 0.01},
     {"id": "dictor_ghost", "name": "призрачный диктор тайний баний", "rarity": "Призрачный", "color": "👻", "weight": 0.01},
     {"id": "dictor_immortal", "name": "бессмертный диктор тайний баний", "rarity": "Бессмертный", "color": "🪐", "weight": 0.01},
+    {"id": "dictor_celestial", "name": "небесный диктор тайний баний", "rarity": "Небесный", "color": "✨", "weight": 0.008},
+    {"id": "dictor_astral", "name": "астральный диктор тайний баний", "rarity": "Астральный", "color": "🌟", "weight": 0.007},
+    {"id": "dictor_quantum", "name": "квантовый диктор тайний баний", "rarity": "Квантовый", "color": "⚛️", "weight": 0.006},
+    {"id": "dictor_singularity", "name": "сингулярный диктор тайний баний", "rarity": "Сингулярный", "color": "🌌", "weight": 0.005},
+    {"id": "dictor_supernova", "name": "сверхновый диктор тайний баний", "rarity": "Сверхновый", "color": "💥", "weight": 0.004},
+    {"id": "dictor_nebula", "name": "туманный диктор тайний баний", "rarity": "Туманный", "color": "🌫", "weight": 0.0035},
+    {"id": "dictor_hyperion", "name": "гиперионский диктор тайний баний", "rarity": "Гиперионский", "color": "☀️", "weight": 0.003},
+    {"id": "dictor_chronos", "name": "хронос-диктор тайний баний", "rarity": "Хронос", "color": "⌛️", "weight": 0.0028},
+    {"id": "dictor_aether", "name": "эфирный диктор тайний баний", "rarity": "Эфирный", "color": "✨", "weight": 0.0025},
+    {"id": "dictor_primordial", "name": "первозданный диктор тайний баний", "rarity": "Первозданный", "color": "🌋", "weight": 0.0022},
+    {"id": "dictor_supreme", "name": "верховный диктор тайний баний", "rarity": "Верховный", "color": "🔱", "weight": 0.0020},
+    {"id": "dictor_archon", "name": "архонтский диктор тайний баний", "rarity": "Архонтский", "color": "🛡", "weight": 0.0018},
+    {"id": "dictor_seraph", "name": "серафимский диктор тайний баний", "rarity": "Серафимский", "color": "👼", "weight": 0.0016},
+    {"id": "dictor_leviathan", "name": "левиафанский диктор тайний баний", "rarity": "Левиафанский", "color": "🐋", "weight": 0.0014},
+    {"id": "dictor_phoenix", "name": "феникс-диктор тайний баний", "rarity": "Феникс", "color": "🔥", "weight": 0.0012},
+    {"id": "dictor_titan", "name": "титанический диктор тайний баний", "rarity": "Титанический", "color": "🗿", "weight": 0.0010},
+    {"id": "dictor_valkyrie", "name": "валькирийский диктор тайний баний", "rarity": "Валькирийский", "color": "⚔️", "weight": 0.0009},
+    {"id": "dictor_overlord", "name": "владыка-диктор тайний баний", "rarity": "Владыка", "color": "👑", "weight": 0.0008},
+    {"id": "dictor_omega", "name": "омега-диктор тайний баний", "rarity": "Омега", "color": "Ω", "weight": 0.0007},
+    {"id": "dictor_alpha", "name": "альфа-диктор тайний баний", "rarity": "Альфа", "color": "Α", "weight": 0.0006},
+    {"id": "dictor_multiverse", "name": "мультивселенский диктор тайний баний", "rarity": "Мультивселенский", "color": "🌌", "weight": 0.0005},
+    {"id": "dictor_transcendent", "name": "трансцендентный диктор тайний баний", "rarity": "Трансцендентный", "color": "✨", "weight": 0.00045},
+    {"id": "dictor_omnipotent", "name": "всемогущий диктор тайний баний", "rarity": "Всемогущий", "color": "⚜️", "weight": 0.0004},
+    {"id": "dictor_absolute", "name": "абсолютный диктор тайний баний", "rarity": "Абсолютный", "color": "💎", "weight": 0.00035},
+    {"id": "dictor_infinity_plus", "name": "сверхбесконечный диктор тайний баний", "rarity": "Сверхбесконечный", "color": "♾✨", "weight": 0.0003},
+    {"id": "dictor_dark_matter", "name": "тёмноматериальный диктор тайний баний", "rarity": "Тёмноматериальный", "color": "🖤", "weight": 0.00028},
+    {"id": "dictor_dark_energy", "name": "тёмноэнергетический диктор тайний баний", "rarity": "Тёмноэнергетический", "color": "⚡️", "weight": 0.00025},
+    {"id": "dictor_antimatter", "name": "антиматериальный диктор тайний баний", "rarity": "Антиматериальный", "color": "💥", "weight": 0.00022},
+    {"id": "dictor_hyperdimensional", "name": "гиперпространственный диктор тайний баний", "rarity": "Гиперпространственный", "color": "🌀", "weight": 0.0002},
+    {"id": "dictor_zenith", "name": "зенитный диктор тайний баний", "rarity": "Зенитный", "color": "☀️", "weight": 0.00018},
+    {"id": "dictor_apex", "name": "апекс-диктор тайний баний", "rarity": "Апекс", "color": "🏆", "weight": 0.00016},
+    {"id": "dictor_genesis", "name": "генезис-диктор тайний баний", "rarity": "Генезис", "color": "🌱", "weight": 0.00014},
+    {"id": "dictor_apocalypse", "name": "апокалиптический диктор тайний баний", "rarity": "Апокалиптический", "color": "🌋", "weight": 0.00012},
+    {"id": "dictor_ragnarok", "name": "рагнарёк-диктор тайний баний", "rarity": "Рагнарёк", "color": "⚡️", "weight": 0.00010},
+    {"id": "dictor_valhalla", "name": "вальхалла-диктор тайний баний", "rarity": "Вальхалла", "color": "🛡", "weight": 0.00009},
+    {"id": "dictor_olympus", "name": "олимпский диктор тайний баний", "rarity": "Олимпский", "color": "🏛", "weight": 0.00008},
+    {"id": "dictor_asgard", "name": "асгардский диктор тайний баний", "rarity": "Асгардский", "color": "🔨", "weight": 0.00007},
+    {"id": "dictor_eldritch", "name": "иномировой диктор тайний баний", "rarity": "Иномировой", "color": "👁", "weight": 0.00006},
+    {"id": "dictor_cthulhu", "name": "ктулхический диктор тайний баний", "rarity": "Ктулхический", "color": "🐙", "weight": 0.00005},
+    {"id": "dictor_solaris", "name": "солярис-диктор тайний баний", "rarity": "Солярис", "color": "☀️", "weight": 0.000045},
+    {"id": "dictor_lunar", "name": "лунный диктор тайний баний", "rarity": "Лунный", "color": "🌙", "weight": 0.00004},
+    {"id": "dictor_eclipse", "name": "затменный диктор тайний баний", "rarity": "Затменный", "color": "🌒", "weight": 0.000035},
+    {"id": "dictor_supernatural", "name": "сверхестественный диктор тайний баний", "rarity": "Сверхестественный", "color": "🔮", "weight": 0.00003},
+    {"id": "dictor_boundless", "name": "безграничный диктор тайний баний", "rarity": "Безграничный", "color": "♾", "weight": 0.000025},
+    {"id": "dictor_eternity", "name": "вечность-диктор тайний баний", "rarity": "Вечность", "color": "⏳", "weight": 0.00002},
+    {"id": "dictor_creation", "name": "созидательный диктор тайний баний", "rarity": "Созидательный", "color": "🌍", "weight": 0.000015},
+    {"id": "dictor_destruction", "name": "разрушительный диктор тайний баний", "rarity": "Разрушительный", "color": "💥", "weight": 0.00001},
+    {"id": "dictor_sovereign", "name": "суверенный диктор тайний баний", "rarity": "Суверенный", "color": "👑", "weight": 0.000008},
+    {"id": "dictor_godlike", "name": "богоподобный диктор тайний баний", "rarity": "Богоподобный", "color": "⚡️", "weight": 0.000005},
+    {"id": "dictor_antigravity", "name": "антигравитационный диктор тайний баний", "rarity": "Антигравитационный", "color": "🚀", "weight": 0.000001},
 ]
 
 
@@ -898,11 +948,8 @@ async def cmd_banya_dictor(message: types.Message):
     inventory = u_data.get('inventory', {})
     
     owned_dictors = []
-    dictor_ids = [
-        "dictor_common", "dictor_simple", "dictor_basic",
-        "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
-        "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
-    ]
+    dictor_ids = [d["id"] for d in BANYA_DICTORS_LIST]
+
     
     for d_id in dictor_ids:
         if inventory.get(d_id, 0) > 0:
@@ -973,11 +1020,8 @@ async def cmd_banya_dictor(message: types.Message):
 
 
 
-DICTOR_RANKS = [
-    "dictor_common", "dictor_simple", "dictor_basic",
-    "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
-    "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
-]
+DICTOR_RANKS = [d["id"] for d in BANYA_DICTORS_LIST]
+
 
 
 async def render_banya_craft_page(message_or_callback, chat_id: int, user_id: int, page: int = 0, is_edit: bool = False):
@@ -1157,15 +1201,17 @@ async def callback_banya_craft_back(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("banya_craft_do_"))
 async def callback_banya_craft_do(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    if len(parts) < 5:
+    raw = callback.data.removeprefix("banya_craft_do_")
+    last_underscore = raw.rfind("_")
+    if last_underscore == -1:
         return await callback.answer()
 
-    d_id = f"{parts[3]}_{parts[4]}"
+    d_id = raw[:last_underscore]
     try:
-        qty = int(parts[5])
-    except (ValueError, IndexError):
+        qty = int(raw[last_underscore + 1:])
+    except ValueError:
         qty = 1
+
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id

@@ -4,11 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # --- ТЕСТЫ ИНТЕРАКТИВНОГО КРАФТА И АПГРЕЙДЕРА ДИКТОРОВ ---
 
-DICTOR_RANKS = [
-    "dictor_common", "dictor_simple", "dictor_basic",
-    "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
-    "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
-]
+from seasons import DICTOR_RANKS
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("rank_idx", range(len(DICTOR_RANKS) - 1))
@@ -24,9 +21,8 @@ async def test_dictor_craft_success_all_ranks(rank_idx):
     callback.message.chat.id = 12345
     callback.from_user.id = 67890
 
-    # banya_craft_do_{d_id}_{qty}
-    parts = curr_rank.split("_")
-    callback.data = f"banya_craft_do_{parts[0]}_{parts[1]}_1"
+    callback.data = f"banya_craft_do_{curr_rank}_1"
+
 
     user_data = {
         'is_banned': False,
@@ -65,8 +61,8 @@ async def test_dictor_craft_failure_all_ranks(rank_idx):
     callback.message.chat.id = 12345
     callback.from_user.id = 67890
 
-    parts = curr_rank.split("_")
-    callback.data = f"banya_craft_do_{parts[0]}_{parts[1]}_1"
+    callback.data = f"banya_craft_do_{curr_rank}_1"
+
 
     user_data = {
         'is_banned': False,
