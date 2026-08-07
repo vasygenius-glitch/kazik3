@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = 7860
 
+from aiohttp import ClientError
+
 class RetryRequestMiddleware(BaseRequestMiddleware):
     def __init__(self, max_retries: int = 3):
         self.max_retries = max_retries
@@ -38,7 +40,7 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
         for attempt in range(1, self.max_retries + 1):
             try:
                 return await make_request(bot, method)
-            except Exception as e:
+            except (TelegramNetworkError, ClientError, asyncio.TimeoutError, OSError) as e:
                 last_exc = e
                 if attempt < self.max_retries:
                     delay = 1.0 * attempt
@@ -48,6 +50,7 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
                     )
                     await asyncio.sleep(delay)
         raise last_exc
+
 
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
     session = AiohttpSession(api=api_server, timeout=30)
