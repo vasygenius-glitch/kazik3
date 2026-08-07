@@ -240,7 +240,26 @@ async def cmd_profile(message: types.Message):
 import re
 
 def _clean_bank_name(text: str) -> str:
-    return re.sub(r'[^\w\d]', '', str(text).lower().replace("ё", "е"))
+    cleaned = str(text).lower().replace("ё", "йо")
+    return re.sub(r'[^\w\d]', '', cleaned)
+
+
+
+def _levenshtein(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return _levenshtein(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
 
 def _is_name_match(search: str, target: str) -> bool:
     s = _clean_bank_name(search)
@@ -250,10 +269,12 @@ def _is_name_match(search: str, target: str) -> bool:
     if s in t or t in s or s.startswith(t) or t.startswith(s):
         return True
     if len(s) >= 3 and len(t) >= 3:
-        diff = sum(1 for a, b in zip(s, t) if a != b) + abs(len(s) - len(t))
-        if diff <= 2:
+        max_len = max(len(s), len(t))
+        max_allowed_edits = 2 if max_len <= 8 else 3
+        if _levenshtein(s, t) <= max_allowed_edits:
             return True
     return False
+
 
 # ===================== РАБОТА С БАНКАМИ =====================
 async def get_bank_info(chat_id: int, identifier):
