@@ -1,28 +1,46 @@
+import os
+import json
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore_async
-import os
 
 db = None
 
-def init_db(key_path):
-    global db
-    import json
-
 class MockTransaction:
     def __init__(self):
-        pass
+        self._read_only = False
+        self._id = b"mock"
+        self._max_attempts = 5
+
+    async def _begin(self, retry_id=None): pass
+    async def _rollback(self): pass
+    async def _commit(self): pass
+    def _clean_up(self): pass
 
     def get(self, ref):
         return ref.get()
 
     def update(self, ref, data):
-        from utils import fire_and_forget
-        fire_and_forget(ref.update(data))
+        if hasattr(ref, 'doc_node'):
+            if '_data' in ref.doc_node:
+                ref.doc_node['_data'].update(data)
+            else:
+                ref.doc_node['_data'] = data
+            ref.db_instance.save()
+        else:
+            from utils import fire_and_forget
+            fire_and_forget(ref.update(data))
 
     def set(self, ref, data, merge=False):
-        from utils import fire_and_forget
-        fire_and_forget(ref.set(data, merge=merge))
+        if hasattr(ref, 'doc_node'):
+            if merge and '_data' in ref.doc_node:
+                ref.doc_node['_data'].update(data)
+            else:
+                ref.doc_node['_data'] = data
+            ref.db_instance.save()
+        else:
+            from utils import fire_and_forget
+            fire_and_forget(ref.set(data, merge=merge))
 
 class MockDB:
     def __init__(self, filepath="data/local_db.json"):
@@ -191,7 +209,7 @@ def init_db(key_path):
             db = MockDB()
             return db
 
-    print("⚡ Инициализирована локальная база данных (data/local_db.json).")
+    print("[DB] Инициализирована локальная база данных (data/local_db.json).")
     db = MockDB()
     return db
 

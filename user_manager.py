@@ -627,6 +627,7 @@ async def update_user_field(chat_id, user_id, field: str, value: Any) -> None:
         data[field] = value
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
+        await flush_user_cache_immediately(chat_id, user_id)
 
 
 # ============================================================
@@ -1196,28 +1197,45 @@ async def buy_and_open_case_tr(transaction, chat_id, user_id, price_to_deduct: i
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
-        return False, "Пользователь не найден"
-
-    data = snapshot.to_dict() or {}
-    balance = int(data.get('balance', 0) or 0)
-    if balance < price_to_deduct:
-        return False, "Недостаточно денег"
-
-    meme_cards = dict(data.get('meme_cards') or {})
-    meme_cards[card_id] = meme_cards.get(card_id, 0) + 1
-    
-    opened_count = int(data.get('opened_cases_count', 0) or 0) + 1
-
-    updates = {
-        'balance': balance - price_to_deduct,
-        'meme_cards': meme_cards,
-        'opened_cases_count': opened_count
-    }
-
-    if transaction:
-        transaction.update(ref, updates)
+        data = _default_user_data("Игрок")
+        balance = int(data.get('balance', DEFAULT_START_BALANCE) or 0)
+        meme_cards = {}
+        opened_count = 0
+        is_new = True
     else:
-        await ref.update(updates)
+        data = snapshot.to_dict() or {}
+        if data.get('is_banned'):
+            return False, "Вы забанены."
+        balance = int(data.get('balance', 0) or 0)
+        meme_cards = dict(data.get('meme_cards') or {})
+        opened_count = int(data.get('opened_cases_count', 0) or 0)
+        is_new = False
+
+    if balance < price_to_deduct:
+        return False, f"Недостаточно средств! Требуется {price_to_deduct} сыр."
+
+    meme_cards[card_id] = meme_cards.get(card_id, 0) + 1
+    opened_count += 1
+    new_balance = balance - price_to_deduct
+
+    if is_new:
+        data['balance'] = new_balance
+        data['meme_cards'] = meme_cards
+        data['opened_cases_count'] = opened_count
+        if transaction:
+            transaction.set(ref, data)
+        else:
+            await ref.set(data)
+    else:
+        updates = {
+            'balance': new_balance,
+            'meme_cards': meme_cards,
+            'opened_cases_count': opened_count
+        }
+        if transaction:
+            transaction.update(ref, updates)
+        else:
+            await ref.update(updates)
 
     return True, None
 
@@ -1228,35 +1246,50 @@ async def open_free_case_tr(transaction, chat_id: int, user_id: int, card_id: st
     """
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
-    if not snapshot.exists:
-        return False, "Пользователь не найден"
-
-    data = snapshot.to_dict() or {}
     now = time.time()
-    last_ts = float(data.get('last_free_card_case_ts', 0) or 0)
-    
+
+    if not snapshot.exists:
+        data = _default_user_data("Игрок")
+        last_ts = 0.0
+        meme_cards = {}
+        opened_count = 0
+        is_new = True
+    else:
+        data = snapshot.to_dict() or {}
+        if data.get('is_banned'):
+            return False, "Вы забанены."
+        last_ts = float(data.get('last_free_card_case_ts', 0) or 0)
+        meme_cards = dict(data.get('meme_cards') or {})
+        opened_count = int(data.get('opened_cases_count', 0) or 0)
+        is_new = False
+
     if last_ts > 0 and (now - last_ts < cooldown_seconds):
         rem = int(cooldown_seconds - (now - last_ts))
         h = rem // 3600
         m = (rem % 3600) // 60
         return False, f"⏳ Бесплатный кейс будет доступен через {h}ч {m}мин!"
 
-
-    meme_cards = dict(data.get('meme_cards') or {})
     meme_cards[card_id] = meme_cards.get(card_id, 0) + 1
-    
-    opened_count = int(data.get('opened_cases_count', 0) or 0) + 1
+    opened_count += 1
 
-    updates = {
-        'last_free_card_case_ts': now,
-        'meme_cards': meme_cards,
-        'opened_cases_count': opened_count
-    }
-
-    if transaction:
-        transaction.update(ref, updates)
+    if is_new:
+        data['last_free_card_case_ts'] = now
+        data['meme_cards'] = meme_cards
+        data['opened_cases_count'] = opened_count
+        if transaction:
+            transaction.set(ref, data)
+        else:
+            await ref.set(data)
     else:
-        await ref.update(updates)
+        updates = {
+            'last_free_card_case_ts': now,
+            'meme_cards': meme_cards,
+            'opened_cases_count': opened_count
+        }
+        if transaction:
+            transaction.update(ref, updates)
+        else:
+            await ref.update(updates)
 
     return True, None
 

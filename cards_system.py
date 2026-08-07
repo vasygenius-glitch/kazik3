@@ -16,6 +16,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from firebase_admin import firestore_async
 from db import get_db
 from config import CREATOR_ID, CREATOR_IDS
 from user_manager import (
@@ -423,47 +424,37 @@ async def cmd_reset_free_case(message: types.Message):
 
 
 @router.message(Command("free_case", "freecase", "bonus_case", "bonuscase", "daily_case", "бесплатный_кейс", "бесплатныйкейс", "бк", "бонусный_кейс", "бонусныйкейс"))
-
 @router.message(F.text.func(lambda t: t and t.lower() in FREE_CASE_TRIGGERS))
 async def cmd_free_case(message: types.Message):
-
     chat_id = message.chat.id
     user_id = message.from_user.id
-    
-    data = await get_user_data(chat_id, user_id, message.from_user.full_name)
-    if data.get("is_banned"):
-        return
 
-    now = time.time()
-    last_ts = float(data.get("last_free_card_case_ts", 0) or 0)
-    cooldown = 43200
-    
-    if last_ts > 0 and (now - last_ts < cooldown):
-        rem = int(cooldown - (now - last_ts))
-        h = rem // 3600
-        m = (rem % 3600) // 60
-        return await message.answer(f"⏳ <b>Бесплатный кейс карточек еще недоступен!</b>\n\nСледующий подарок можно забрать через: <b>{h}ч {m}мин</b>.")
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        case_info = CASES["free_case"]
+        card_id = roll_card_from_case(case_info, user_id=user_id)
+        if not card_id:
+            return await message.answer("Ошибка сервиса карточек.")
 
+        db = get_db()
 
-    case_info = CASES["free_case"]
-    card_id = roll_card_from_case(case_info, user_id=user_id)
-    if not card_id:
-        return await message.answer("Ошибка сервиса карточек.")
+        @firestore_async.async_transactional
+        async def _run_tx(transaction):
+            return await open_free_case_tr(transaction, chat_id, user_id, card_id)
 
-
-    card_info = CARDS[card_id]
-    db = get_db()
-    tr = db.transaction() if db else None
-    
-    async with get_user_lock(chat_id, user_id):
-        success, err = await open_free_case_tr(tr, chat_id, user_id, card_id)
+        try:
+            tr = db.transaction() if db else None
+            success, err = await _run_tx(tr)
+        except Exception as e:
+            logger.exception("Ошибка транзакции открытия бесплатного кейса (chat=%s, user=%s): %s", chat_id, user_id, e)
+            return await message.answer("Произошла ошибка при открытии кейса. Попробуйте позже.")
 
         if success:
             invalidate_user_cache(chat_id, user_id)
-            
-    if not success:
-        return await message.answer(err)
+        else:
+            return await message.answer(err)
 
+    card_info = CARDS[card_id]
     msg = await message.answer("🎁 <b>Открываем бесплатный 12-часовой кейс...</b>")
     for slide in ANIMATION_SLIDES:
         try:
@@ -492,41 +483,33 @@ async def callback_open_free_case(callback: CallbackQuery):
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    
-    data = await get_user_data(chat_id, user_id)
-    if data.get("is_banned"):
-        return await callback.answer("Вы забанены.", show_alert=True)
 
-    now = time.time()
-    last_ts = float(data.get("last_free_card_case_ts", 0) or 0)
-    cooldown = 43200
-    
-    if last_ts > 0 and (now - last_ts < cooldown):
-        rem = int(cooldown - (now - last_ts))
-        h = rem // 3600
-        m = (rem % 3600) // 60
-        return await callback.answer(f"⏳ Бесплатный кейс будет доступен через {h}ч {m}мин!", show_alert=True)
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        case_info = CASES["free_case"]
+        card_id = roll_card_from_case(case_info, user_id=user_id)
+        if not card_id:
+            return await callback.answer("Ошибка ролла карточки.", show_alert=True)
 
+        db = get_db()
 
-    case_info = CASES["free_case"]
-    card_id = roll_card_from_case(case_info, user_id=user_id)
-    if not card_id:
-        return await callback.answer("Ошибка ролла карточки.", show_alert=True)
+        @firestore_async.async_transactional
+        async def _run_tx(transaction):
+            return await open_free_case_tr(transaction, chat_id, user_id, card_id)
 
-
-    card_info = CARDS[card_id]
-    db = get_db()
-    tr = db.transaction() if db else None
-    
-    async with get_user_lock(chat_id, user_id):
-        success, err = await open_free_case_tr(tr, chat_id, user_id, card_id)
+        try:
+            tr = db.transaction() if db else None
+            success, err = await _run_tx(tr)
+        except Exception as e:
+            logger.exception("Ошибка транзакции бесплатного кейса callback (chat=%s, user=%s): %s", chat_id, user_id, e)
+            return await callback.answer("Произошла ошибка при открытии кейса.", show_alert=True)
 
         if success:
             invalidate_user_cache(chat_id, user_id)
-            
-    if not success:
-        return await callback.answer(err, show_alert=True)
+        else:
+            return await callback.answer(err, show_alert=True)
 
+    card_info = CARDS[card_id]
     await callback.answer("Открываем бесплатный кейс...")
     msg = callback.message
 
@@ -550,8 +533,6 @@ async def callback_open_free_case(callback: CallbackQuery):
         f"{format_card_bonuses(card_info)}"
     )
     await send_card_message(callback.message, card_id, result_text)
-
-
 
 
 @router.message(Command("cases", "card_shop", "кейсы"))
@@ -611,43 +592,37 @@ async def callback_buy_case(callback: CallbackQuery):
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-
-    data = await get_user_data(chat_id, user_id)
-    if data.get("is_banned"):
-        return await callback.answer("Вы забанены.", show_alert=True)
-
     price = case_info["price"]
-    if data.get("balance", 0) < price:
-        return await callback.answer(
-            f"❌ Недостаточно средств! Требуется {fmt_num(price)} сыр.", show_alert=True
-        )
 
-    card_id = roll_card_from_case(case_info)
-    if card_id is None:
-        return await callback.answer("Ошибка: нет карточек этой редкости.", show_alert=True)
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        card_id = roll_card_from_case(case_info, user_id=user_id)
+        if card_id is None:
+            return await callback.answer("Ошибка: нет карточек этой редкости.", show_alert=True)
 
-    card_info = CARDS[card_id]
-
-    # ── Транзакция покупки (баланс проверяется ещё раз внутри транзакции) ──
-    success, error_msg = False, "Внутренняя ошибка."
-    try:
         db = get_db()
-        async with get_user_lock(chat_id, user_id):
-            success, error_msg = await buy_and_open_case_tr(
-                db.transaction(), chat_id, user_id, price, card_id
+
+        @firestore_async.async_transactional
+        async def _run_tx(transaction):
+            return await buy_and_open_case_tr(
+                transaction, chat_id, user_id, price, card_id
             )
+
+        try:
+            tr = db.transaction() if db else None
+            success, error_msg = await _run_tx(tr)
             if success:
                 invalidate_user_cache(chat_id, user_id)
-    except Exception as e:
-        logger.exception("Ошибка транзакции покупки кейса (chat=%s, user=%s): %s", chat_id, user_id, e)
-        return await callback.answer("Произошла ошибка при покупке. Попробуйте позже.", show_alert=True)
+        except Exception as e:
+            logger.exception("Ошибка транзакции покупки кейса (chat=%s, user=%s): %s", chat_id, user_id, e)
+            return await callback.answer("Произошла ошибка при покупке. Попробуйте позже.", show_alert=True)
 
-    if not success:
-        return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
+        if not success:
+            return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
 
+    card_info = CARDS[card_id]
     await callback.answer("Открываем кейс...")
 
-    # ── Анимация открытия ──
     for slide in ANIMATION_SLIDES:
         try:
             await callback.message.edit_text(slide)
@@ -655,7 +630,6 @@ async def callback_buy_case(callback: CallbackQuery):
             pass
         await asyncio.sleep(ANIMATION_DELAY)
 
-    # ── Результат ──
     rarity = card_info["rarity"]
     result_text = (
         f"🃏 Карточка «<b>{card_info['name']}</b>» добавлена!\n\n"
