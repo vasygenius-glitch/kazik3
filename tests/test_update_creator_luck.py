@@ -42,6 +42,8 @@ async def test_cmd_banya_case_top_dictor_for_creator(test_id):
         'inventory': {},
         'is_banned': False
     }
+    message.text = "/banya_case 1"
+
 
     season_cfg = {
         'active': True,

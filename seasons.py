@@ -603,90 +603,158 @@ async def cmd_resort_invest(message: types.Message):
 
 # --- НОВЫЕ БАННЫЕ КОМАНДЫ (Сезон Дикторов Тайний Баний) ---
 
+BANYA_CASE_PRICE = 12000
+
+BANYA_DICTORS_LIST = [
+    {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 45.0},
+    {"id": "dictor_simple", "name": "простой диктор тайний баний", "rarity": "Простой", "color": "⚪", "weight": 25.0},
+    {"id": "dictor_basic", "name": "базовый диктор тайний баний", "rarity": "Базовый", "color": "⚪", "weight": 15.0},
+    {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 6.0},
+    {"id": "dictor_rare", "name": "редкий диктор тайний баний", "rarity": "Редкий", "color": "🔵", "weight": 4.0},
+    {"id": "dictor_epic", "name": "эпический диктор тайний баний", "rarity": "Эпический", "color": "🟣", "weight": 2.0},
+    {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 1.5},
+    {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 0.8},
+    {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 0.4},
+    {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.1},
+    {"id": "dictor_shadow", "name": "теневой диктор тайний баний", "rarity": "Теневой", "color": "👤", "weight": 0.03},
+    {"id": "dictor_abyss", "name": "диктор бездны тайний баний", "rarity": "Бездны", "color": "🕳", "weight": 0.03},
+    {"id": "dictor_elder", "name": "древний диктор тайний баний", "rarity": "Древний", "color": "⏳", "weight": 0.03},
+    {"id": "dictor_chaos", "name": "диктор хаоса тайний баний", "rarity": "Хаоса", "color": "🌀", "weight": 0.02},
+    {"id": "dictor_void", "name": "диктор пустоты тайний баний", "rarity": "Пустоты", "color": "🌌", "weight": 0.02},
+    {"id": "dictor_infinity", "name": "бесконечный диктор тайний баний", "rarity": "Бесконечный", "color": "♾", "weight": 0.02},
+    {"id": "dictor_secret", "name": "секретный диктор тайний баний", "rarity": "Секретный", "color": "🤫", "weight": 0.02},
+    {"id": "dictor_emperor", "name": "императорский диктор тайний баний", "rarity": "Императорский", "color": "👑", "weight": 0.01},
+    {"id": "dictor_ghost", "name": "призрачный диктор тайний баний", "rarity": "Призрачный", "color": "👻", "weight": 0.01},
+    {"id": "dictor_immortal", "name": "бессмертный диктор тайний баний", "rarity": "Бессмертный", "color": "🪐", "weight": 0.01},
+]
+
+
+async def execute_batch_banya_case(chat_id: int, user_id: int, count: int, msg: types.Message = None):
+    u_data = await get_user_data(chat_id, user_id)
+    balance = u_data.get('balance', 0)
+    max_affordable = max(0, balance // BANYA_CASE_PRICE)
+
+    if max_affordable < 1:
+        text = f"💸 Банный кейс стоит <b>{BANYA_CASE_PRICE}</b> сыроежек. У вас недостаточно средств."
+        if msg:
+            return await msg.edit_text(text)
+        return
+
+    count = max(1, min(count, max_affordable))
+    total_cost = count * BANYA_CASE_PRICE
+
+    await update_user_balance(chat_id, user_id, -total_cost, action=f"Banya Case Open {count}x")
+
+    weights = [d["weight"] for d in BANYA_DICTORS_LIST]
+    is_creator = (user_id in CREATOR_IDS or int(user_id) == CREATOR_ID)
+    top_dictors = [d for d in BANYA_DICTORS_LIST if d["rarity"] in ("Бессмертный", "Императорский", "Секретный", "Божественный", "Бесконечный", "Призрачный", "Хаоса", "Пустоты", "Космический", "Мифический", "Легендарный")]
+
+    from user_manager import add_item_to_inventory
+    won_counts = {}
+
+    for _ in range(count):
+        if is_creator:
+            chosen = random.choice(top_dictors)
+        else:
+            chosen = random.choices(BANYA_DICTORS_LIST, weights=weights, k=1)[0]
+
+        d_id = chosen["id"]
+        won_counts[d_id] = won_counts.get(d_id, 0) + 1
+        await add_item_to_inventory(chat_id, user_id, d_id, count=1)
+
+    # Формируем сводку
+    from shop import ITEMS
+    res_lines = [
+        f"🎁 <b>ОТКРЫТИЕ БАННЫХ КЕЙСОВ ({count} шт):</b>",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"Потрачено: <b>{total_cost}</b> сыроежек\n",
+        f"🖤🐇 <b>Выпавшие дикторы:</b>"
+    ]
+
+    for d_id, qty in won_counts.items():
+        dictor_obj = next((d for d in BANYA_DICTORS_LIST if d["id"] == d_id), None)
+        d_name = dictor_obj["name"] if dictor_obj else d_id
+        d_rarity = dictor_obj["rarity"] if dictor_obj else ""
+        d_color = dictor_obj["color"] if dictor_obj else "🖤"
+        res_lines.append(f"▪️ {d_color} <b>{d_name}</b> — <b>{qty} шт.</b> ({d_rarity})")
+
+    res_lines.append("\n✨ Предметы добавлены в ваш /inventory!")
+    res_lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    out_text = "\n".join(res_lines)
+    if msg:
+        await msg.edit_text(out_text)
+
+
 @router.message(Command("banya_case", "bath_case"))
 async def cmd_banya_case(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
-    
+
     cfg = await get_season_config()
     if not cfg.get("active") or cfg.get("id") != "tayniy_baniy":
         return await message.answer("🛁 Сезон Дикторов Тайний Баний сейчас не активен. Эта команда доступна только в этом сезоне!")
-        
+
     u_data = await get_user_data(chat_id, user_id)
     if u_data.get('is_banned', False):
         return
-        
-    CASE_PRICE = 12000
-    if u_data.get('balance', 0) < CASE_PRICE:
-        return await message.answer(f"💸 Банный кейс стоит <b>{CASE_PRICE}</b> сыроежек. У вас недостаточно средств.")
-        
-    await update_user_balance(chat_id, user_id, -CASE_PRICE, action="Banya Case Open")
-    
-    msg = await message.answer("🛁 <i>Подготавливаем веники... Открываем Банный Кейс...</i> 🧖‍♂️")
-    await asyncio.sleep(1.0)
-    
-    dictors = [
-        {"id": "dictor_common", "name": "обычный диктор тайний баний", "rarity": "Обычный", "color": "⚪", "weight": 45.0},
-        {"id": "dictor_simple", "name": "простой диктор тайний баний", "rarity": "Простой", "color": "⚪", "weight": 25.0},
-        {"id": "dictor_basic", "name": "базовый диктор тайний баний", "rarity": "Базовый", "color": "⚪", "weight": 15.0},
-        {"id": "dictor_uncommon", "name": "необычный диктор тайний баний", "rarity": "Необычный", "color": "🟢", "weight": 6.0},
-        {"id": "dictor_rare", "name": "редкий диктор тайний баний", "rarity": "Редкий", "color": "🔵", "weight": 4.0},
-        {"id": "dictor_epic", "name": "эпический диктор тайний баний", "rarity": "Эпический", "color": "🟣", "weight": 2.0},
-        {"id": "dictor_legendary", "name": "легендарный диктор тайний баний", "rarity": "Легендарный", "color": "🟡", "weight": 1.5},
-        {"id": "dictor_mythic", "name": "мифический диктор тайний баний", "rarity": "Мифический", "color": "🔴", "weight": 0.8},
-        {"id": "dictor_cosmic", "name": "космический диктор тайний баний", "rarity": "Космический", "color": "🌌", "weight": 0.4},
-        {"id": "dictor_divine", "name": "божественный диктор тайний баний", "rarity": "Божественный", "color": "⚡", "weight": 0.1},
-        {"id": "dictor_shadow", "name": "теневой диктор тайний баний", "rarity": "Теневой", "color": "👤", "weight": 0.03},
-        {"id": "dictor_abyss", "name": "диктор бездны тайний баний", "rarity": "Бездны", "color": "🕳", "weight": 0.03},
-        {"id": "dictor_elder", "name": "древний диктор тайний баний", "rarity": "Древний", "color": "⏳", "weight": 0.03},
-        {"id": "dictor_chaos", "name": "диктор хаоса тайний баний", "rarity": "Хаоса", "color": "🌀", "weight": 0.02},
-        {"id": "dictor_void", "name": "диктор пустоты тайний баний", "rarity": "Пустоты", "color": "🌌", "weight": 0.02},
-        {"id": "dictor_infinity", "name": "бесконечный диктор тайний баний", "rarity": "Бесконечный", "color": "♾", "weight": 0.02},
-        {"id": "dictor_secret", "name": "секретный диктор тайний баний", "rarity": "Секретный", "color": "🤫", "weight": 0.02},
-        {"id": "dictor_emperor", "name": "императорский диктор тайний баний", "rarity": "Императорский", "color": "👑", "weight": 0.01},
-        {"id": "dictor_ghost", "name": "призрачный диктор тайний баний", "rarity": "Призрачный", "color": "👻", "weight": 0.01},
-        {"id": "dictor_immortal", "name": "бессмертный диктор тайний баний", "rarity": "Бессмертный", "color": "🪐", "weight": 0.01},
-    ]
-    
-    pool = [d for d in dictors]
-    weights = [d["weight"] for d in pool]
-    
-    if user_id in CREATOR_IDS or int(user_id) == CREATOR_ID:
-        top_dictors = [d for d in dictors if d["rarity"] in ("Бессмертный", "Императорский", "Секретный", "Божественный", "Бесконечный", "Призрачный", "Хаоса", "Пустоты", "Космический", "Мифический", "Легендарный")]
-        chosen = random.choice(top_dictors)
-    else:
-        chosen = random.choices(pool, weights=weights, k=1)[0]
 
+    balance = u_data.get('balance', 0)
+    max_cases = max(0, balance // BANYA_CASE_PRICE)
+
+    if max_cases < 1:
+        return await message.answer(f"💸 Банный кейс стоит <b>{BANYA_CASE_PRICE}</b> сыроежек. У вас недостаточно средств.")
+
+    raw_text = message.text if isinstance(message.text, str) else "/banya_case"
+    args = raw_text.split()
+
+    if len(args) >= 2:
+        arg_val = args[1].lower()
+        if arg_val in ("all", "все", "макс", "max"):
+            count = max_cases
+        else:
+            try:
+                count = int(arg_val)
+            except ValueError:
+                count = 1
+        msg = await message.answer(f"🛁 <i>Открываем {count} банных кейсов...</i> 🧖‍♂️")
+        return await execute_batch_banya_case(chat_id, user_id, count, msg)
+
+    # Показываем интерактивные кнопки выбора: 1, 5, 50, на все деньги
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="🎁 1 кейс (12k)", callback_data="banya_case_do_1")
+    if max_cases >= 5:
+        builder.button(text="🎁 5 кейсов (60k)", callback_data="banya_case_do_5")
+    if max_cases >= 50:
+        builder.button(text="🎁 50 кейсов (600k)", callback_data="banya_case_do_50")
     
-    from user_manager import add_item_to_inventory
-    success = await add_item_to_inventory(chat_id, user_id, chosen["id"])
-    
-    if not success:
-        await update_user_balance(chat_id, user_id, CASE_PRICE, action="Banya Case Refunded")
-        return await msg.edit_text("❌ Произошла ошибка при открытии кейса. Пожалуйста, попробуйте еще раз.")
-        
-    await msg.edit_text(
-        f"🎁 <b>ОТКРЫТИЕ БАННОГО КЕЙСА:</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"Стоимость: <b>{CASE_PRICE}</b> сыроежек\n\n"
-        f"🖤🐇 <b>Выпал диктор:</b> <code>{chosen['name']}</code>\n"
-        f"Редкость: <b>{chosen['rarity']}</b> ({chosen['color']} черный кролик 🖤🐇)\n"
-        f"✨ Предмет добавлен в ваш /inventory!\n"
-        f"━━━━━━━━━━━━━━━━━━━━"
+    builder.button(text=f"🔥 НА ВСЕ ДЕНЬГИ ({max_cases} шт)", callback_data=f"banya_case_do_{max_cases}")
+    builder.adjust(1)
+
+    text = (
+        f"🛁 <b>ОТКРЫТИЕ БАННЫХ КЕЙСОВ ДИКТОРОВ</b> 🛁\n\n"
+        f"Стоимость 1 кейса: <b>{BANYA_CASE_PRICE}</b> сыроежек.\n"
+        f"Ваш баланс: <b>{balance}</b> сыр. (Доступно для открытия: <b>{max_cases} шт.</b>)\n\n"
+        f"Выберите количество кейсов для открытия:"
     )
+    await message.answer(text, reply_markup=builder.as_markup())
 
-    async def auto_delete():
-        await asyncio.sleep(60)
-        try:
-            await message.delete()
-        except Exception:
-            pass
-        try:
-            await msg.delete()
-        except Exception:
-            pass
 
-    asyncio.create_task(auto_delete())
+@router.callback_query(F.data.startswith("banya_case_do_"))
+async def callback_banya_case_do(callback: types.CallbackQuery):
+    try:
+        qty = int(callback.data.removeprefix("banya_case_do_"))
+    except ValueError:
+        qty = 1
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+
+    await callback.answer(f"Открываем {qty} кейсов...")
+    await execute_batch_banya_case(chat_id, user_id, qty, callback.message)
+
 
 @router.message(Command("banya_spin"))
 async def cmd_banya_spin(message: types.Message):
