@@ -5,7 +5,8 @@ from aiogram import Router, F, types
 from aiogram.filters import Command
 from db import get_db
 from utils_pkg.cache_manager import global_cache
-from config import CREATOR_ID
+from config import CREATOR_ID, CREATOR_IDS
+
 from user_manager import update_user_balance, get_user_data, update_user_field
 
 router = Router()

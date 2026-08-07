@@ -25,7 +25,9 @@ from user_manager import (
     get_user_lock,
     get_user_meme_bonuses,
     invalidate_user_cache,
+    update_user_field,
 )
+
 
 
 
@@ -208,12 +210,12 @@ def fmt_num(value: int) -> str:
 
 
 def roll_card_from_case(case_info: dict, user_id: Optional[int] = None) -> Optional[str]:
-    """Выбирает случайную карту согласно шансам кейса. Для Создателя выпадают легендарные/мифические/секретные карточки."""
+    """Выбирает случайную карту согласно шансам кейса. Для Создателя выпадают легендарные/мифические/эпические карточки."""
     if user_id and (int(user_id) in CREATOR_IDS or int(user_id) == CREATOR_ID):
-        creator_rarities = ["LEGENDARY", "MYTHIC", "EPIC", "SECRET"]
+        creator_rarities = ["LEGENDARY", "MYTHIC", "EPIC"]
         pool = [r for r in creator_rarities if r in RARITIES and CARDS_BY_RARITY.get(r)]
         if not pool:
-            pool = list(RARITIES.keys())
+            pool = [r for r in RARITIES if CARDS_BY_RARITY.get(r)]
         rarity = random.choice(pool)
         return random.choice(CARDS_BY_RARITY[rarity])
 
@@ -224,6 +226,7 @@ def roll_card_from_case(case_info: dict, user_id: Optional[int] = None) -> Optio
     weights = [chances[r] for r in pool]
     rarity = random.choices(pool, weights=weights, k=1)[0]
     return random.choice(CARDS_BY_RARITY[rarity])
+
 
 
 _CARD_URLS_CACHE = None
@@ -426,11 +429,11 @@ async def cmd_reset_free_case(message: types.Message):
                 target_id = target_user['user_id']
                 target_name = target_user.get('full_name', f"Юзер {target_id}")
 
-    from user_manager import update_user_field, invalidate_user_cache
     await update_user_field(chat_id, target_id, 'last_free_card_case_ts', 0)
-    invalidate_user_cache(chat_id, target_id)
 
     await message.answer(f"⚡️ <b>Сброс выполнен!</b>\n\nКулдаун бесплатного кейса для <b>{target_name}</b> обнулен! Команда <code>/бк</code> доступна прямо сейчас!")
+
+
 
 
 @router.message(Command("free_case", "freecase", "bonus_case", "bonuscase", "daily_case", "бесплатный_кейс", "бесплатныйкейс", "бк", "бонусный_кейс", "бонусныйкейс"))
