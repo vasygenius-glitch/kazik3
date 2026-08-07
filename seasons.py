@@ -749,14 +749,16 @@ async def execute_batch_banya_case(chat_id: int, user_id: int, count: int, msg: 
 
     weights = [d["weight"] for d in BANYA_DICTORS_LIST]
     is_creator = (user_id in CREATOR_IDS or int(user_id) == CREATOR_ID)
-    top_dictors = [d for d in BANYA_DICTORS_LIST if d["rarity"] in ("Бессмертный", "Императорский", "Секретный", "Божественный", "Бесконечный", "Призрачный", "Хаоса", "Пустоты", "Космический", "Мифический", "Легендарный")]
+    top_dictors = BANYA_DICTORS_LIST[6:]
 
     from user_manager import add_item_to_inventory
 
     if is_creator:
-        won_counts = allocate_batch_drops(count, top_dictors)
+        top_weights = [d["weight"] for d in top_dictors]
+        won_counts = allocate_batch_drops(count, top_dictors, weights=top_weights)
     else:
         won_counts = allocate_batch_drops(count, BANYA_DICTORS_LIST, weights=weights)
+
 
     for d_id, qty in won_counts.items():
         await add_item_to_inventory(chat_id, user_id, d_id, count=qty)

@@ -67,8 +67,7 @@ async def test_cmd_banya_case_top_dictor_for_creator(test_id):
         res_text = mock_msg.edit_text.call_args[0][0]
 
         # Убеждаемся, что выпал топовый диктор
-        top_rarities = [
-            "Бессмертный", "Императорский", "Секретный", "Божественный",
-            "Бесконечный", "Призрачный", "Хаоса", "Пустоты", "Космический", "Мифический", "Легендарный"
-        ]
+        from seasons import BANYA_DICTORS_LIST
+        top_rarities = [d["rarity"] for d in BANYA_DICTORS_LIST[6:]]
         assert any(r in res_text for r in top_rarities)
+
