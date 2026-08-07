@@ -289,9 +289,10 @@ async def get_bank_info(chat_id: int, identifier):
             b_name = b_data.get('name') or ''
             b_id = str(b_data.get('banker_id', ''))
             if (search_str.lower() == b_id or 
-                _is_name_match(search_name=search_str, target=b_name) or 
-                _is_name_match(search_name=search_str, target=b_id)):
+                _is_name_match(search_str, b_name) or 
+                _is_name_match(search_str, b_id)):
                 return b_data
+
 
     db = get_db()
     banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
