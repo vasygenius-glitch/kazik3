@@ -273,7 +273,7 @@ def find_card_photo(card_id: str) -> Optional[str]:
 
 
 def generate_card_image_fallback(card_id: str) -> str:
-    """Генерирует красивая запасная картинка карточки при отсутствии сети."""
+    """Генерирует красивое запасное изображение карточки с помощью PIL."""
     try:
         from PIL import Image, ImageDraw
         cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
@@ -286,7 +286,7 @@ def generate_card_image_fallback(card_id: str) -> str:
         draw = ImageDraw.Draw(img)
         card_info = CARDS.get(card_id, {})
         name = card_info.get("name", "Карточка Свинки")
-        rarity = card_info.get("rarity", "common")
+        rarity = str(card_info.get("rarity", "common")).lower()
         
         colors = {
             "common": (200, 200, 200),
@@ -302,7 +302,8 @@ def generate_card_image_fallback(card_id: str) -> str:
         draw.rectangle([30, 30, 570, 770], outline=(255, 255, 255), width=2)
         img.save(out_path)
         return out_path
-    except Exception:
+    except Exception as e:
+        logger.warning("Ошибка создания fallback PIL изображения %s: %s", card_id, e)
         return ""
 
 
@@ -351,44 +352,52 @@ def build_shop_keyboard() -> InlineKeyboardMarkup:
 
 
 async def send_card_message(message: types.Message, card_id: str, text: str) -> None:
-    """Отправляет карточку с фото (из локального файла, локального кэша веб-картинки или генератора)."""
+    """Отправляет карточку с фото в Telegram."""
     photo_source = get_card_photo_source(card_id)
-    
+
     if photo_source:
-        try:
-            if photo_source.startswith("http://") or photo_source.startswith("https://"):
-                cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
-                os.makedirs(cache_dir, exist_ok=True)
-                cached_file = os.path.join(cache_dir, f"{card_id}.jpg")
-                
-                if not os.path.exists(cached_file) or os.path.getsize(cached_file) < 100:
-                    import urllib.request
-                    req = urllib.request.Request(photo_source, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
-                    with urllib.request.urlopen(req, timeout=5) as resp, open(cached_file, 'wb') as out_f:
-                        out_f.write(resp.read())
+        # 1. Если это локальный файл — отправляем через FSInputFile
+        if not (photo_source.startswith("http://") or photo_source.startswith("https://")):
+            if os.path.exists(photo_source):
+                try:
+                    await message.answer_photo(photo=FSInputFile(photo_source), caption=text)
+                    return
+                except Exception as e:
+                    logger.warning("Не удалось отправить локальный файл фото карты %s: %s", card_id, e)
 
-                if os.path.exists(cached_file) and os.path.getsize(cached_file) > 100:
-                    await message.answer_photo(photo=FSInputFile(cached_file), caption=text)
-                    return
-                else:
-                    await message.answer_photo(photo=photo_source, caption=text)
-                    return
-            else:
-                await message.answer_photo(photo=FSInputFile(photo_source), caption=text)
+        # 2. Если это URL — передаем напрямую в Telegram API answer_photo
+        else:
+            try:
+                await message.answer_photo(photo=photo_source, caption=text)
                 return
-        except Exception as e:
-            logger.warning("Не удалось отправить фото карты %s: %s", card_id, e)
+            except Exception as e:
+                logger.warning("Telegram API не смог загрузить URL фото %s: %s. Попытка скачивания...", card_id, e)
+                try:
+                    cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
+                    os.makedirs(cache_dir, exist_ok=True)
+                    cached_file = os.path.join(cache_dir, f"{card_id}.jpg")
+                    if not os.path.exists(cached_file) or os.path.getsize(cached_file) < 100:
+                        import urllib.request
+                        req = urllib.request.Request(photo_source, headers={'User-Agent': 'Mozilla/5.0'})
+                        with urllib.request.urlopen(req, timeout=5) as resp, open(cached_file, 'wb') as out_f:
+                            out_f.write(resp.read())
+                    if os.path.exists(cached_file) and os.path.getsize(cached_file) > 100:
+                        await message.answer_photo(photo=FSInputFile(cached_file), caption=text)
+                        return
+                except Exception as e2:
+                    logger.warning("Ошибка локального скачивания фото: %s", e2)
 
-    # Запасная отправка сгенерированного фото карточки если сеть недоступна
+    # 3. Гарантированный fallback — высылаем сгенерированное PIL изображение карточки
     try:
         gen_path = generate_card_image_fallback(card_id)
         if gen_path and os.path.exists(gen_path):
             await message.answer_photo(photo=FSInputFile(gen_path), caption=text)
             return
     except Exception as e:
-        logger.warning("Ошибка генерации fallback фото: %s", e)
+        logger.warning("Ошибка отправки fallback изображения карточки: %s", e)
 
     await message.answer(text)
+
 
 
 
@@ -484,7 +493,10 @@ async def cmd_free_case(message: types.Message):
             await msg.edit_text(slide)
         except Exception:
             pass
-        await asyncio.sleep(ANIMATION_DELAY)
+    try:
+        await msg.delete()
+    except Exception:
+        pass
 
     rarity = card_info["rarity"]
     result_text = (
@@ -548,6 +560,11 @@ async def callback_open_free_case(callback: CallbackQuery):
             pass
         await asyncio.sleep(ANIMATION_DELAY)
 
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+
     rarity = card_info["rarity"]
     result_text = (
         f"🎁 <b>БЕСПЛАТНЫЙ КЕЙС (12ч) ОТКРЫТ!</b>\n\n"
@@ -555,7 +572,8 @@ async def callback_open_free_case(callback: CallbackQuery):
         f"💎 Редкость • {get_rarity_name(rarity)}\n"
         f"{format_card_bonuses(card_info)}"
     )
-    await send_card_message(msg, card_id, result_text)
+    await send_card_message(callback.message, card_id, result_text)
+
 
 
 
