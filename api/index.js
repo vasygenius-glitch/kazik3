@@ -1,6 +1,13 @@
 const https = require('https');
 
 module.exports = (req, res) => {
+  // Handle root health check
+  if (req.url === '/' || req.url === '/health') {
+    res.statusCode = 200;
+    res.setHeader('Content-Type', 'application/json');
+    return res.end(JSON.stringify({ status: "🟢 Telegram Proxy Active", target: "api.telegram.org" }));
+  }
+
   const options = {
     hostname: 'api.telegram.org',
     port: 443,
@@ -10,28 +17,28 @@ module.exports = (req, res) => {
   };
   
   // Remove host header to avoid SSL certificate issues
-  if (options.headers.host) {
-    delete options.headers.host;
-  }
+  delete options.headers.host;
+  delete options.headers.connection;
 
   const proxyReq = https.request(options, (proxyRes) => {
-    // Set status code
     res.statusCode = proxyRes.statusCode;
-    
-    // Copy headers
     for (const [key, value] of Object.entries(proxyRes.headers)) {
       res.setHeader(key, value);
     }
-    
-    // Pipe response
     proxyRes.pipe(res);
   });
 
   proxyReq.on('error', (err) => {
     res.statusCode = 502;
-    res.end(`Proxy Error: ${err.message}`);
+    res.setHeader('Content-Type', 'application/json');
+    res.end(JSON.stringify({ ok: false, error_code: 502, description: `Proxy Error: ${err.message}` }));
   });
 
-  // Pipe request body
   req.pipe(proxyReq);
+};
+
+module.exports.config = {
+  api: {
+    bodyParser: false,
+  },
 };
