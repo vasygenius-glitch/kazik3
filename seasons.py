@@ -818,7 +818,8 @@ async def cmd_banya_dictor(message: types.Message):
     # Голосовая TTS озвучка
     try:
         from tts_utils import text_to_speech_voice
-        voice_file = await text_to_speech_voice(f"Диктор говорит: {ans_text}")
+        voice_name = "ru-RU-SvetlanaNeural" if chosen_id in ["dictor_cosmic", "dictor_divine", "dictor_secret", "dictor_immortal"] else "ru-RU-DmitryNeural"
+        voice_file = await text_to_speech_voice(f"Диктор говорит: {ans_text}", voice_name=voice_name)
         if voice_file:
             try:
                 await message.answer_voice(voice=voice_file)
@@ -827,6 +828,7 @@ async def cmd_banya_dictor(message: types.Message):
                 await message.answer_audio(audio=voice_file, title="Озвучка Диктора", performer="Диктор Бани")
     except Exception as exc:
         print(f"TTS Error: {exc}")
+
 
 
 

@@ -5,4 +5,6 @@ flask>=2.0.0
 matplotlib>=3.7.0
 redis
 gTTS>=2.3.0
+edge-tts>=6.1.0
+
 
