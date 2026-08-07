@@ -237,6 +237,19 @@ async def cmd_profile(message: types.Message):
 
     await message.answer(text)
 
+def _is_name_match(search: str, target: str) -> bool:
+    s = search.lower().replace("ё", "е").strip()
+    t = target.lower().replace("ё", "е").strip()
+    if not s or not t:
+        return False
+    if s in t or t in s or s.startswith(t) or t.startswith(s):
+        return True
+    if len(s) >= 4 and len(t) >= 4:
+        diff = sum(1 for a, b in zip(s, t) if a != b) + abs(len(s) - len(t))
+        if diff <= 2:
+            return True
+    return False
+
 # ===================== РАБОТА С БАНКАМИ =====================
 async def get_bank_info(chat_id: int, identifier):
     cached_data = get_bank_from_cache(chat_id, identifier)
@@ -258,8 +271,8 @@ async def get_bank_info(chat_id: int, identifier):
     except Exception:
         pass
 
-    # 2) Поиск по имени
-    search_name = str(identifier).lower().strip()
+    # 2) Поиск по имени с нечетким соответствием (устойчивым к опечаткам "Рыбаош" -> "Рыбайош")
+    search_name = str(identifier).strip()
     if not search_name:
         return None
     try:
@@ -267,18 +280,20 @@ async def get_bank_info(chat_id: int, identifier):
         docs = await _collect_docs(docs_raw)
         for doc in docs:
             b_data = doc.to_dict() or {}
-            b_name = (b_data.get('name') or '').lower()
-            if b_name and (b_name.startswith(search_name) or search_name in b_name):
+            b_name = b_data.get('name') or ''
+            if b_name and _is_name_match(search_name, b_name):
                 try:
                     b_data['banker_id'] = int(doc.id)
                 except ValueError:
                     b_data['banker_id'] = doc.id
                 set_bank_in_cache(chat_id, identifier, b_data)
+                set_bank_in_cache(chat_id, b_data['banker_id'], b_data)
                 return b_data
     except Exception:
         pass
 
     return get_bank_from_cache(chat_id, identifier)
+
 
 
 async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
@@ -632,16 +647,22 @@ async def cmd_bank(message: types.Message):
     if action == "deposit":
         try:
             if len(args) < 4:
-                usage = "deposit all [Название]" if is_all else "deposit [сумма] [Название]"
-                return await message.answer(f"Укажите название банка или ID: <code>/bank {usage}</code>")
-
-            identifier = " ".join(args[3:])
-            bank_data = await get_bank_info(chat_id, identifier)
-            if not bank_data:
-                return await message.answer("🏦 Банк не найден.")
+                if current_banker_id:
+                    bank_data = await get_bank_info(chat_id, current_banker_id)
+                else:
+                    bank_data = None
+                if not bank_data:
+                    usage = "deposit all [Название]" if is_all else "deposit [сумма] [Название]"
+                    return await message.answer(f"Укажите название банка или ID: <code>/bank {usage}</code>")
+            else:
+                identifier = " ".join(args[3:])
+                bank_data = await get_bank_info(chat_id, identifier)
+                if not bank_data:
+                    return await message.answer("🏦 Банк не найден.")
 
             target_banker_id = bank_data['banker_id']
             tx_amount = -1 if is_all else amount
+
 
             from user_manager import get_user_lock
             lock = get_user_lock(chat_id, user_id)
