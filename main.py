@@ -59,37 +59,38 @@ def _build_bot(api_server: TelegramAPIServer) -> Bot:
     )
 
 async def _create_bot() -> Bot:
-    api_url = os.environ.get("TELEGRAM_API_URL", "https://123123-woad.vercel.app").strip().rstrip("/")
-        
-    if api_url:
-        logger.info("Попытка подключения через ПРОКСИ: %s", api_url)
-        server = TelegramAPIServer.from_base(api_url)
-        bot = _build_bot(server)
-        try:
-            me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
-            logger.info("✅ Успешно подключено через прокси! Бот: @%s", me.username)
-            return bot
-        except Exception as e:
-            logger.error("🔴 Ошибка подключения через прокси: %s", e)
-            await bot.session.close()
-            
-    logger.info("Пробую прямое подключение к api.telegram.org...")
-    last_error = None
-    for attempt in range(1, 4):
-        bot = _build_bot(PRODUCTION)
-        try:
-            logger.info("Попытка прямого подключения (%s/3)...", attempt)
-            me = await asyncio.wait_for(bot.get_me(), timeout=20.0)
-            logger.info("✅ Успешно подключено напрямую! Бот: @%s", me.username)
-            return bot
-        except Exception as e:
-            last_error = e
-            logger.warning("⚠️ Попытка прямого подключения %s/3 не удалась (%s: %s)", attempt, type(e).__name__, e)
-            await bot.session.close()
-            if attempt < 3:
-                await asyncio.sleep(2.0)
+    custom_proxy = os.environ.get("TELEGRAM_API_URL", "").strip().rstrip("/")
+    
+    candidates = []
+    if custom_proxy and custom_proxy != "https://123123-woad.vercel.app":
+        candidates.append(("Кастомный ПРОКСИ (" + custom_proxy + ")", TelegramAPIServer.from_base(custom_proxy)))
+    
+    candidates.append(("Прямое подключение (api.telegram.org)", PRODUCTION))
+    
+    if custom_proxy == "https://123123-woad.vercel.app":
+        candidates.append(("Прокси Vercel (https://123123-woad.vercel.app)", TelegramAPIServer.from_base("https://123123-woad.vercel.app")))
 
-    raise RuntimeError(f"Не удалось запустить бота ни одним способом. Ошибка: {last_error}")
+    last_error = None
+    for name, server in candidates:
+        logger.info("Попытка подключения: %s...", name)
+        for attempt in range(1, 3):
+            bot = _build_bot(server)
+            try:
+                me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
+                logger.info("✅ Успешно подключено через %s! Бот: @%s", name, me.username)
+                return bot
+            except Exception as e:
+                last_error = e
+                logger.warning("⚠️ [%s] Попытка %s/2 не удалась (%s: %s)", name, attempt, type(e).__name__, e)
+                await bot.session.close()
+                if attempt < 2:
+                    await asyncio.sleep(1.5)
+
+    raise RuntimeError(
+        f"Не удалось запустить бота ни одним способом. Последняя ошибка: {last_error}.\n"
+        f"Если api.telegram.org заблокирован на вашем хостинге, разверните прокси (папка tg_proxy_render) и укажите TELEGRAM_API_URL."
+    )
+
 
 
 
