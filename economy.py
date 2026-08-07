@@ -526,7 +526,12 @@ async def process_claim_bonus(callback: types.CallbackQuery):
             await callback.message.edit_text("❌ Ты уже собирал доход недавно.")
         except Exception:
             pass
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
+
+
 
 
 # ============================================================
