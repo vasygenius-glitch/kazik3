@@ -787,31 +787,32 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
 # ============================================================
 # ИНВЕНТАРЬ
 # ============================================================
-async def add_item_to_inventory(chat_id, user_id, item_name: str) -> bool:
+async def add_item_to_inventory(chat_id, user_id, item_name: str, count: int = 1) -> bool:
     from shop import ITEMS
-    if item_name not in ITEMS:
+    if item_name not in ITEMS or count <= 0:
         return False
 
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         data = await get_user_data(chat_id, user_id)
         inv = dict(data.get('inventory') or {})
-        inv[item_name] = inv.get(item_name, 0) + 1
+        inv[item_name] = inv.get(item_name, 0) + count
         data['inventory'] = inv
         full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
 
     item_info = ITEMS.get(item_name) or {}
-    if int(item_info.get('price', 0) or 0) >= LARGE_TX_THRESHOLD:
+    total_price = int(item_info.get('price', 0) or 0) * count
+    if total_price >= LARGE_TX_THRESHOLD:
         fire_and_forget(log_transaction(
             user_id, full_name, None,
-            f"Added {item_name}", "Inventory +", item_info['price'],
+            f"Added {count}x {item_name}", "Inventory +", total_price,
         ))
     return True
 
 
-async def remove_item_from_inventory(chat_id, user_id, item_name: str) -> bool:
+async def remove_item_from_inventory(chat_id, user_id, item_name: str, count: int = 1) -> bool:
     from shop import ITEMS
 
     lock = get_user_lock(chat_id, user_id)
@@ -819,10 +820,10 @@ async def remove_item_from_inventory(chat_id, user_id, item_name: str) -> bool:
         data = await get_user_data(chat_id, user_id)
         inv = dict(data.get('inventory') or {})
         biz_levels = dict(data.get('biz_levels') or {})
-        if inv.get(item_name, 0) <= 0:
+        if inv.get(item_name, 0) < count or count <= 0:
             return False
 
-        inv[item_name] -= 1
+        inv[item_name] -= count
         if inv[item_name] <= 0:
             inv.pop(item_name, None)
             biz_levels.pop(item_name, None)
@@ -834,10 +835,11 @@ async def remove_item_from_inventory(chat_id, user_id, item_name: str) -> bool:
         mark_dirty(chat_id, user_id)
 
     item_info = ITEMS.get(item_name) or {}
-    if int(item_info.get('price', 0) or 0) >= LARGE_TX_THRESHOLD:
+    total_price = int(item_info.get('price', 0) or 0) * count
+    if total_price >= LARGE_TX_THRESHOLD:
         fire_and_forget(log_transaction(
             user_id, full_name, None,
-            f"Removed {item_name}", "Inventory -", item_info['price'],
+            f"Removed {count}x {item_name}", "Inventory -", total_price,
         ))
     return True
 
@@ -862,7 +864,12 @@ async def remove_item_from_inventory(chat_id, user_id, item_name: str) -> bool:
 #         if ok:
 #             invalidate_user_cache(chat_id, user_id)   # <-- здесь
 # ============================================================
-async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price: int) -> bool:
+async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price: int, count: int = 1) -> bool:
+    try:
+        count = int(count)
+    except (ValueError, TypeError):
+        return False
+
     ref = get_user_ref(chat_id, user_id)
     snapshot = await safe_get_snapshot(transaction, ref)
     if not snapshot.exists:
@@ -871,19 +878,22 @@ async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_pr
     data = snapshot.to_dict() or {}
     inv = dict(data.get('inventory') or {})
     biz_levels = dict(data.get('biz_levels') or {})
-    if inv.get(item_id, 0) <= 0:
+    curr_qty = inv.get(item_id, 0)
+    if curr_qty < count or count <= 0:
         return False
 
-    inv[item_id] -= 1
+
+    inv[item_id] -= count
     if inv[item_id] <= 0:
         inv.pop(item_id, None)
         if item_cat == 'biz':
             biz_levels.pop(item_id, None)
 
+    total_payout = int(sell_price) * count
     updates = {
         'inventory': inv,
         'biz_levels': biz_levels,
-        'balance': int(data.get('balance', 0) or 0) + int(sell_price),
+        'balance': int(data.get('balance', 0) or 0) + total_payout,
     }
     if transaction:
         transaction.update(ref, updates)
@@ -892,6 +902,7 @@ async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_pr
 
     # NB: кэш НЕ инвалидируем здесь — это сделает вызывающий код после commit.
     return True
+
 
 
 async def buy_item_tr(transaction, chat_id, user_id, item_id,
@@ -1098,7 +1109,7 @@ async def get_user_by_username_or_id(chat_id, identifier):
 # ============================================================
 # СБРОС
 # ============================================================
-async def wipe_user_data(chat_id, user_id) -> bool:
+async def wipe_user_data(chat_id, user_id, preserve_dictors: bool = True) -> bool:
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         ref = get_user_ref(chat_id, user_id)
@@ -1107,6 +1118,11 @@ async def wipe_user_data(chat_id, user_id) -> bool:
         was_banned = bool(data.get('is_banned', False))
 
         default_data = _default_user_data(full_name)
+        if preserve_dictors:
+            curr_inv = data.get('inventory') or {}
+            preserved_dictors = {k: v for k, v in curr_inv.items() if k.startswith('dictor_')}
+            default_data['inventory'] = preserved_dictors
+
         # расширяем дефолт дополнительными полями, нужными при wipe
         default_data.update({
             'crypto_portfolio': {},
@@ -1127,6 +1143,7 @@ async def wipe_user_data(chat_id, user_id) -> bool:
 
         invalidate_user_cache(chat_id, user_id)
         return True
+
 
 
 # ============================================================

@@ -167,7 +167,15 @@ async def inv_upgrade(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("inv_sellcf_"))
 async def confirm_inv_sell(callback: types.CallbackQuery):
-    item_id = callback.data.replace("inv_sellcf_", "")
+    raw_data = callback.data.replace("inv_sellcf_", "")
+    parts = raw_data.rsplit("_", 1)
+    if len(parts) == 2 and (parts[1].isdigit() or parts[1] == "all"):
+        item_id = parts[0]
+        req_count_str = parts[1]
+    else:
+        item_id = raw_data
+        req_count_str = "1"
+
     info = ITEMS.get(item_id)
     if not info: 
         return await callback.answer("Ошибка: Предмет не существует!", show_alert=True)
@@ -182,36 +190,53 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
     db = get_db()
     
     @firestore_async.async_transactional
-    async def run_sell_transaction(transaction, chat_id, user_id, item_id, item_info):
+    async def run_sell_transaction(transaction, chat_id, user_id, item_id, item_info, req_count_str):
         ref = get_user_ref(chat_id, user_id)
         snapshot = await safe_get_snapshot(transaction, ref)
-        if not snapshot.exists: return False, 0
+        if not snapshot.exists: return False, 0, 0
         
-        data = snapshot.to_dict()
+        data = snapshot.to_dict() or {}
+        inv = data.get('inventory', {})
+        owned_qty = inv.get(item_id, 0)
+        if owned_qty <= 0:
+            return False, 0, 0
+
+        if req_count_str == "all":
+            sell_count = owned_qty
+        else:
+            try:
+                sell_count = int(req_count_str)
+            except ValueError:
+                sell_count = 1
+
+        sell_count = min(sell_count, owned_qty)
+        if sell_count <= 0:
+            return False, 0, 0
+
         biz_levels = data.get('biz_levels', {})
-        
-        sell_price = 0
+        sell_unit_price = 0
         if item_info.get('action') == 'business':
             level = biz_levels.get(item_id, 1)
             total_invested = item_info['price']
             for l in range(1, level):
                 total_invested += int(item_info['price'] * 0.5 * l)
-            sell_price = int(total_invested * 0.75)
+            sell_unit_price = int(total_invested * 0.75)
         else:
-            sell_price = int(item_info['price'] * 0.75)
+            sell_unit_price = int(item_info['price'] * 0.75)
             
-        success = await sell_item_tr(transaction, chat_id, user_id, item_id, item_info.get('cat', ''), sell_price)
-        return success, sell_price
+        success = await sell_item_tr(transaction, chat_id, user_id, item_id, item_info.get('cat', ''), sell_unit_price, count=sell_count)
+        total_payout = sell_unit_price * sell_count
+        return success, total_payout, sell_count
 
     try:
         from user_manager import get_user_lock, invalidate_user_cache
         lock = get_user_lock(chat_id, user_id)
         async with lock:
-            res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, info)
+            res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, info, req_count_str)
             if hasattr(res, "__aiter__"):
-                async for r in res: success, sell_price = r
+                async for r in res: success, total_payout, sold_count = r
             else:
-                success, sell_price = await res
+                success, total_payout, sold_count = await res
                 
             if success:
                 invalidate_user_cache(chat_id, user_id)
@@ -223,7 +248,7 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
         print(f"Sell error: {e}")
         return await callback.answer("Ошибка при продаже.", show_alert=True)
 
-    await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
+    await callback.answer(f"✅ Успешно продано {sold_count} шт. за {total_payout} сыр.!", show_alert=True)
     await inv_back(callback)
 
 @router.callback_query(F.data.startswith("inv_sell_"))
@@ -232,9 +257,46 @@ async def ask_inv_sell(callback: types.CallbackQuery):
     info = ITEMS.get(item_id)
     if not info: return
     
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Подтвердить продажу", callback_data=f"inv_sellcf_{item_id}")
-    builder.button(text="❌ Отмена", callback_data=f"inv_item_{item_id}")
-    builder.adjust(1)
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    u_data = await get_user_data(chat_id, user_id)
+    inv = u_data.get('inventory', {})
+    owned_qty = inv.get(item_id, 0)
     
-    await callback.message.edit_text(f"❓ Вы уверены, что хотите продать <b>{info['name']}</b>?", reply_markup=builder.as_markup())
+    if owned_qty <= 0:
+        return await callback.answer("У вас нет этого предмета!", show_alert=True)
+
+    if info.get('action') == 'business':
+        biz_levels = u_data.get('biz_levels', {})
+        level = biz_levels.get(item_id, 1)
+        total_invested = info['price']
+        for l in range(1, level):
+            total_invested += int(info['price'] * 0.5 * l)
+        sell_unit_price = int(total_invested * 0.75)
+    else:
+        sell_unit_price = int(info['price'] * 0.75)
+
+    builder = InlineKeyboardBuilder()
+    if owned_qty == 1:
+        builder.button(text=f"✅ Продать 1 шт. ({sell_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
+    else:
+        builder.button(text=f"1 шт. ({sell_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
+        if owned_qty >= 5:
+            builder.button(text=f"5 шт. ({sell_unit_price * 5} сыр.)", callback_data=f"inv_sellcf_{item_id}_5")
+        if owned_qty >= 10:
+            builder.button(text=f"10 шт. ({sell_unit_price * 10} сыр.)", callback_data=f"inv_sellcf_{item_id}_10")
+        if owned_qty >= 50:
+            builder.button(text=f"50 шт. ({sell_unit_price * 50} сыр.)", callback_data=f"inv_sellcf_{item_id}_50")
+        builder.button(text=f"Все ({owned_qty} шт. = {sell_unit_price * owned_qty} сыр.)", callback_data=f"inv_sellcf_{item_id}_all")
+
+    builder.button(text="❌ Отмена", callback_data=f"inv_item_{item_id}")
+    builder.adjust(1) if owned_qty == 1 else builder.adjust(2)
+    
+    await callback.message.edit_text(
+        f"💰 <b>Продажа предмета:</b> <code>{info['name']}</code>\n"
+        f"У вас в наличии: <b>{owned_qty} шт.</b>\n"
+        f"Цена продажи: <b>{sell_unit_price}</b> сыр./шт.\n\n"
+        f"Выберите количество для продажи:", 
+        reply_markup=builder.as_markup()
+    )
+

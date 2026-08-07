@@ -812,7 +812,106 @@ async def cmd_banya_dictor(message: types.Message):
         "Перспективы не очень хорошие", "Весьма сомнительно"
     ]
     
-    await message.answer(f"🎱 {prefix}<b>«{random.choice(answers)}»</b>")
+    ans_text = random.choice(answers)
+    await message.answer(f"🎱 {prefix}<b>«{ans_text}»</b>")
+
+    # Голосовая TTS озвучка
+    try:
+        from tts_utils import text_to_speech_voice
+        voice_file = await text_to_speech_voice(f"Диктор говорит: {ans_text}")
+        if voice_file:
+            await message.answer_voice(voice=voice_file)
+    except Exception as exc:
+        pass
+
+
+@router.message(Command("banya_craft", "dictor_craft", "upgrade_dictor"))
+async def cmd_banya_craft(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "tayniy_baniy":
+        return await message.answer("🛁 Сезон Дикторов Тайний Баний сейчас не активен!")
+        
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+        
+    inventory = u_data.get('inventory', {})
+    
+    dictor_ranks = [
+        "dictor_common", "dictor_simple", "dictor_basic",
+        "dictor_uncommon", "dictor_rare", "dictor_epic", "dictor_legendary", "dictor_mythic", "dictor_cosmic", "dictor_divine",
+        "dictor_shadow", "dictor_abyss", "dictor_elder", "dictor_chaos", "dictor_void", "dictor_infinity", "dictor_secret", "dictor_emperor", "dictor_ghost", "dictor_immortal"
+    ]
+
+    from shop import ITEMS
+
+    # Ищем дикторов, у которых есть 3+ штук для крафта
+    craftable = []
+    for idx, d_id in enumerate(dictor_ranks[:-1]):
+        count = inventory.get(d_id, 0)
+        if count >= 3:
+            next_id = dictor_ranks[idx + 1]
+            craftable.append((d_id, next_id, count))
+
+    if not craftable:
+        return await message.answer(
+            "🧪 <b>АПГРЕЙДЕР ДИКТОРОВ:</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "Для улучшения необходимо <b>3 одинаковых диктора</b> одного ранга.\n"
+            "Рецепт: <b>3 Диктора (Ранг N) ➔ 1 Диктор (Ранг N+1)</b>\n"
+            "Шанс успеха: <b>85%</b>!\n\n"
+            "❌ У вас пока нет 3 одинаковых дикторов. Открывайте кейсы <code>/banya_case</code> или ищите их на работе <code>/work</code>!"
+        )
+
+    args = message.text.split()
+    target_d_id = None
+    if len(args) >= 2:
+        req = args[1].lower()
+        if not req.startswith("dictor_"):
+            req = f"dictor_{req}"
+        for d_id, next_id, cnt in craftable:
+            if d_id == req:
+                target_d_id = d_id
+                break
+    
+    if not target_d_id:
+        target_d_id = craftable[0][0]
+
+    curr_idx = dictor_ranks.index(target_d_id)
+    next_d_id = dictor_ranks[curr_idx + 1]
+    
+    curr_name = ITEMS.get(target_d_id, {}).get("name", target_d_id)
+    next_name = ITEMS.get(next_d_id, {}).get("name", next_d_id)
+
+    from user_manager import remove_item_from_inventory, add_item_to_inventory
+
+    msg = await message.answer(f"🧪 <i>Запускаем Апгрейдер... Помещаем 3x {curr_name} в банную печь...</i> 💨")
+    await asyncio.sleep(1.2)
+
+    # 85% шанс успеха
+    success = random.random() < 0.85
+    if success:
+        await remove_item_from_inventory(chat_id, user_id, target_d_id, count=3)
+        await add_item_to_inventory(chat_id, user_id, next_d_id, count=1)
+        
+        await msg.edit_text(
+            "✨ <b>УСПЕШНЫЙ АПГРЕЙД!</b> ✨\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Потрачено: <b>3x {curr_name}</b>\n"
+            f"🖤🐇 Получен диктор высшего уровня: <code>{next_name}</code>!\n"
+            "Предмет добавлен в ваш /inventory."
+        )
+    else:
+        await remove_item_from_inventory(chat_id, user_id, target_d_id, count=2)
+        await msg.edit_text(
+            "💥 <b>НЕУДАЧА АПГРЕЙДА!</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            f"Пар оказался слишком горячим! 2x {curr_name} сгорели в печи.\n"
+            f"1x {curr_name} удалось спасти!"
+        )
 
 
 @router.message(Command("give_dictor", "grant_dictor"))
@@ -863,6 +962,7 @@ async def cmd_give_dictor(message: types.Message):
         )
     else:
         await message.answer("❌ Не удалось выдать диктора (пользователь не найден в БД чата).")
+
 
 
 

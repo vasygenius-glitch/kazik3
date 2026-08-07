@@ -1791,7 +1791,8 @@ def _default_crypto_coins() -> dict:
 
 
 async def _wipe_chats(whitelist: dict, fields: dict,
-                      wipe_clans: bool = False) -> tuple[int, int]:
+                      wipe_clans: bool = False,
+                      preserve_dictors: bool = True) -> tuple[int, int]:
     """
     Батч-обновление пользователей (и опционально кланов) во всех чатах.
     Возвращает (users_wiped, clans_wiped).
@@ -1808,7 +1809,14 @@ async def _wipe_chats(whitelist: dict, fields: dict,
         for doc in user_docs:
             if not doc.id:
                 continue
-            batch.set(users_ref.document(doc.id), fields, merge=True)
+            doc_fields = dict(fields)
+            if "inventory" in doc_fields and preserve_dictors:
+                user_data = doc.to_dict() or {}
+                curr_inv = user_data.get("inventory") or {}
+                preserved = {k: v for k, v in curr_inv.items() if k.startswith("dictor_")}
+                doc_fields["inventory"] = preserved
+
+            batch.set(users_ref.document(doc.id), doc_fields, merge=True)
             users_wiped += 1
             count += 1
             if count >= Cfg.WIPE_BATCH_SIZE:
@@ -1833,6 +1841,7 @@ async def _wipe_chats(whitelist: dict, fields: dict,
             await batch.commit()
 
     return users_wiped, clans_wiped
+
 
 
 @router.callback_query(F.data.startswith("db_gwc_"))
