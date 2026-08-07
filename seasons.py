@@ -846,22 +846,23 @@ DICTOR_RANKS = [
 ]
 
 
-@router.message(Command("banya_craft", "dictor_craft", "upgrade_dictor"))
-async def cmd_banya_craft(message: types.Message):
-    chat_id = message.chat.id
-    user_id = message.from_user.id
-    
+async def render_banya_craft_page(message_or_callback, chat_id: int, user_id: int, page: int = 0, is_edit: bool = False):
+    from shop import ITEMS
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+
     cfg = await get_season_config()
     if not cfg.get("active") or cfg.get("id") != "tayniy_baniy":
-        return await message.answer("🛁 Сезон Дикторов Тайний Баний сейчас не активен!")
-        
+        text = "🛁 Сезон Дикторов Тайний Баний сейчас не активен!"
+        if is_edit and hasattr(message_or_callback, "message") and message_or_callback.message:
+            return await message_or_callback.message.edit_text(text)
+        else:
+            return await message_or_callback.answer(text)
+
     u_data = await get_user_data(chat_id, user_id)
     if u_data.get('is_banned', False):
         return
-        
+
     inventory = u_data.get('inventory', {})
-    from shop import ITEMS
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
 
     craftable = []
     for idx, d_id in enumerate(DICTOR_RANKS[:-1]):
@@ -871,7 +872,7 @@ async def cmd_banya_craft(message: types.Message):
             craftable.append((d_id, next_id, count))
 
     if not craftable:
-        return await message.answer(
+        text = (
             "🧪 <b>АПГРЕЙДЕР ДИКТОРОВ ТАЙНИЙ БАНИЙ:</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "Для улучшения необходимо <b>3 одинаковых диктора</b> одного ранга.\n"
@@ -879,14 +880,25 @@ async def cmd_banya_craft(message: types.Message):
             "Шанс успеха: <b>85%</b>!\n\n"
             "❌ У вас пока нет 3 одинаковых дикторов. Открывайте кейсы <code>/banya_case</code> или ищите их на работе <code>/work</code>!"
         )
+        if is_edit and hasattr(message_or_callback, "message") and message_or_callback.message:
+            return await message_or_callback.message.edit_text(text)
+        else:
+            return await message_or_callback.answer(text)
 
-    builder = InlineKeyboardBuilder()
+    PAGE_SIZE = 3
+    total_pages = max(1, (len(craftable) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+
+    page_items = craftable[page * PAGE_SIZE:(page + 1) * PAGE_SIZE]
+
     lines = [
         "🧪 <b>АПГРЕЙДЕР ДИКТОРОВ ТАЙНИЙ БАНИЙ</b> 🧪\n",
-        "Выберите диктора для улучшения в банной печи:\n"
+        f"<i>Показаны от простых до легендарных (Стр. {page + 1} из {total_pages}):</i>\n"
     ]
 
-    for d_id, next_id, count in craftable:
+    builder = InlineKeyboardBuilder()
+
+    for d_id, next_id, count in page_items:
         curr_name = ITEMS.get(d_id, {}).get("name", d_id)
         next_name = ITEMS.get(next_id, {}).get("name", next_id)
         lines.append(f"▪️ <b>{curr_name}</b> ({count} шт) ➔ <code>{next_name}</code>")
@@ -896,7 +908,51 @@ async def cmd_banya_craft(message: types.Message):
         )
 
     builder.adjust(1)
-    await message.answer("\n".join(lines), reply_markup=builder.as_markup())
+
+    nav_row = []
+    if page > 0:
+        nav_row.append(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"banya_craft_page_{page - 1}"))
+    else:
+        nav_row.append(types.InlineKeyboardButton(text="🛑 Начало", callback_data="none"))
+
+    nav_row.append(types.InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="none"))
+
+    if page < total_pages - 1:
+        nav_row.append(types.InlineKeyboardButton(text="Вперед ➡️", callback_data=f"banya_craft_page_{page + 1}"))
+    else:
+        nav_row.append(types.InlineKeyboardButton(text="🛑 Конец", callback_data="none"))
+
+    builder.row(*nav_row)
+
+    text_out = "\n".join(lines)
+    markup = builder.as_markup()
+
+    if is_edit and hasattr(message_or_callback, "message") and message_or_callback.message:
+        try:
+            await message_or_callback.message.edit_text(text_out, reply_markup=markup)
+        except Exception:
+            pass
+    else:
+        await message_or_callback.answer(text_out, reply_markup=markup)
+
+
+@router.message(Command("banya_craft", "dictor_craft", "upgrade_dictor"))
+async def cmd_banya_craft(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    await render_banya_craft_page(message, chat_id, user_id, page=0, is_edit=False)
+
+
+@router.callback_query(F.data.startswith("banya_craft_page_"))
+async def callback_banya_craft_page(callback: types.CallbackQuery):
+    try:
+        page_num = int(callback.data.removeprefix("banya_craft_page_"))
+    except ValueError:
+        page_num = 0
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+    await callback.answer()
+    await render_banya_craft_page(callback, chat_id, user_id, page=page_num, is_edit=True)
 
 
 @router.callback_query(F.data.startswith("banya_craft_sel_"))
@@ -960,7 +1016,9 @@ async def callback_banya_craft_select(callback: types.CallbackQuery):
 async def callback_banya_craft_back(callback: types.CallbackQuery):
     await callback.answer()
     if callback.message:
-        await cmd_banya_craft(callback.message)
+        chat_id = callback.message.chat.id
+        user_id = callback.from_user.id
+        await render_banya_craft_page(callback, chat_id, user_id, page=0, is_edit=True)
 
 
 @router.callback_query(F.data.startswith("banya_craft_do_"))
@@ -1027,6 +1085,7 @@ async def callback_banya_craft_do(callback: types.CallbackQuery):
     ]
 
     await callback.message.edit_text("\n".join(result_lines))
+
 
 
 
