@@ -352,28 +352,42 @@ def build_shop_keyboard() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
+CARD_FILE_IDS: dict[str, str] = {}
+
 async def send_card_message(message: types.Message, card_id: str, text: str) -> None:
-    """Отправляет карточку с фото в Telegram по прямой URL-ссылке (совместимо с Vercel прокси)."""
+    """Отправляет карточку с фото в Telegram, используя кэш file_id для мгновенного отклика (50мс)."""
+    cached_file_id = CARD_FILE_IDS.get(card_id)
+    if cached_file_id:
+        try:
+            await message.answer_photo(photo=cached_file_id, caption=text)
+            return
+        except Exception as e:
+            logger.warning("Ошибка отправки кэшированного file_id для %s: %s", card_id, e)
+            CARD_FILE_IDS.pop(card_id, None)
+
     photo_source = get_card_photo_source(card_id)
 
     if photo_source and (photo_source.startswith("http://") or photo_source.startswith("https://")):
         clean_url = photo_source.split("?")[0]
         try:
-            await message.answer_photo(photo=clean_url, caption=text)
+            sent_msg = await message.answer_photo(photo=clean_url, caption=text)
+            if sent_msg and sent_msg.photo:
+                CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
             return
         except Exception as e:
             logger.warning("Telegram API не смог отправить URL фото %s: %s", clean_url, e)
 
-    # Резервный публичный URL морской свинки (Unsplash CDN, 100% 200 OK в Telegram API)
     default_pig_url = "https://images.unsplash.com/photo-1548767797-d8c844163c4c?w=800&auto=format&fit=crop"
     try:
-        await message.answer_photo(photo=default_pig_url, caption=text)
+        sent_msg = await message.answer_photo(photo=default_pig_url, caption=text)
+        if sent_msg and sent_msg.photo:
+            CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
         return
     except Exception as e:
         logger.warning("Ошибка отправки резервного фото URL: %s", e)
 
-
     await message.answer(text)
+
 
 
 
