@@ -415,6 +415,94 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
 
     return amount
 
+
+async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id: int, amount: int):
+    from user_manager import mark_dirty
+    bank_data = await get_bank_info(chat_id, target_banker_id)
+    if not bank_data:
+        raise ValueError("Банк не найден.")
+
+    user_data = await get_user_data(chat_id, user_id)
+    current_balance = int(user_data.get('balance', 0) or 0)
+
+    if amount == -1:
+        amount = current_balance
+
+    if amount <= 0:
+        raise ValueError("Сумма должна быть положительной.")
+    if current_balance < amount:
+        raise ValueError("Недостаточно средств на балансе.")
+
+    current_deposit = user_data.get('bank_deposit', 0)
+    current_banker_id = user_data.get('bank_name')
+
+    if current_banker_id and str(current_banker_id) != str(target_banker_id) and current_deposit > 0:
+        raise ValueError("У вас уже есть активный вклад в другом банке! Сначала снимите все средства.")
+
+    user_data['balance'] = current_balance - amount
+    user_data['bank_deposit'] = current_deposit + amount
+    user_data['bank_name'] = target_banker_id
+    if current_deposit == 0:
+        user_data['deposit_start_time'] = int(time.time())
+
+    mark_dirty(chat_id, user_id)
+
+    new_capital = bank_data.get('capital', 0) + amount
+    await create_or_update_bank(chat_id, target_banker_id, {'capital': new_capital})
+
+    return amount, user_data['bank_deposit']
+
+
+async def process_withdraw_in_memory(chat_id: int, user_id: int, current_banker_id: int, amount: int):
+    from user_manager import mark_dirty
+    bank_data = await get_bank_info(chat_id, current_banker_id) or {}
+    user_data = await get_user_data(chat_id, user_id)
+
+    current_deposit = user_data.get('bank_deposit', 0)
+    current_balance = int(user_data.get('balance', 0) or 0)
+
+    deposit_start_time = user_data.get('deposit_start_time', 0)
+    if deposit_start_time > 0 and current_deposit > 0:
+        days_held = int((time.time() - deposit_start_time) // 86400)
+        if days_held > 0:
+            rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
+            loyalty_bonus = min(5.0, days_held * 0.5)
+            final_rate = rate + loyalty_bonus
+            interest = int(current_deposit * (final_rate / 100) * days_held)
+            if interest > 0:
+                current_deposit += interest
+                if bank_data:
+                    new_capital = max(0, bank_data.get('capital', 0) - interest)
+                    await create_or_update_bank(chat_id, current_banker_id, {'capital': new_capital})
+
+    if amount == -1:
+        amount = current_deposit
+
+    if amount <= 0:
+        raise ValueError("Сумма должна быть положительной.")
+    if current_deposit < amount:
+        raise ValueError(f"На вашем вкладе только {current_deposit} сыроежек.")
+
+    if bank_data:
+        if bank_data.get('capital', 0) < amount:
+            raise ValueError("У банка недостаточно ликвидности (капитала), чтобы выдать вам деньги сейчас.")
+        new_capital = bank_data.get('capital', 0) - amount
+        await create_or_update_bank(chat_id, current_banker_id, {'capital': new_capital})
+
+    user_data['balance'] = current_balance + amount
+    user_data['bank_deposit'] = current_deposit - amount
+    if current_deposit - amount <= 0:
+        user_data['bank_name'] = None
+        user_data['deposit_start_time'] = 0
+    else:
+        user_data['deposit_start_time'] = int(time.time())
+
+    mark_dirty(chat_id, user_id)
+
+    return amount
+
+
+
 # ===================== /bank =====================
 @router.message(Command("bank", prefix="!/"))
 async def cmd_bank(message: types.Message):
@@ -556,10 +644,22 @@ async def cmd_bank(message: types.Message):
                 from user_manager import get_user_lock, invalidate_user_cache
                 lock = get_user_lock(chat_id, user_id)
                 async with lock:
-                    actual_amount, total_dep = await process_deposit_tx(
-                        tx, chat_id, user_id, target_banker_id, tx_amount
-                    )
-                    invalidate_user_cache(chat_id, user_id)
+                    try:
+                        actual_amount, total_dep = await process_deposit_tx(
+                            tx, chat_id, user_id, target_banker_id, tx_amount
+                        )
+                        invalidate_user_cache(chat_id, user_id)
+                    except ValueError as ve:
+                        raise ve
+                    except Exception as e_tx:
+                        err_str = str(e_tx)
+                        if any(k in err_str for k in ("429", "Quota exceeded", "Timeout", "ResourceExhausted", "RetryError")):
+                            actual_amount, total_dep = await process_deposit_in_memory(
+                                chat_id, user_id, target_banker_id, tx_amount
+                            )
+                        else:
+                            raise e_tx
+
 
                 invalidate_bank_cache(chat_id, target_banker_id, bank_data.get('name'))
 
@@ -663,12 +763,24 @@ async def cmd_bank(message: types.Message):
                 from user_manager import get_user_lock, invalidate_user_cache
                 lock = get_user_lock(chat_id, user_id)
                 async with lock:
-                    actual_withdrawn = await process_withdraw_tx(
-                        tx, chat_id, user_id, current_banker_id, tx_amount
-                    )
-                    invalidate_user_cache(chat_id, user_id)
+                    try:
+                        actual_withdrawn = await process_withdraw_tx(
+                            tx, chat_id, user_id, current_banker_id, tx_amount
+                        )
+                        invalidate_user_cache(chat_id, user_id)
+                    except ValueError as ve:
+                        raise ve
+                    except Exception as e_tx:
+                        err_str = str(e_tx)
+                        if any(k in err_str for k in ("429", "Quota exceeded", "Timeout", "ResourceExhausted", "RetryError")):
+                            actual_withdrawn = await process_withdraw_in_memory(
+                                chat_id, user_id, current_banker_id, tx_amount
+                            )
+                        else:
+                            raise e_tx
 
                 invalidate_bank_cache(chat_id, current_banker_id)
+
 
                 # --- Логирование снятия со счета ---
                 try:
