@@ -3,6 +3,8 @@ import random
 import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramRetryAfter
+
 from db import get_db
 from utils_pkg.cache_manager import global_cache
 from config import CREATOR_ID, CREATOR_IDS
@@ -683,7 +685,20 @@ async def execute_batch_banya_case(chat_id: int, user_id: int, count: int, msg: 
 
     out_text = "\n".join(res_lines)
     if msg:
-        await msg.edit_text(out_text)
+        try:
+            await msg.edit_text(out_text)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after)
+            try:
+                await msg.edit_text(out_text)
+            except Exception:
+                await msg.answer(out_text)
+        except Exception:
+            try:
+                await msg.answer(out_text)
+            except Exception:
+                pass
+
 
 
 @router.message(Command("banya_case", "bath_case"))
