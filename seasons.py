@@ -820,9 +820,14 @@ async def cmd_banya_dictor(message: types.Message):
         from tts_utils import text_to_speech_voice
         voice_file = await text_to_speech_voice(f"Диктор говорит: {ans_text}")
         if voice_file:
-            await message.answer_voice(voice=voice_file)
+            try:
+                await message.answer_voice(voice=voice_file)
+            except Exception as e_voice:
+                print(f"Voice send failed, fallback to audio: {e_voice}")
+                await message.answer_audio(audio=voice_file, title="Озвучка Диктора", performer="Диктор Бани")
     except Exception as exc:
-        pass
+        print(f"TTS Error: {exc}")
+
 
 
 @router.message(Command("banya_craft", "dictor_craft", "upgrade_dictor"))
