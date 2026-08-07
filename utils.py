@@ -13,9 +13,19 @@ def fire_and_forget(coro):
     except RuntimeError:
         return  # No running event loop
 
-    task = loop.create_task(coro)
+    async def _runner():
+        try:
+            if asyncio.iscoroutine(coro):
+                await coro
+            elif hasattr(coro, '__await__'):
+                await coro
+        except Exception:
+            pass  # Подавляем unretrieved task exception для фоновых задач
+
+    task = loop.create_task(_runner())
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+
 
 async def schedule_delete(*messages, delay: int = 40):
     """
