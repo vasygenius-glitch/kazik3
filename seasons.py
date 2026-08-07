@@ -717,11 +717,19 @@ def allocate_batch_drops(count: int, pool: list, weights: list = None) -> dict:
         raw_counts.append(sample)
 
     diff = count - sum(raw_counts)
-    if diff != 0:
-        indices = random.choices(range(len(pool)), weights=probs, k=abs(diff))
-        step = 1 if diff > 0 else -1
+    if diff > 0:
+        indices = random.choices(range(len(pool)), weights=probs, k=diff)
         for idx in indices:
-            raw_counts[idx] = max(0, raw_counts[idx] + step)
+            raw_counts[idx] += 1
+    elif diff < 0:
+        for _ in range(abs(diff)):
+            valid_indices = [i for i, c in enumerate(raw_counts) if c > 0]
+            if not valid_indices:
+                break
+            valid_weights = [probs[i] for i in valid_indices]
+            idx = random.choices(valid_indices, weights=valid_weights, k=1)[0]
+            raw_counts[idx] -= 1
+
 
     for i, item in enumerate(pool):
         item_id = item["id"] if isinstance(item, dict) else item
