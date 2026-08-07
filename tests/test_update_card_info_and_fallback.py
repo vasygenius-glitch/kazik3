@@ -64,17 +64,9 @@ async def test_send_card_message_guaranteed_photo(card_num):
     card_key = f"meme_{card_num}"
     test_text = f"Тестовое описание карточки #{card_num}"
 
-    with patch('cards_system.get_card_photo_source', return_value="https://example.com/test_pig.jpg"), \
-         patch('os.path.exists', return_value=False), \
-         patch('urllib.request.urlopen') as mock_urlopen, \
-         patch('cards_system.FSInputFile') as mock_fs_input:
-
-        # Имитируем успешное байтовое скачивание изображения
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = b'fake_image_bytes_content_over_100_bytes_length_data'
-        mock_urlopen.return_value.__enter__.return_value = mock_resp
-
+    with patch('cards_system.get_card_photo_source', return_value="https://example.com/test_pig.jpg?query=123"):
         await send_card_message(message, card_key, test_text)
 
         message.answer_photo.assert_called_once()
+        assert message.answer_photo.call_args[1]['photo'] == "https://example.com/test_pig.jpg"
         assert message.answer_photo.call_args[1]['caption'] == test_text

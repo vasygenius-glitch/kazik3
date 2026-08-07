@@ -352,51 +352,27 @@ def build_shop_keyboard() -> InlineKeyboardMarkup:
 
 
 async def send_card_message(message: types.Message, card_id: str, text: str) -> None:
-    """Отправляет карточку с фото в Telegram."""
+    """Отправляет карточку с фото в Telegram по прямой URL-ссылке (совместимо с Vercel прокси)."""
     photo_source = get_card_photo_source(card_id)
 
-    if photo_source:
-        # 1. Если это локальный файл — отправляем через FSInputFile
-        if not (photo_source.startswith("http://") or photo_source.startswith("https://")):
-            if os.path.exists(photo_source):
-                try:
-                    await message.answer_photo(photo=FSInputFile(photo_source), caption=text)
-                    return
-                except Exception as e:
-                    logger.warning("Не удалось отправить локальный файл фото карты %s: %s", card_id, e)
-
-        # 2. Если это URL — передаем напрямую в Telegram API answer_photo
-        else:
-            try:
-                await message.answer_photo(photo=photo_source, caption=text)
-                return
-            except Exception as e:
-                logger.warning("Telegram API не смог загрузить URL фото %s: %s. Попытка скачивания...", card_id, e)
-                try:
-                    cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
-                    os.makedirs(cache_dir, exist_ok=True)
-                    cached_file = os.path.join(cache_dir, f"{card_id}.jpg")
-                    if not os.path.exists(cached_file) or os.path.getsize(cached_file) < 100:
-                        import urllib.request
-                        req = urllib.request.Request(photo_source, headers={'User-Agent': 'Mozilla/5.0'})
-                        with urllib.request.urlopen(req, timeout=5) as resp, open(cached_file, 'wb') as out_f:
-                            out_f.write(resp.read())
-                    if os.path.exists(cached_file) and os.path.getsize(cached_file) > 100:
-                        await message.answer_photo(photo=FSInputFile(cached_file), caption=text)
-                        return
-                except Exception as e2:
-                    logger.warning("Ошибка локального скачивания фото: %s", e2)
-
-    # 3. Гарантированный fallback — высылаем сгенерированное PIL изображение карточки
-    try:
-        gen_path = generate_card_image_fallback(card_id)
-        if gen_path and os.path.exists(gen_path):
-            await message.answer_photo(photo=FSInputFile(gen_path), caption=text)
+    if photo_source and (photo_source.startswith("http://") or photo_source.startswith("https://")):
+        clean_url = photo_source.split("?")[0]
+        try:
+            await message.answer_photo(photo=clean_url, caption=text)
             return
+        except Exception as e:
+            logger.warning("Telegram API не смог отправить URL фото %s: %s", clean_url, e)
+
+    # Резервный публичный URL морской свинки (работает без multipart прокси-ошибок)
+    default_pig_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/3/30/Cavia_porcellus_wild.jpg/800px-Cavia_porcellus_wild.jpg"
+    try:
+        await message.answer_photo(photo=default_pig_url, caption=text)
+        return
     except Exception as e:
-        logger.warning("Ошибка отправки fallback изображения карточки: %s", e)
+        logger.warning("Ошибка отправки резервного фото URL: %s", e)
 
     await message.answer(text)
+
 
 
 
