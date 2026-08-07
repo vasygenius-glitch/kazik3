@@ -125,13 +125,30 @@ async def on_shutdown(bot: Bot, storage):
 
 async def main():
     redis_url = os.environ.get("REDIS_URL")
+
+
+    storage = None
     if redis_url:
-        from aiogram.fsm.storage.redis import RedisStorage
-        storage = RedisStorage.from_url(redis_url)
-        logger.info("RedisStorage подключен.")
+        try:
+            from aiogram.fsm.storage.redis import RedisStorage
+            from redis.asyncio import Redis
+            redis_client = Redis.from_url(
+                redis_url,
+                socket_timeout=3.0,
+                socket_connect_timeout=3.0,
+                health_check_interval=30,
+                retry_on_timeout=True
+            )
+            await asyncio.wait_for(redis_client.ping(), timeout=3.0)
+            storage = RedisStorage(redis=redis_client)
+            logger.info("✅ RedisStorage успешно подключен и проверен!")
+        except Exception as e:
+            logger.warning("⚠️ Ошибка подключения к Redis (%s). Переключение на MemoryStorage.", e)
+            storage = MemoryStorage()
     else:
         storage = MemoryStorage()
         logger.warning("REDIS_URL не найден. Используется MemoryStorage.")
+
         
     dp = Dispatcher(storage=storage)
     
