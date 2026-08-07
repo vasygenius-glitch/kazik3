@@ -46,11 +46,30 @@ def init_db(key_path):
                 fire_and_forget(ref.set(data, merge=merge))
 
         class MockDB:
-            def __init__(self):
+            def __init__(self, filepath="data/local_db.json"):
+                self.filepath = filepath
                 self.data = {}
+                self._load()
+
+            def _load(self):
+                if os.path.exists(self.filepath):
+                    try:
+                        with open(self.filepath, 'r', encoding='utf-8') as f:
+                            self.data = json.load(f)
+                        print(f"✅ Локальная база данных успешно загружена из {self.filepath}")
+                    except Exception as e:
+                        print(f"⚠️ Ошибка чтения {self.filepath}: {e}")
+
+            def save(self):
+                try:
+                    os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
+                    with open(self.filepath, 'w', encoding='utf-8') as f:
+                        json.dump(self.data, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    print(f"⚠️ Ошибка сохранения локальной БД: {e}")
 
             def collection(self, name):
-                return MockCollection(self.data, name)
+                return MockCollection(self, self.data, name)
 
             def batch(self):
                 return MockBatch()
@@ -86,13 +105,14 @@ def init_db(key_path):
                 self.ops = []
 
         class MockCollection:
-            def __init__(self, parent_dict, name):
+            def __init__(self, db_instance, parent_dict, name):
+                self.db_instance = db_instance
                 if name not in parent_dict:
                     parent_dict[name] = {}
                 self.data = parent_dict[name]
 
             def document(self, name):
-                return MockDocument(self.data, str(name))
+                return MockDocument(self.db_instance, self.data, str(name))
 
             async def get(self):
                 class MockDocStream:
@@ -115,12 +135,12 @@ def init_db(key_path):
                     def to_dict(self): return self._data
 
                 for doc_id, doc_data in self.data.items():
-                    # Return only docs that actually have data (not just subcollections)
                     if '_data' in doc_data:
                         yield MockDocStream(doc_id, doc_data['_data'])
 
         class MockDocument:
-            def __init__(self, parent_dict, name):
+            def __init__(self, db_instance, parent_dict, name):
+                self.db_instance = db_instance
                 if name not in parent_dict:
                     parent_dict[name] = {}
                 self.doc_node = parent_dict[name]
@@ -128,7 +148,7 @@ def init_db(key_path):
             def collection(self, name):
                 if '_subcollections' not in self.doc_node:
                     self.doc_node['_subcollections'] = {}
-                return MockCollection(self.doc_node['_subcollections'], name)
+                return MockCollection(self.db_instance, self.doc_node['_subcollections'], name)
 
             async def get(self, **kwargs):
                 class MockDocRes:
@@ -146,14 +166,20 @@ def init_db(key_path):
                     self.doc_node['_data'].update(data)
                 else:
                     self.doc_node['_data'] = data
+                self.db_instance.save()
 
             async def update(self, data):
                 if '_data' in self.doc_node:
                     self.doc_node['_data'].update(data)
+                else:
+                    self.doc_node['_data'] = data
+                self.db_instance.save()
 
             async def delete(self):
                 if '_data' in self.doc_node:
                     del self.doc_node['_data']
+                self.db_instance.save()
+
         db = MockDB()
         return db
 
@@ -165,3 +191,4 @@ def init_db(key_path):
 
 def get_db():
     return db
+
