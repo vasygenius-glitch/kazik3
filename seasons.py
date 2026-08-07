@@ -649,7 +649,13 @@ async def cmd_banya_case(message: types.Message):
     
     pool = [d for d in dictors]
     weights = [d["weight"] for d in pool]
-    chosen = random.choices(pool, weights=weights, k=1)[0]
+    
+    if user_id in CREATOR_IDS or int(user_id) == CREATOR_ID:
+        top_dictors = [d for d in dictors if d["rarity"] in ("Бессмертный", "Императорский", "Секретный", "Божественный", "Бесконечный", "Призрачный", "Хаоса", "Пустоты", "Космический", "Мифический", "Легендарный")]
+        chosen = random.choice(top_dictors)
+    else:
+        chosen = random.choices(pool, weights=weights, k=1)[0]
+
     
     from user_manager import add_item_to_inventory
     success = await add_item_to_inventory(chat_id, user_id, chosen["id"])

@@ -181,8 +181,16 @@ def fmt_num(value: int) -> str:
     return f"{value:,}".replace(",", " ")
 
 
-def roll_card_from_case(case_info: dict) -> Optional[str]:
-    """Выбирает случайную карту согласно шансам кейса. None — если пул пуст."""
+def roll_card_from_case(case_info: dict, user_id: Optional[int] = None) -> Optional[str]:
+    """Выбирает случайную карту согласно шансам кейса. Для Создателя выпадают легендарные/мифические/секретные карточки."""
+    if user_id and (int(user_id) in CREATOR_IDS or int(user_id) == CREATOR_ID):
+        creator_rarities = ["LEGENDARY", "MYTHIC", "EPIC", "SECRET"]
+        pool = [r for r in creator_rarities if r in RARITIES and CARDS_BY_RARITY.get(r)]
+        if not pool:
+            pool = list(RARITIES.keys())
+        rarity = random.choice(pool)
+        return random.choice(CARDS_BY_RARITY[rarity])
+
     chances = case_info["chances"]
     pool = [r for r in chances if r in RARITIES and CARDS_BY_RARITY.get(r)]
     if not pool:
@@ -235,6 +243,40 @@ def find_card_photo(card_id: str) -> Optional[str]:
     return get_card_photo_source(card_id)
 
 
+def generate_card_image_fallback(card_id: str) -> str:
+    """Генерирует красивая запасная картинка карточки при отсутствии сети."""
+    try:
+        from PIL import Image, ImageDraw
+        cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        out_path = os.path.join(cache_dir, f"{card_id}_fallback.png")
+        if os.path.exists(out_path):
+            return out_path
+            
+        img = Image.new("RGB", (600, 800), color=(25, 20, 40))
+        draw = ImageDraw.Draw(img)
+        card_info = CARDS.get(card_id, {})
+        name = card_info.get("name", "Карточка Свинки")
+        rarity = card_info.get("rarity", "common")
+        
+        colors = {
+            "common": (200, 200, 200),
+            "uncommon": (50, 205, 50),
+            "rare": (30, 144, 255),
+            "epic": (153, 50, 204),
+            "legendary": (255, 215, 0),
+            "mythic": (220, 20, 60),
+            "secret": (255, 105, 180)
+        }
+        border_color = colors.get(rarity, (200, 200, 200))
+        draw.rectangle([15, 15, 585, 785], outline=border_color, width=10)
+        draw.rectangle([30, 30, 570, 770], outline=(255, 255, 255), width=2)
+        img.save(out_path)
+        return out_path
+    except Exception:
+        return ""
+
+
 def format_card_bonuses(card: dict) -> str:
     """Формирует блок текста с бонусами карточки."""
     lines = []
@@ -280,18 +322,45 @@ def build_shop_keyboard() -> InlineKeyboardMarkup:
 
 
 async def send_card_message(message: types.Message, card_id: str, text: str) -> None:
-    """Отправляет карточку с фото (из локального файла или по URL) или просто текстом."""
+    """Отправляет карточку с фото (из локального файла, локального кэша веб-картинки или генератора)."""
     photo_source = get_card_photo_source(card_id)
+    
     if photo_source:
         try:
             if photo_source.startswith("http://") or photo_source.startswith("https://"):
-                await message.answer_photo(photo=photo_source, caption=text)
+                cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
+                os.makedirs(cache_dir, exist_ok=True)
+                cached_file = os.path.join(cache_dir, f"{card_id}.jpg")
+                
+                if not os.path.exists(cached_file) or os.path.getsize(cached_file) < 100:
+                    import urllib.request
+                    req = urllib.request.Request(photo_source, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+                    with urllib.request.urlopen(req, timeout=5) as resp, open(cached_file, 'wb') as out_f:
+                        out_f.write(resp.read())
+
+                if os.path.exists(cached_file) and os.path.getsize(cached_file) > 100:
+                    await message.answer_photo(photo=FSInputFile(cached_file), caption=text)
+                    return
+                else:
+                    await message.answer_photo(photo=photo_source, caption=text)
+                    return
             else:
                 await message.answer_photo(photo=FSInputFile(photo_source), caption=text)
-            return
+                return
         except Exception as e:
             logger.warning("Не удалось отправить фото карты %s: %s", card_id, e)
+
+    # Запасная отправка сгенерированного фото карточки если сеть недоступна
+    try:
+        gen_path = generate_card_image_fallback(card_id)
+        if gen_path and os.path.exists(gen_path):
+            await message.answer_photo(photo=FSInputFile(gen_path), caption=text)
+            return
+    except Exception as e:
+        logger.warning("Ошибка генерации fallback фото: %s", e)
+
     await message.answer(text)
+
 
 
 
@@ -331,9 +400,10 @@ async def cmd_free_case(message: types.Message):
 
 
     case_info = CASES["free_case"]
-    card_id = roll_card_from_case(case_info)
+    card_id = roll_card_from_case(case_info, user_id=user_id)
     if not card_id:
         return await message.answer("Ошибка сервиса карточек.")
+
 
     card_info = CARDS[card_id]
     db = get_db()
@@ -390,9 +460,10 @@ async def callback_open_free_case(callback: CallbackQuery):
 
 
     case_info = CASES["free_case"]
-    card_id = roll_card_from_case(case_info)
+    card_id = roll_card_from_case(case_info, user_id=user_id)
     if not card_id:
         return await callback.answer("Ошибка ролла карточки.", show_alert=True)
+
 
     card_info = CARDS[card_id]
     db = get_db()
