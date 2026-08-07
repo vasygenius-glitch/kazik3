@@ -1,10 +1,11 @@
-from typing import Callable, Dict, Any, Awaitable
 import time
 import logging
+from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import TelegramObject, Message, CallbackQuery
 
 logger = logging.getLogger(__name__)
+
 
 from whitelist import get_whitelist, log_unauthorized_chat
 from config import CREATOR_ID, DISABLE_WHITELIST
