@@ -840,13 +840,13 @@ async def cmd_banya_case(message: types.Message):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🎁 1 кейс (12k)", callback_data="banya_case_do_1")
+    builder.button(text="🎁 1 кейс (12k)", callback_data=f"banya_case_do_1_{user_id}")
     if max_cases >= 5:
-        builder.button(text="🎁 5 кейсов (60k)", callback_data="banya_case_do_5")
+        builder.button(text="🎁 5 кейсов (60k)", callback_data=f"banya_case_do_5_{user_id}")
     if max_cases >= 50:
-        builder.button(text="🎁 50 кейсов (600k)", callback_data="banya_case_do_50")
+        builder.button(text="🎁 50 кейсов (600k)", callback_data=f"banya_case_do_50_{user_id}")
     
-    builder.button(text=f"🔥 НА ВСЕ ДЕНЬГИ ({max_cases} шт)", callback_data=f"banya_case_do_{max_cases}")
+    builder.button(text=f"🔥 НА ВСЕ ДЕНЬГИ ({max_cases} шт)", callback_data=f"banya_case_do_all_{user_id}")
     builder.adjust(1)
 
     text = (
@@ -860,16 +860,43 @@ async def cmd_banya_case(message: types.Message):
 
 @router.callback_query(F.data.startswith("banya_case_do_"))
 async def callback_banya_case_do(callback: types.CallbackQuery):
-    try:
-        qty = int(callback.data.removeprefix("banya_case_do_"))
-    except ValueError:
-        qty = 1
+    parts = callback.data.split("_")
+    # Формат data: banya_case_do_{qty_or_all}_{owner_id}
+    if len(parts) >= 5:
+        target_qty_str = parts[3]
+        try:
+            owner_id = int(parts[4])
+        except ValueError:
+            owner_id = None
+    else:
+        target_qty_str = parts[-1]
+        owner_id = None
+
+    if owner_id and callback.from_user.id != owner_id:
+        return await callback.answer("❌ Это меню кейсов другого игрока! Напишите /banya_case для вызова своего меню.", show_alert=True)
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
 
+    u_data = await get_user_data(chat_id, user_id)
+    balance = u_data.get('balance', 0)
+    max_cases = max(0, balance // BANYA_CASE_PRICE)
+
+    if target_qty_str == "all":
+        qty = max_cases
+    else:
+        try:
+            qty = int(target_qty_str)
+        except ValueError:
+            qty = 1
+
+    if max_cases < 1 or qty < 1:
+        return await callback.answer("💸 У вас недостаточно средств для открытия кейсов!", show_alert=True)
+
+    qty = min(qty, max_cases)
     await callback.answer(f"Открываем {qty} кейсов...")
     await execute_batch_banya_case(chat_id, user_id, qty, callback.message)
+
 
 
 @router.message(Command("banya_spin"))

@@ -17,7 +17,9 @@ router = Router()
 
 MAX_BIZ_LEVEL = 5
 
-def get_inventory_main_kb(inventory, biz_levels, meme_cards=None):
+PAGE_SIZE = 15
+
+def get_inventory_main_kb(inventory, biz_levels, meme_cards=None, page: int = 0):
     builder = InlineKeyboardBuilder()
     
     # Кнопка открытия 12-часового кейса
@@ -28,18 +30,46 @@ def get_inventory_main_kb(inventory, biz_levels, meme_cards=None):
     if unique_cards > 0:
         builder.button(text=f"🎴 Моя коллекция карт ({unique_cards}/200)", callback_data="card_page_0")
 
-    for item_id, count in inventory.items():
-        if count > 0 and item_id in ITEMS:
-            info = ITEMS[item_id]
-            if info.get('action') == 'business':
-                level = biz_levels.get(item_id, 1)
-                text = f"{info['name']} (Ур. {level}) ({count} шт)"
-            else:
-                text = f"{info['name']} ({count} шт)"
-            builder.button(text=text, callback_data=f"inv_item_{item_id}")
+    valid_items = [(k, v) for k, v in inventory.items() if v > 0 and k in ITEMS]
+    total_pages = max(1, (len(valid_items) + PAGE_SIZE - 1) // PAGE_SIZE)
+    page = max(0, min(page, total_pages - 1))
+
+    start_idx = page * PAGE_SIZE
+    end_idx = start_idx + PAGE_SIZE
+    page_items = valid_items[start_idx:end_idx]
+
+    for item_id, count in page_items:
+        info = ITEMS[item_id]
+        if info.get('action') == 'business':
+            level = biz_levels.get(item_id, 1)
+            text = f"{info['name']} (Ур. {level}) ({count} шт)"
+        else:
+            text = f"{info['name']} ({count} шт)"
+        builder.button(text=text, callback_data=f"inv_item_{item_id}")
+
+    if total_pages > 1:
+        if page > 0:
+            builder.button(text="⬅️ Назад", callback_data=f"inv_page_{page - 1}")
+        else:
+            builder.button(text="⛔️", callback_data="none")
+
+        builder.button(text=f"📄 {page + 1}/{total_pages}", callback_data="none")
+
+        if page < total_pages - 1:
+            builder.button(text="Вперед ➡️", callback_data=f"inv_page_{page + 1}")
+        else:
+            builder.button(text="⛔️", callback_data="none")
 
     builder.button(text="❌ Закрыть", callback_data="inv_close")
-    builder.adjust(1)
+    
+    layout = [1]
+    if unique_cards > 0:
+        layout.append(1)
+    layout.extend([1] * len(page_items))
+    if total_pages > 1:
+        layout.append(3)
+    layout.append(1)
+    builder.adjust(*layout)
     return builder.as_markup()
 
 def get_item_kb(item_id, biz_level):
@@ -99,6 +129,30 @@ async def inv_back(callback: types.CallbackQuery):
     text += "Нажмите на предмет для управления или откройте карточки:"
 
     await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards))
+
+
+@router.callback_query(F.data.startswith("inv_page_"))
+async def inv_page_cb(callback: types.CallbackQuery):
+    try:
+        page = int(callback.data.removeprefix("inv_page_"))
+    except ValueError:
+        page = 0
+
+    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    inventory = data.get('inventory', {})
+    biz_levels = data.get('biz_levels', {})
+    meme_cards = data.get('meme_cards', {}) or {}
+
+    unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
+    total_cards = sum(qty for qty in meme_cards.values() if qty > 0)
+    
+    text = "🎒 <b>ВАШ ИНВЕНТАРЬ И КОЛЛЕКЦИЯ</b>\n\n"
+    if unique_cards > 0:
+        text += f"🎴 <b>Коллекция карточек свинок:</b> <code>{unique_cards}/200</code> (всего {total_cards} шт.)\n\n"
+    text += "Нажмите на предмет для управления или откройте карточки:"
+
+    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards, page=page))
+
 
 
 @router.callback_query(F.data == "inv_close")
