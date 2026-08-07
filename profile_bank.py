@@ -638,75 +638,57 @@ async def cmd_bank(message: types.Message):
             target_banker_id = bank_data['banker_id']
             tx_amount = -1 if is_all else amount
 
-            db = get_db()
-            tx = db.transaction() if hasattr(db, 'transaction') else None
-            try:
-                from user_manager import get_user_lock, invalidate_user_cache
-                lock = get_user_lock(chat_id, user_id)
-                async with lock:
-                    try:
-                        actual_amount, total_dep = await process_deposit_tx(
-                            tx, chat_id, user_id, target_banker_id, tx_amount
-                        )
-                        invalidate_user_cache(chat_id, user_id)
-                    except ValueError as ve:
-                        raise ve
-                    except Exception as e_tx:
-                        err_str = str(e_tx)
-                        if any(k in err_str for k in ("429", "Quota exceeded", "Timeout", "ResourceExhausted", "RetryError")):
-                            actual_amount, total_dep = await process_deposit_in_memory(
-                                chat_id, user_id, target_banker_id, tx_amount
-                            )
-                        else:
-                            raise e_tx
-
-
-                invalidate_bank_cache(chat_id, target_banker_id, bank_data.get('name'))
-
-                # --- Логирование депозита ---
-                try:
-                    sender_data_after = await get_user_data(chat_id, user_id)
-                    sender_bal_after = sender_data_after.get('balance')
-                    try:
-                        message_link = message.link or ""
-                    except Exception:
-                        message_link = ""
-                    
-                    from log_system import log_financial_transaction
-                    log_financial_transaction(
-                        action_type="deposit",
-                        sender_id=user_id,
-                        sender_name=data.get('full_name') or message.from_user.full_name,
-                        sender_username=message.from_user.username or "",
-                        recipient_id=target_banker_id,
-                        recipient_name=bank_data.get('banker_name') or f"Banker {target_banker_id}",
-                        recipient_username="",
-                        amount=actual_amount,
-                        commission=0,
-                        chat_id=chat_id,
-                        chat_title=message.chat.title or "Unknown",
-                        message_link=message_link,
-                        sender_balance=sender_bal_after,
-                        recipient_balance=total_dep
-                    )
-                except Exception as log_e:
-                    print(f"Error logging deposit: {log_e}")
-
-                await message.answer(
-                    f"✅ Депозит пополнен на {actual_amount} сыр. "
-                    f"в банке <b>{escape_html(bank_data.get('name', 'Банк'))}</b>.\n"
-                    f"Ваш общий вклад: {total_dep}."
+            from user_manager import get_user_lock
+            lock = get_user_lock(chat_id, user_id)
+            async with lock:
+                actual_amount, total_dep = await process_deposit_in_memory(
+                    chat_id, user_id, target_banker_id, tx_amount
                 )
-            except ValueError as ve:
-                await message.answer(f"❌ {ve}")
-            except Exception as e:
-                print(f"Error in /bank deposit: {e}\n{traceback.format_exc()}")
-                await message.answer(f"❌ Произошла ошибка при пополнении вклада:\n<code>{escape_html(str(e))}</code>")
+
+            invalidate_bank_cache(chat_id, target_banker_id, bank_data.get('name'))
+
+            # --- Логирование депозита ---
+            try:
+                sender_data_after = await get_user_data(chat_id, user_id)
+                sender_bal_after = sender_data_after.get('balance')
+                try:
+                    message_link = message.link or ""
+                except Exception:
+                    message_link = ""
+                
+                from log_system import log_financial_transaction
+                log_financial_transaction(
+                    action_type="deposit",
+                    sender_id=user_id,
+                    sender_name=data.get('full_name') or message.from_user.full_name,
+                    sender_username=message.from_user.username or "",
+                    recipient_id=target_banker_id,
+                    recipient_name=bank_data.get('banker_name') or f"Banker {target_banker_id}",
+                    recipient_username="",
+                    amount=actual_amount,
+                    commission=0,
+                    chat_id=chat_id,
+                    chat_title=message.chat.title or "Unknown",
+                    message_link=message_link,
+                    sender_balance=sender_bal_after,
+                    recipient_balance=total_dep
+                )
+            except Exception as log_e:
+                print(f"Error logging deposit: {log_e}")
+
+            await message.answer(
+                f"✅ Депозит пополнен на {actual_amount} сыр. "
+                f"в банке <b>{escape_html(bank_data.get('name', 'Банк'))}</b>.\n"
+                f"Ваш общий вклад: {total_dep}."
+            )
+        except ValueError as ve:
+            await message.answer(f"❌ {ve}")
         except Exception as e:
-            print(f"Error in /bank deposit block: {e}\n{traceback.format_exc()}")
-            await message.answer(f"❌ Непредвиденная ошибка в депозите:\n<code>{escape_html(str(e))}</code>")
+            print(f"Error in /bank deposit: {e}\n{traceback.format_exc()}")
+            await message.answer(f"❌ Произошла ошибка при пополнении вклада:\n<code>{escape_html(str(e))}</code>")
 
     # ---------- WITHDRAW ----------
+
     elif action == "withdraw":
         try:
             tx_amount = -1 if is_all else amount
@@ -716,14 +698,18 @@ async def cmd_bank(message: types.Message):
                 if current_deposit <= 0:
                     return await message.answer("У вас нет средств на банковском счете.")
                 actual_withdraw = min(current_deposit if is_all else amount, current_deposit)
-                await update_user_field(chat_id, user_id, 'bank_deposit', current_deposit - actual_withdraw)
-                await update_user_balance(chat_id, user_id, actual_withdraw)
+                
+                from user_manager import mark_dirty
+                user_data = await get_user_data(chat_id, user_id)
+                user_data['bank_deposit'] = current_deposit - actual_withdraw
+                user_data['balance'] = user_data.get('balance', 0) + actual_withdraw
                 if current_deposit - actual_withdraw <= 0:
-                    await update_user_field(chat_id, user_id, 'deposit_start_time', 0)
+                    user_data['deposit_start_time'] = 0
                 else:
-                    await update_user_field(chat_id, user_id, 'deposit_start_time', int(time.time()))
-                    if data.get('last_daily_time', 0) > 0:
-                        await update_user_field(chat_id, user_id, 'last_daily_time', int(time.time()))
+                    user_data['deposit_start_time'] = int(time.time())
+                    if user_data.get('last_daily_time', 0) > 0:
+                        user_data['last_daily_time'] = int(time.time())
+                mark_dirty(chat_id, user_id)
 
                 # --- Логирование снятия со старого системного счета ---
                 try:
@@ -757,70 +743,57 @@ async def cmd_bank(message: types.Message):
 
                 return await message.answer(f"💸 Снято {actual_withdraw} сыроежек со старого системного счета.")
 
-            db = get_db()
-            tx = db.transaction() if hasattr(db, 'transaction') else None
+            from user_manager import get_user_lock
+            lock = get_user_lock(chat_id, user_id)
+            async with lock:
+                actual_withdrawn = await process_withdraw_in_memory(
+                    chat_id, user_id, current_banker_id, tx_amount
+                )
+
+            invalidate_bank_cache(chat_id, current_banker_id)
+
+
+
+            # --- Логирование снятия со счета ---
             try:
-                from user_manager import get_user_lock, invalidate_user_cache
-                lock = get_user_lock(chat_id, user_id)
-                async with lock:
-                    try:
-                        actual_withdrawn = await process_withdraw_tx(
-                            tx, chat_id, user_id, current_banker_id, tx_amount
-                        )
-                        invalidate_user_cache(chat_id, user_id)
-                    except ValueError as ve:
-                        raise ve
-                    except Exception as e_tx:
-                        err_str = str(e_tx)
-                        if any(k in err_str for k in ("429", "Quota exceeded", "Timeout", "ResourceExhausted", "RetryError")):
-                            actual_withdrawn = await process_withdraw_in_memory(
-                                chat_id, user_id, current_banker_id, tx_amount
-                            )
-                        else:
-                            raise e_tx
-
-                invalidate_bank_cache(chat_id, current_banker_id)
-
-
-                # --- Логирование снятия со счета ---
+                sender_data_after = await get_user_data(chat_id, user_id)
+                sender_bal_after = sender_data_after.get('balance')
+                total_dep_after = sender_data_after.get('bank_deposit', 0)
                 try:
-                    sender_data_after = await get_user_data(chat_id, user_id)
-                    sender_bal_after = sender_data_after.get('balance')
-                    total_dep_after = sender_data_after.get('bank_deposit', 0)
-                    try:
-                        message_link = message.link or ""
-                    except Exception:
-                        message_link = ""
-                    
-                    b_info = await get_bank_info(chat_id, current_banker_id)
-                    banker_name = b_info.get('banker_name') if b_info else f"Banker {current_banker_id}"
+                    message_link = message.link or ""
+                except Exception:
+                    message_link = ""
+                
+                b_info = await get_bank_info(chat_id, current_banker_id)
+                banker_name = b_info.get('banker_name') if b_info else f"Banker {current_banker_id}"
 
-                    from log_system import log_financial_transaction
-                    log_financial_transaction(
-                        action_type="withdraw",
-                        sender_id=user_id,
-                        sender_name=data.get('full_name') or message.from_user.full_name,
-                        sender_username=message.from_user.username or "",
-                        recipient_id=current_banker_id,
-                        recipient_name=banker_name,
-                        recipient_username="",
-                        amount=actual_withdrawn,
-                        commission=0,
-                        chat_id=chat_id,
-                        chat_title=message.chat.title or "Unknown",
-                        message_link=message_link,
-                        sender_balance=sender_bal_after,
-                        recipient_balance=total_dep_after
-                    )
-                except Exception as log_e:
-                    print(f"Error logging withdraw bank: {log_e}")
+                from log_system import log_financial_transaction
+                log_financial_transaction(
+                    action_type="withdraw",
+                    sender_id=user_id,
+                    sender_name=data.get('full_name') or message.from_user.full_name,
+                    sender_username=message.from_user.username or "",
+                    recipient_id=current_banker_id,
+                    recipient_name=banker_name,
+                    recipient_username="",
+                    amount=actual_withdrawn,
+                    commission=0,
+                    chat_id=chat_id,
+                    chat_title=message.chat.title or "Unknown",
+                    message_link=message_link,
+                    sender_balance=sender_bal_after,
+                    recipient_balance=total_dep_after
+                )
+            except Exception as log_e:
+                print(f"Error logging withdraw bank: {log_e}")
 
-                await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")
-            except ValueError as ve:
-                await message.answer(f"❌ {ve}")
-            except Exception as e:
-                print(f"Error in /bank withdraw: {e}\n{traceback.format_exc()}")
-                await message.answer(f"❌ Произошла ошибка при снятии со вклада:\n<code>{escape_html(str(e))}</code>")
+            await message.answer(f"💸 Снято {actual_withdrawn} сыроежек со счета.")
+        except ValueError as ve:
+            await message.answer(f"❌ {ve}")
+        except Exception as e:
+            print(f"Error in /bank withdraw: {e}\n{traceback.format_exc()}")
+            await message.answer(f"❌ Произошла ошибка при снятии со вклада:\n<code>{escape_html(str(e))}</code>")
+
         except Exception as e:
             print(f"Error in /bank withdraw block: {e}\n{traceback.format_exc()}")
             await message.answer(f"❌ Непредвиденная ошибка при снятии вклада:\n<code>{escape_html(str(e))}</code>")
