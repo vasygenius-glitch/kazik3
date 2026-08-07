@@ -92,15 +92,13 @@ def get_bank_from_cache(chat_id, identifier):
     key = (chat_id, str(identifier).lower())
     cache_entry = _bank_cache.get(key)
     if cache_entry:
-        if time.time() - cache_entry["timestamp"] < BANK_CACHE_TTL:
-            return cache_entry["data"].copy()
-        # удаляем протухшую запись
-        _bank_cache.pop(key, None)
+        return cache_entry["data"].copy()
     return None
 
 def set_bank_in_cache(chat_id, identifier, data):
     now = time.time()
-    banker_id_key = (chat_id, str(data.get('banker_id', identifier)).lower())
+    banker_id = data.get('banker_id', identifier)
+    banker_id_key = (chat_id, str(banker_id).lower())
     _bank_cache[banker_id_key] = {"data": data.copy(), "timestamp": now}
     name = data.get('name')
     if name:
@@ -251,33 +249,37 @@ async def get_bank_info(chat_id: int, identifier):
     # 1) Пробуем по ID банкира
     try:
         banker_id = int(identifier)
-        doc = await banks_ref.document(str(banker_id)).get()
+        doc = await asyncio.wait_for(banks_ref.document(str(banker_id)).get(), timeout=2.0)
         if doc.exists:
             data = doc.to_dict()
             data['banker_id'] = banker_id
             set_bank_in_cache(chat_id, banker_id, data)
             return data
-    except (ValueError, TypeError):
+    except Exception:
         pass
 
     # 2) Поиск по имени
     search_name = str(identifier).lower().strip()
     if not search_name:
         return None
-    docs_raw = await banks_ref.get()
-    docs = await _collect_docs(docs_raw)
-    for doc in docs:
-        b_data = doc.to_dict() or {}
-        b_name = (b_data.get('name') or '').lower()
-        if b_name and (b_name.startswith(search_name) or search_name in b_name):
-            try:
-                b_data['banker_id'] = int(doc.id)
-            except ValueError:
-                b_data['banker_id'] = doc.id
-            set_bank_in_cache(chat_id, identifier, b_data)
-            return b_data
+    try:
+        docs_raw = await asyncio.wait_for(banks_ref.get(), timeout=2.0)
+        docs = await _collect_docs(docs_raw)
+        for doc in docs:
+            b_data = doc.to_dict() or {}
+            b_name = (b_data.get('name') or '').lower()
+            if b_name and (b_name.startswith(search_name) or search_name in b_name):
+                try:
+                    b_data['banker_id'] = int(doc.id)
+                except ValueError:
+                    b_data['banker_id'] = doc.id
+                set_bank_in_cache(chat_id, identifier, b_data)
+                return b_data
+    except Exception:
+        pass
 
-    return None
+    return get_bank_from_cache(chat_id, identifier)
+
 
 async def create_or_update_bank(chat_id: int, banker_id: int, data: dict):
     current_data = await get_bank_info(chat_id, banker_id) or {}
