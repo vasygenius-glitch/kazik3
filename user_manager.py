@@ -804,7 +804,9 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
 # ============================================================
 async def add_item_to_inventory(chat_id, user_id, item_name: str, count: int = 1) -> bool:
     from shop import ITEMS
-    if item_name not in ITEMS or count <= 0:
+    if count <= 0:
+        return False
+    if item_name not in ITEMS and not item_name.startswith("dictor_"):
         return False
 
     lock = get_user_lock(chat_id, user_id)
@@ -816,6 +818,7 @@ async def add_item_to_inventory(chat_id, user_id, item_name: str, count: int = 1
         full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
+
 
     item_info = ITEMS.get(item_name) or {}
     total_price = int(item_info.get('price', 0) or 0) * count

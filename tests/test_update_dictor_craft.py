@@ -21,7 +21,7 @@ async def test_dictor_craft_success_all_ranks(rank_idx):
     callback.message.chat.id = 12345
     callback.from_user.id = 67890
 
-    callback.data = f"banya_craft_do_{curr_rank}_1"
+    callback.data = f"banya_craft_do_{curr_rank}:1:67890"
 
 
     user_data = {
@@ -61,7 +61,7 @@ async def test_dictor_craft_failure_all_ranks(rank_idx):
     callback.message.chat.id = 12345
     callback.from_user.id = 67890
 
-    callback.data = f"banya_craft_do_{curr_rank}_1"
+    callback.data = f"banya_craft_do_{curr_rank}:1:67890"
 
 
     user_data = {

@@ -1204,7 +1204,7 @@ async def callback_banya_craft_select(callback: types.CallbackQuery):
         btn_label = f"🔥 ВСЕ ({c_qty} крафтов)" if c_qty == max_crafts else f"🧪 {c_qty} крафт ({c_qty * 3} шт)"
         builder.button(
             text=btn_label,
-            callback_data=f"banya_craft_do_{d_id}_{c_qty}"
+            callback_data=f"banya_craft_do_{d_id}:{c_qty}:{user_id}"
         )
 
     builder.button(text="⬅️ Назад к выбору", callback_data="banya_craft_back")
@@ -1233,15 +1233,32 @@ async def callback_banya_craft_back(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("banya_craft_do_"))
 async def callback_banya_craft_do(callback: types.CallbackQuery):
     raw = callback.data.removeprefix("banya_craft_do_")
-    last_underscore = raw.rfind("_")
-    if last_underscore == -1:
-        return await callback.answer()
+    if ":" in raw:
+        parts = raw.split(":")
+        d_id = parts[0]
+        try:
+            qty = int(parts[1])
+        except ValueError:
+            qty = 1
+        try:
+            owner_id = int(parts[2]) if len(parts) >= 3 else None
+        except ValueError:
+            owner_id = None
+    else:
+        last_underscore = raw.rfind("_")
+        if last_underscore == -1:
+            return await callback.answer()
+        d_id = raw[:last_underscore]
+        try:
+            qty = int(raw[last_underscore + 1:])
+        except ValueError:
+            qty = 1
+        owner_id = None
 
-    d_id = raw[:last_underscore]
-    try:
-        qty = int(raw[last_underscore + 1:])
-    except ValueError:
-        qty = 1
+    if owner_id and callback.from_user.id != owner_id:
+        return await callback.answer("❌ Это меню крафта другого игрока! Напишите /banya_craft для вызова своего меню.", show_alert=True)
+
+
 
 
     chat_id = callback.message.chat.id
