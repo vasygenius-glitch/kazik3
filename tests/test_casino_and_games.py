@@ -141,3 +141,25 @@ def test_crash_progress_bar_10_cases(val, max_val, expected_len):
 def test_cards_calculate_score_10_hands(cards, expected_score):
     score = calculate_score(cards)
     assert score == expected_score
+
+def test_blackjack_ai_integration():
+    from game_ai import GameRegistry, train_on_move, predict_move, register_outcome
+    spec = GameRegistry.get("blackjack")
+    assert spec.key == "blackjack"
+    assert spec.moves == ["h", "s"]
+
+    ai_mem = train_on_move(None, "h", "blackjack")
+    ai_mem = train_on_move(ai_mem, "s", "blackjack")
+    ai_mem = register_outcome(ai_mem, 1, "blackjack")
+    pred = predict_move(ai_mem, "blackjack")
+    assert "confidence" in pred
+
+def test_is_valid_note_name():
+    from group_management import is_valid_note_name
+    assert is_valid_note_name("rule1") is True
+    assert is_valid_note_name("my_note") is True
+    assert is_valid_note_name(".") is False
+    assert is_valid_note_name("..") is False
+    assert is_valid_note_name("path/to/note") is False
+    assert is_valid_note_name("") is False
+

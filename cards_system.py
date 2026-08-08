@@ -675,26 +675,32 @@ async def cmd_cards(message: types.Message):
 
 @router.callback_query(F.data.startswith("card_page_"))
 async def callback_card_page(callback: CallbackQuery):
-    if callback.message is None:
-        return await callback.answer()
-
     try:
-        page = int(callback.data.removeprefix("card_page_"))
-    except ValueError:
-        return await callback.answer("Некорректная страница.", show_alert=True)
+        if callback.message is None:
+            return await callback.answer()
 
-    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    if data.get("is_banned"):
-        return await callback.answer("Вы забанены.", show_alert=True)
+        try:
+            page = int(callback.data.removeprefix("card_page_"))
+        except ValueError:
+            return await callback.answer("Некорректная страница.", show_alert=True)
 
-    await render_collection_page(callback.message, data, page=page, as_new=False)
-    await callback.answer()
+        data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+        if data.get("is_banned"):
+            return await callback.answer("Вы забанены.", show_alert=True)
+
+        await render_collection_page(callback.message, data, page=page, as_new=False)
+        await callback.answer()
+    except Exception:
+        pass
 
 
 @router.callback_query(F.data == "none")
 async def callback_noop(callback: CallbackQuery):
     """Заглушка для декоративных кнопок — убирает «вечный спиннер»."""
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception:
+        pass
 
 
 async def render_collection_page(message: types.Message, data: dict, page: int, as_new: bool = False):

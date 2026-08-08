@@ -118,7 +118,7 @@ async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
             if data.get('is_vip'): profit += int(profit * 0.1)
             await update_user_balance(chat_id, user_id, bet + profit, action="Blackjack Win")
             try:
-                data['ai_memory'] = register_outcome(data.get('ai_memory'), -1)
+                data['ai_memory'] = register_outcome(data.get('ai_memory'), -1, "blackjack")
                 set_in_cache(chat_id, user_id, data)
                 mark_dirty(chat_id, user_id)
             except Exception as e:
@@ -172,7 +172,7 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
         try:
             chat_id, user_id = game['chat_id'], game['user_id']
             data = await get_user_data(chat_id, user_id)
-            data['ai_memory'] = register_outcome(data.get('ai_memory'), 1)
+            data['ai_memory'] = register_outcome(data.get('ai_memory'), 1, "blackjack")
             set_in_cache(chat_id, user_id, data)
             mark_dirty(chat_id, user_id)
         except Exception as e:
@@ -307,7 +307,7 @@ async def finish_dealer_turn(callback: types.CallbackQuery, game: dict, state: F
     # Register blackjack outcome in AI memory
     try:
         data = await get_user_data(chat_id, user_id)
-        data['ai_memory'] = register_outcome(data.get('ai_memory'), ai_outcome)
+        data['ai_memory'] = register_outcome(data.get('ai_memory'), ai_outcome, "blackjack")
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
     except Exception as e:

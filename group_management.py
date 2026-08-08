@@ -114,6 +114,11 @@ async def show_rules(message: types.Message):
 
     await message.answer(f"📜 <b>Правила:</b>\n\n{text}")
 
+def is_valid_note_name(name: str) -> bool:
+    if not name or name in (".", "..") or "/" in name or len(name) > 100:
+        return False
+    return True
+
 # 2. ЗАМЕТКИ
 @router.message(F.text.lower().regexp(r"^[!/]+заметка\s"))
 async def set_note(message: types.Message, bot: Bot):
@@ -127,6 +132,8 @@ async def set_note(message: types.Message, bot: Bot):
     if len(parts) < 3: return await message.answer("Использование: заметка [имя] [текст]")
 
     note_name = parts[1].lower()
+    if not is_valid_note_name(note_name):
+        return await message.answer("❌ Некорректное имя заметки.")
     note_text = parts[2]
 
     db = get_db()
@@ -135,14 +142,19 @@ async def set_note(message: types.Message, bot: Bot):
 
 @router.message(F.text.startswith("?"))
 async def get_note(message: types.Message):
+    if not message.text: return
     note_name = message.text[1:].strip().lower()
-    if not note_name: return
+    if not is_valid_note_name(note_name): return
 
-    db = get_db()
-    doc = await db.collection('chats').document(str(message.chat.id)).collection('notes').document(note_name).get()
-    if doc.exists:
-        text = doc.to_dict().get('text', "")
-        await message.answer(text)
+    try:
+        db = get_db()
+        doc = await db.collection('chats').document(str(message.chat.id)).collection('notes').document(note_name).get()
+        if doc.exists:
+            text = doc.to_dict().get('text', "")
+            if text:
+                await message.answer(text)
+    except Exception:
+        pass
 
 # 3. АВТОМОДЕРАЦИЯ (Антилинк)
 @router.message(F.text.lower().in_(["антилинк вкл", "антилинк выкл"]))

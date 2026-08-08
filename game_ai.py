@@ -326,6 +326,19 @@ COINFLIP = GameRegistry.register(
     )
 )
 
+# 4) Блэкджек: игрок выбирает взять (h) или хватит (s).
+BLACKJACK = GameRegistry.register(
+    GameSpec(
+        key="blackjack",
+        name="Блэкджек",
+        moves=["h", "s"],
+        beats={},
+        symmetric=False,
+        max_order=2,
+    )
+)
+
+
 
 # ============================================================================
 # СТРУКТУРА ПАМЯТИ ИИ
@@ -2184,6 +2197,7 @@ _MOVE_LABELS: Dict[str, Dict[str, str]] = {
     "coinflip": {"0": "орёл", "1": "решка"},
     "evenodd": {"e": "чёт", "o": "нечет"},
     "thimbles": {"0": "левый", "1": "средний", "2": "правый"},
+    "blackjack": {"h": "взять", "s": "хватит"},
 }
 
 
