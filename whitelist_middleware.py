@@ -2,8 +2,11 @@ import time
 import logging
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
-from aiogram.html import quote as escape_html
 from aiogram.types import TelegramObject, Message, CallbackQuery
+from escape import escape_html
+
+
+
 
 logger = logging.getLogger(__name__)
 
