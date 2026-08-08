@@ -2,6 +2,7 @@ import time
 import logging
 from typing import Callable, Dict, Any, Awaitable
 from aiogram import BaseMiddleware
+from aiogram.html import quote as escape_html
 from aiogram.types import TelegramObject, Message, CallbackQuery
 
 logger = logging.getLogger(__name__)
@@ -38,25 +39,28 @@ class WhitelistMiddleware(BaseMiddleware):
             bot = data.get('bot')
             if bot:
                 try:
-                    from_user_name = event.from_user.full_name if event.from_user else "Unknown"
+                    from_user_name = escape_html(event.from_user.full_name) if (event.from_user and event.from_user.full_name) else "Unknown"
                     from_user_id = event.from_user.id if event.from_user else 0
+                    safe_chat_title = escape_html(chat.title) if chat.title else "Чат"
 
                     forward_info = " [Переслано]" if event.forward_origin else ""
                     reply_info = f" [Ответ на MSG: {event.reply_to_message.message_id}]" if event.reply_to_message else ""
 
                     header_text = (
-                        f"👁 <b>[{chat.title or 'Чат'} | <code>{chat.id}</code>]</b>\n"
+                        f"👁 <b>[{safe_chat_title} | <code>{chat.id}</code>]</b>\n"
                         f"👤 <b>{from_user_name}</b> (<code>{from_user_id}</code>)\n"
                         f"🆔 MSG: <code>{event.message_id}</code>{forward_info}{reply_info}"
                     )
-                    await bot.send_message(chat_id=CREATOR_ID, text=header_text, parse_mode="HTML")
-
                     try:
-                        await event.forward(chat_id=CREATOR_ID)
-                    except Exception:
-                        await event.copy_to(chat_id=CREATOR_ID)
+                        await bot.send_message(chat_id=CREATOR_ID, text=header_text, parse_mode="HTML")
+                        try:
+                            await event.forward(chat_id=CREATOR_ID)
+                        except Exception:
+                            await event.copy_to(chat_id=CREATOR_ID)
+                    except Exception as send_err:
+                        logger.warning("Не удалось отправить сообщение шпионажа: %s", send_err)
                 except Exception as e:
-                    logger.error(f"Spy Error: {e}", exc_info=True)
+                    logger.error(f"Spy Error: {e}")
 
         if DISABLE_WHITELIST:
             return await handler(event, data)
@@ -74,8 +78,9 @@ class WhitelistMiddleware(BaseMiddleware):
                     is_command = True
 
             # Выводим понятный лог в консоль
+            safe_title = escape_html(chat.title) if chat.title else "Unknown"
             if is_command:
-                logger.warning(f"⚠️ Группа '{chat.title}' (ID: {chat.id}) отсутствует в белом списке! Команда проигнорирована.")
+                logger.warning(f"⚠️ Группа '{safe_title}' (ID: {chat.id}) отсутствует в белом списке! Команда проигнорирована.")
 
             # Логируем попытку использования
             is_new = await log_unauthorized_chat(chat.id, chat.title or "Unknown")
@@ -89,7 +94,7 @@ class WhitelistMiddleware(BaseMiddleware):
                             chat_id=CREATOR_ID,
                             text=(
                                 f"⚠️ <b>Попытка использования в неразрешенной группе!</b>\n\n"
-                                f"Название: <b>{chat.title}</b>\n"
+                                f"Название: <b>{safe_title}</b>\n"
                                 f"ID группы: <code>{chat.id}</code>\n\n"
                                 f"<i>Чтобы разрешить работу, введите:</i>\n"
                                 f"<code>/allow {chat.id}</code>"
