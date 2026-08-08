@@ -71,7 +71,6 @@ async def welcome_new_member(message: types.Message, bot: Bot):
                 chat_title = escape_html(message.chat.title) if message.chat.title else "чат"
                 await message.answer(
                     f"🎉 <b>Спасибо за добавление бота в «{chat_title}»!</b>\n\n"
-                    f"✅ Этот чат автоматически внесен в белый список.\n"
                     f"💡 Бот готов к работе! Для ознакомления с командами используйте <code>!помощь</code> или <code>!правила</code>."
                 )
                 return
