@@ -216,11 +216,8 @@ def init_db(key_path):
 
 
 def get_db():
-    return db
-
-
-
-
-def get_db():
+    global db
+    if db is None:
+        init_db("firebase-key.json")
     return db
 

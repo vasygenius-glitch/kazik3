@@ -153,3 +153,28 @@ async def test_schedule_delete_10_delays(delay):
     with patch("asyncio.sleep", new_callable=AsyncMock):
         await schedule_delete(msg, delay=delay)
         msg.delete.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_spy_module_refactored():
+    from spy import toggle_spy, toggle_spy_all, is_spy_enabled, get_spy_chats, is_spy_all_enabled, invalidate_cache
+    invalidate_cache()
+    
+    # Toggle individual chat
+    enabled = await toggle_spy(-1009999)
+    assert enabled is True
+    assert await is_spy_enabled(-1009999) is True
+    assert -1009999 in await get_spy_chats()
+
+    # Toggle off
+    disabled = await toggle_spy(-1009999)
+    assert disabled is False
+
+    # Toggle global spy
+    all_enabled = await toggle_spy_all()
+    assert all_enabled is True
+    assert await is_spy_all_enabled() is True
+
+    # Turn off global spy
+    all_disabled = await toggle_spy_all()
+    assert all_disabled is False
+
