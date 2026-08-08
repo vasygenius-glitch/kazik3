@@ -3,14 +3,14 @@ import logging
 import os
 import warnings
 from urllib.parse import urlparse
-from aiohttp import web
+from aiohttp import web, ClientError
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 from aiogram.client.telegram import TelegramAPIServer, PRODUCTION
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramNetworkError
+from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN, FIREBASE_KEY_PATH
 from db import init_db
@@ -29,9 +29,8 @@ logger = logging.getLogger(__name__)
 WEB_SERVER_HOST = "0.0.0.0"
 WEB_SERVER_PORT = 7860
 
-from aiohttp import ClientError
-
 class RetryRequestMiddleware(BaseRequestMiddleware):
+
     def __init__(self, max_retries: int = 3):
         self.max_retries = max_retries
 
@@ -40,6 +39,13 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
         for attempt in range(1, self.max_retries + 1):
             try:
                 return await make_request(bot, method)
+            except TelegramRetryAfter as e:
+                logger.warning(
+                    "⏳ Превышен лимит флуда Telegram (Flood Control). Ожидание %s сек. перед повторным запросом...",
+                    e.retry_after
+                )
+                await asyncio.sleep(e.retry_after + 1)
+                continue
             except (TelegramNetworkError, ClientError, asyncio.TimeoutError, OSError) as e:
                 last_exc = e
                 if attempt < self.max_retries:
@@ -49,7 +55,9 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
                         type(e).__name__, e, attempt, self.max_retries
                     )
                     await asyncio.sleep(delay)
-        raise last_exc
+        if last_exc:
+            raise last_exc
+
 
 
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
