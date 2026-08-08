@@ -765,11 +765,12 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             except Exception as e:
                 logger.error("Tax redirect to bank error: %s", e)
 
-        # Meme bonuses
+        # Meme bonuses (multiplier applies to base daily bonus, not business trillions)
         meme_bonuses = get_user_meme_bonuses(data)
         meme_mult = meme_bonuses['multiplier']
         meme_flat = meme_bonuses['flat']
-        card_boost = int((base_bonus + extra_income) * meme_mult) + meme_flat
+        card_boost = int(base_bonus * meme_mult) + meme_flat
+
 
         total = base_bonus + extra_income - tax_amt + card_boost
         if inventory.get('kovcheg', 0) > 0:
