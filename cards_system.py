@@ -86,47 +86,48 @@ CUSTOM_CARDS = {
         "name": "Золотой Дракон",
         "rarity": "LEGENDARY",
         "description": "Могущественное существо древности. Приносит горы золота и сыра.",
-        "bonus_multiplier": 0.05,
-        "bonus_flat": 1000,
+        "bonus_multiplier": 0.015,
+        "bonus_flat": 300,
     },
     "meme_2": {
         "name": "Тёмный Рыцарь",
         "rarity": "EPIC",
         "description": "Защитник слабых, блуждающий в тени ночи.",
-        "bonus_multiplier": 0.02,
-        "bonus_flat": 400,
+        "bonus_multiplier": 0.006,
+        "bonus_flat": 120,
     },
     "meme_3": {
         "name": "Император",
         "rarity": "LEGENDARY",
         "description": "Правитель великой сырной империи.",
-        "bonus_multiplier": 0.06,
-        "bonus_flat": 1500,
+        "bonus_multiplier": 0.018,
+        "bonus_flat": 450,
     },
     "meme_4": {
         "name": "Меченосец",
         "rarity": "COMMON",
         "description": "Обычный стражник на посту.",
-        "bonus_multiplier": 0.001,
-        "bonus_flat": 10,
+        "bonus_multiplier": 0.0003,
+        "bonus_flat": 3,
     },
     "meme_5": {
         "name": "Лесной Маг",
         "rarity": "UNCOMMON",
         "description": "Мастер природной магии и зельеварения.",
-        "bonus_multiplier": 0.003,
-        "bonus_flat": 50,
+        "bonus_multiplier": 0.0009,
+        "bonus_flat": 15,
     },
 }
 
 # Шаблоны автогенерации карт: (редкость, множитель, фикс. доход, префикс имени)
 _RARITY_TEMPLATES = [
-    (lambda i: i % 40 == 0, "LEGENDARY", 0.05,  1000, "🌟 Легендарная Карта"),
-    (lambda i: i % 20 == 0, "EPIC",      0.02,  400,  "🔮 Эпическая Карта"),
-    (lambda i: i % 8 == 0,  "RARE",      0.008, 150,  "🔵 Редкая Карта"),
-    (lambda i: i % 4 == 0,  "UNCOMMON",  0.003, 50,   "🟢 Необычная Карта"),
+    (lambda i: i % 40 == 0, "LEGENDARY", 0.015,  300, "🌟 Легендарная Карта"),
+    (lambda i: i % 20 == 0, "EPIC",      0.006,  120, "🔮 Эпическая Карта"),
+    (lambda i: i % 8 == 0,  "RARE",      0.0024, 45,  "🔵 Редкая Карта"),
+    (lambda i: i % 4 == 0,  "UNCOMMON",  0.0009, 15,  "🟢 Необычная Карта"),
 ]
-_DEFAULT_TEMPLATE = ("COMMON", 0.001, 10, "⚪️ Обычная Карта")
+_DEFAULT_TEMPLATE = ("COMMON", 0.0003, 3, "⚪️ Обычная Карта")
+
 
 
 PIG_TITLES = [
