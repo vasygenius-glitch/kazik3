@@ -71,65 +71,25 @@ class WhitelistMiddleware(BaseMiddleware):
         whitelist = await get_whitelist()
 
         if chat.id not in whitelist:
-            # Определяем, является ли это командой
-            is_command = False
-            if isinstance(event, CallbackQuery):
-                is_command = True
-            elif isinstance(event, Message):
-                text = event.text or event.caption or ""
-                if is_valid_command(text) or event.reply_to_message:
-                    is_command = True
-
-            # Выводим понятный лог в консоль
-            safe_title = escape_html(chat.title) if chat.title else "Unknown"
-            if is_command:
-                logger.warning(f"⚠️ Группа '{safe_title}' (ID: {chat.id}) отсутствует в белом списке! Команда проигнорирована.")
-
-            # Логируем попытку использования
-            is_new = await log_unauthorized_chat(chat.id, chat.title or "Unknown")
-
-            # Отправляем уведомление админу, если это новая группа, или если кто-то настойчиво пишет
-            if CREATOR_ID and CREATOR_ID != 0 and is_new:
-                bot = data.get('bot')
-                if bot:
-                    try:
-                        await bot.send_message(
-                            chat_id=CREATOR_ID,
-                            text=(
-                                f"⚠️ <b>Попытка использования в неразрешенной группе!</b>\n\n"
-                                f"Название: <b>{safe_title}</b>\n"
-                                f"ID группы: <code>{chat.id}</code>\n\n"
-                                f"<i>Чтобы разрешить работу, введите:</i>\n"
-                                f"<code>/allow {chat.id}</code>"
-                            )
-                        )
-                    except Exception as e:
-                        logger.error(f"Ошибка мидлвари: {e}", exc_info=True)
-
-            # Отправляем предупреждение в саму группу (не чаще раза в час), чтобы пользователи знали причину игнора
-            if is_command:
-                if not hasattr(self, '_warning_spam_cache'):
-                    self._warning_spam_cache = {}
-                last_sent = self._warning_spam_cache.get(chat.id, 0)
-                current_time = time.time()
-                if current_time - last_sent > 3600:
-                    self._warning_spam_cache[chat.id] = current_time
+            safe_title = escape_html(chat.title) if chat.title else "Unknown Group"
+            added = await add_to_whitelist(chat.id, chat.title or "Unknown Group")
+            if added:
+                logger.info(f"✅ Чат '{safe_title}' (ID: {chat.id}) автоматически добавлен в белый список!")
+                if CREATOR_ID and CREATOR_ID != 0:
                     bot = data.get('bot')
                     if bot:
                         try:
-                            msg_text = (
-                                f"⚠️ <b>Данный чат не зарегистрирован в белом списке!</b>\n"
-                                f"ID этого чата: <code>{chat.id}</code>\n\n"
-                                f"Свяжитесь с владельцем бота для добавления чата в белый список."
-                            )
-                            if isinstance(event, CallbackQuery):
-                                await event.answer("⚠️ Чат не в белом списке!", show_alert=True)
-                            else:
-                                await event.answer(msg_text)
+                            fire_and_forget(bot.send_message(
+                                chat_id=CREATOR_ID,
+                                text=(
+                                    f"🎉 <b>Бот добавлен в новый чат!</b>\n\n"
+                                    f"Название: <b>{safe_title}</b>\n"
+                                    f"ID группы: <code>{chat.id}</code>\n\n"
+                                    f"✅ <i>Чат автоматически внесен в белый список и сразу готов к работе!</i>"
+                                )
+                            ))
                         except Exception as e:
-                            logger.error(f"Ошибка отправки предупреждения в чат: {e}", exc_info=True)
-
-            return
+                            logger.error(f"Ошибка отправки уведомления админу: {e}", exc_info=True)
 
         # Блокировка команд при СПИДе
         user_id = event.from_user.id if event.from_user else None
