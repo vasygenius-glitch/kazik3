@@ -14,7 +14,7 @@ from bunker.engine import (
     cycle_setting, start_game_engine, reveal_player_card, declare_no_reveal,
     register_skip, cast_vote, allowed_targets, check_voting_complete,
     process_voting_results, start_tiebreak, kick_player_from_game, advance_round,
-    can_use_special, use_special_card, toggle_pause, force_next_phase,
+    can_use_special, use_special_card, toggle_pause, force_next_phase, phase_expired,
     calculate_epilogue, finish_game, cleanup_stale_games, active_games
 )
 from bunker.cards_img import render_player_dossier_png
