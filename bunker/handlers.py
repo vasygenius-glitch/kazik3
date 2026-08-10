@@ -46,9 +46,34 @@ async def _refresh_lobby(bot: Bot, game) -> None:
 
 
 # --------------------------------- команды ---------------------------------- #
+@router.message(or_f(
+    Command("bunker_stop", "bunkerstop", "stop_bunker", "stopbunker", "bunker_end", "bunkerend"),
+    F.text.regexp(r"^[!./]?\s*(бункер\s*(стоп|stop|завершить|отмена)|(стоп|stop|завершить)\s*бункер|бункерстоп|стопбункер|bunkerstop|stopbunker)\b", flags=2)
+))
+async def cmd_bunker_stop(message: types.Message, bot: Bot):
+    game = engine.get_game_by_chat(message.chat.id)
+    if not game:
+        return await message.answer("❌ Активной игры нет.")
+    if not can_manage(game, message.from_user.id):
+        return await message.answer("❌ Остановить может только организатор.")
+    async with game.lock:
+        runner.cancel_timer(game)
+        engine.cancel_game(game)
+        engine.drop_game(game.game_id)
+        if game.lobby_message_id:
+            await runner.safe_edit(bot, game.chat_id, game.lobby_message_id, "🚪 Лобби закрыто (игра остановлена).", None)
+        if game.board_message_id:
+            await runner.safe_edit(bot, game.chat_id, game.board_message_id, "🚫 Партия «Бункер» остановлена.", None)
+    await message.answer("🚫 Партия «Бункер» быстро остановлена.")
+
+
 @router.message(or_f(Command("bunker", "bunker123"),
-                     F.text.regexp(r"^[!./]\s*(бункер|bunker)\b")))
+                     F.text.regexp(r"^[!./]?\s*(бункер|bunker)\b", flags=2)))
 async def cmd_bunker_create(message: types.Message, bot: Bot):
+    text_lower = (message.text or "").lower()
+    if any(w in text_lower for w in ("стоп", "stop", "off", "end", "отмена")):
+        return await cmd_bunker_stop(message, bot)
+
     if message.chat.type == "private":
         return await message.answer("☢️ «Бункер» — групповая игра. "
                                     "Добавьте меня в чат и напишите там /bunker.")
@@ -60,7 +85,7 @@ async def cmd_bunker_create(message: types.Message, bot: Bot):
             return await message.answer("⚠️ Лобби уже открыто (см. сообщение выше).")
         async with existing.lock:
             await runner.post_board(bot, existing)
-        return await message.answer("⚠️ Партия уже идёт. Остановить: /bunker_stop")
+        return await message.answer("⚠️ Партия уже идёт. Остановить: /bunker_stop или напишите «бункер стоп»")
 
     host_name = message.from_user.full_name
     game = engine.create_new_game(engine.new_game_id(message.chat.id), message.chat.id,
@@ -74,20 +99,6 @@ async def cmd_bunker_create(message: types.Message, bot: Bot):
         parse_mode="HTML",
     )
     game.lobby_message_id = msg.message_id
-
-
-@router.message(Command("bunker_stop"))
-async def cmd_bunker_stop(message: types.Message, bot: Bot):
-    game = engine.get_game_by_chat(message.chat.id)
-    if not game:
-        return await message.answer("❌ Активной игры нет.")
-    if not can_manage(game, message.from_user.id):
-        return await message.answer("❌ Остановить может только организатор.")
-    async with game.lock:
-        runner.cancel_timer(game)
-        engine.cancel_game(game)
-        engine.drop_game(game.game_id)
-    await message.answer("🚫 Партия «Бункер» остановлена.")
 
 
 @router.message(Command("bunker_board"))
