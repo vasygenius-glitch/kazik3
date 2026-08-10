@@ -65,6 +65,13 @@ ITEMS: dict[str, dict] = {
     "сфера_дайсона": {"name": "☀️ Сфера Дайсона", "price": 500_000_000_000, "cat": "biz", "action": "business", "income": 50_000_000_000},
     "сингулярность": {"name": "🌀 Генератор Сингулярности", "price": 1_500_000_000_000, "cat": "biz", "action": "business", "income": 150_000_000_000},
     "мультивселенная": {"name": "🔮 Мультивселенский Хаб", "price": 5_000_000_000_000, "cat": "biz", "action": "business", "income": 500_000_000_000},
+    "квантовый_компьютер": {"name": "⚛️ Квантовый Вычислитель", "price": 10_000_000_000_000, "cat": "biz", "action": "business", "income": 1_000_000_000_000, "desc": "Генерирует профит на уровне квантовых вероятностей."},
+    "варп_станция": {"name": "🌌 Варп-Станция", "price": 25_000_000_000_000, "cat": "biz", "action": "business", "income": 2_500_000_000_000, "desc": "Межпространственная торговля ресурсами."},
+    "матрица_времени": {"name": "⏳ Хроно-Матрица", "price": 50_000_000_000_000, "cat": "biz", "action": "business", "income": 5_000_000_000_000, "desc": "Извлекает богатства из временных парадоксов."},
+    "космо_лифт": {"name": "🏗 Орбитальный Лифт", "price": 100_000_000_000_000, "cat": "biz", "action": "business", "income": 10_000_000_000_000, "desc": "Транспортировка руды с астероидных поясов."},
+    "фабрика_темной_материи": {"name": "🌌 Фабрика Тёмной Материи", "price": 250_000_000_000_000, "cat": "biz", "action": "business", "income": 25_000_000_000_000, "desc": "Производит самое дорогое вещество во вселенной."},
+    "галактический_банк": {"name": "🏦 Галактический Централ", "price": 500_000_000_000_000, "cat": "biz", "action": "business", "income": 50_000_000_000_000, "desc": "Управляет денежными потоками галактических цивилизаций."},
+    "абсолютный_абсолют": {"name": "👑 Абсолютный Финансовый Центр", "price": 1_000_000_000_000_000, "cat": "biz", "action": "business", "income": 100_000_000_000_000, "desc": "Вершина финансового могущества во Вселенной."},
 
     # МАШИНЫ
     "самокат":   {"name": "🛴 Электросамокат",  "price": 1_500,      "cat": "cars",  "action": "car", "income": 50},
@@ -84,6 +91,13 @@ ITEMS: dict[str, dict] = {
     "звезда":    {"name": "🛸 Звезда Смерти",    "price": 1_000_000_000,"cat": "cars","action": "car", "income": 65_000_000},
     "галактика": {"name": "🌌 Крейсер",         "price": 5_000_000_000,"cat": "cars","action": "car", "income": 350_000_000},
     "kovcheg":   {"name": "🌌 Ковчег",          "price": 15_000_000_000,"cat": "cars","action": "car","income": 1_000_000_000, "desc": "Дает +20% к ежедневному бонусу!"},
+    "гиперкар_аполлон": {"name": "🏎 Hypercar Apollo Intensa", "price": 25_000_000_000, "cat": "cars", "action": "car", "income": 1_500_000_000, "desc": "Ультра-редкий болид из углеволокна."},
+    "грави_яхта": {"name": "🛸 Антигравитационная Яхта", "price": 50_000_000_000, "cat": "cars", "action": "car", "income": 3_000_000_000, "desc": "Парит над планетами на квантовой подушке."},
+    "планетарный_дредноут": {"name": "⚛️ Планетарный Дредноут", "price": 100_000_000_000, "cat": "cars", "action": "car", "income": 6_000_000_000, "desc": "Пробивает астероидные поля и космический мусор."},
+    "титан_крейсер": {"name": "🛸 Звёздный Дредноут «Титан»", "price": 250_000_000_000, "cat": "cars", "action": "car", "income": 15_000_000_000, "desc": "Флагманский корабль космического флота."},
+    "гипер_гиперион": {"name": "🌌 Флагман «Гиперион»", "price": 500_000_000_000, "cat": "cars", "action": "car", "income": 30_000_000_000, "desc": "Колоссальный флагман с варп-двигателем."},
+    "орбитальная_цитадель": {"name": "🏰 Орбитальная Цитадель", "price": 1_500_000_000_000, "cat": "cars", "action": "car", "income": 100_000_000_000, "desc": "Мобильная космическая крепость высшего класса."},
+    "ковчег_миров": {"name": "🛸 Ковчег Вселенных", "price": 5_000_000_000_000, "cat": "cars", "action": "car", "income": 350_000_000_000, "desc": "Переносит целый мир между измерениями."},
 
     # ПРОЧЕЕ
     "вип":       {"name": "💎 Статус VIP",      "price": 1_000_000, "cat": "other", "action": "other"},
@@ -91,6 +105,12 @@ ITEMS: dict[str, dict] = {
     "lockpick":  {"name": "🗝 Отмычка",          "price": 15_000,    "cat": "other", "action": "other", "desc": "Увеличивает шанс кражи на +15% (одноразовая)."},
     "mask":      {"name": "🎭 Маска вора",       "price": 25_000,    "cat": "other", "action": "other", "desc": "Снижает штраф при неудачной краже (одноразовая)."},
     "medkit":    {"name": "💊 Аптечка",          "price": 10_000,    "cat": "other", "action": "other", "desc": "Полностью вылечивает все ЗППП. Использовать: /heal"},
+    "корона_императора": {"name": "👑 Бриллиантовая Корона Императора", "price": 50_000_000_000, "cat": "other", "action": "other", "desc": "Символ королевской роскоши и авторитета."},
+    "остров_атлантида": {"name": "🏝 Личный Остров «Атлантида»", "price": 100_000_000_000, "cat": "other", "action": "other", "desc": "Тропический рай с собственным микроклиматом."},
+    "лунный_дворец": {"name": "🏛 Дворец на Луне", "price": 500_000_000_000, "cat": "other", "action": "other", "desc": "Роскошная резиденция с панорамным видом на Землю."},
+    "кристалл_вечности": {"name": "💎 Кристалл Вечности", "price": 1_000_000_000_000, "cat": "other", "action": "other", "desc": "Артефакт непревзойденной красоты и ценности."},
+    "черная_дыра_капсула": {"name": "🕳 Капсула Микро-Чёрной Дыры", "price": 5_000_000_000_000, "cat": "other", "action": "other", "desc": "Эксклюзивный источник гравитационной энергии."},
+    "ключ_от_вселенной": {"name": "🔑 Ключ от Мультивселенной", "price": 20_000_000_000_000, "cat": "other", "action": "other", "desc": "Легендарный реликварный предмет богатейших игроков."},
 
     # ДИКТОРЫ ТАЙНИЙ БАНИЙ (СЕЗОН 3) - 70 РАНГОВ РЕДКОСТИ (ВСЕ ЦЕНЫ СБРОШЕНЫ В 0)
     "dictor_common":            {"name": "обычный диктор тайний баний", "price": 0, "cat": "tayniy_baniy", "action": "other", "desc": "Обычный диктор тайний баний (черный кролик 🖤🐇)."},
@@ -464,9 +484,18 @@ async def shop_to_inv(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("shop_cat_"))
 async def show_category(callback: types.CallbackQuery):
     await callback.answer()
-    parts = callback.data.split("_")
-    category = parts[2]
-    page = int(parts[3]) if len(parts) > 3 else 0
+    raw_data = callback.data.removeprefix("shop_cat_")
+    if "_" in raw_data:
+        category, page_str = raw_data.rsplit("_", 1)
+        try:
+            page = int(page_str)
+        except ValueError:
+            category = raw_data
+            page = 0
+    else:
+        category = raw_data
+        page = 0
+
     if category not in CATEGORY_NAMES:
         return
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
@@ -476,9 +505,17 @@ async def show_category(callback: types.CallbackQuery):
 # Обработчик подтверждения покупки: ставим раньше общего, чтобы parse был чистый
 @router.callback_query(F.data.startswith("buy_conf_"))
 async def process_buy_confirmed(callback: types.CallbackQuery):
-    parts = callback.data.split("_")
-    item_id = parts[2]
-    page = int(parts[3]) if len(parts) > 3 else 0
+    raw_data = callback.data.removeprefix("buy_conf_")
+    if "_" in raw_data:
+        item_id, page_str = raw_data.rsplit("_", 1)
+        try:
+            page = int(page_str)
+        except ValueError:
+            item_id = raw_data
+            page = 0
+    else:
+        item_id = raw_data
+        page = 0
     await _process_buy(callback, item_id=item_id, page=page, confirmed=True)
 
 
@@ -487,9 +524,17 @@ async def process_buy(callback: types.CallbackQuery):
     # buy_conf_ уже обработан выше, а здесь оставшиеся "buy_xxx"
     if callback.data.startswith("buy_conf_"):
         return
-    parts = callback.data.split("_")
-    item_id = parts[1]
-    page = int(parts[2]) if len(parts) > 2 else 0
+    raw_data = callback.data.removeprefix("buy_")
+    if "_" in raw_data:
+        item_id, page_str = raw_data.rsplit("_", 1)
+        try:
+            page = int(page_str)
+        except ValueError:
+            item_id = raw_data
+            page = 0
+    else:
+        item_id = raw_data
+        page = 0
     await _process_buy(callback, item_id=item_id, page=page, confirmed=False)
 
 

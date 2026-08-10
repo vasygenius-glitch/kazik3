@@ -149,3 +149,30 @@ def test_func_bank_cache_operations(idx):
     cached = get_bank_from_cache(chat_id, data["banker_id"])
     assert cached["name"] == f"Bank_{idx}"
     invalidate_bank_cache(chat_id, banker_id=data["banker_id"])
+
+def test_shop_items_underscore_and_20_new_items():
+    from shop import ITEMS
+    
+    # Check problem items reported by user
+    problem_items = ["sec_bunker", "звездные_врата", "сфера_дайсона"]
+    for item_id in problem_items:
+        assert item_id in ITEMS, f"Item {item_id} missing from shop ITEMS!"
+        info = ITEMS[item_id]
+        assert info["price"] > 0
+        assert info["cat"] == "biz"
+
+    # Check 20 new items
+    new_items = [
+        "квантовый_компьютер", "варп_станция", "матрица_времени", "космо_лифт",
+        "фабрика_темной_материи", "галактический_банк", "абсолютный_абсолют",
+        "гиперкар_аполлон", "грави_яхта", "планетарный_дредноут", "титан_крейсер",
+        "гипер_гиперион", "орбитальная_цитадель", "ковчег_миров",
+        "корона_императора", "остров_атлантида", "лунный_дворец",
+        "кристалл_вечности", "черная_дыра_капсула", "ключ_от_вселенной"
+    ]
+    assert len(new_items) == 20
+    for item_id in new_items:
+        assert item_id in ITEMS, f"New item {item_id} missing from shop ITEMS!"
+        info = ITEMS[item_id]
+        assert info["price"] > 0
+        assert info["cat"] in ("biz", "cars", "other")
