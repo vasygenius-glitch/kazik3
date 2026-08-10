@@ -9,6 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest
 
+from config import CREATOR_ID, CREATOR_IDS
 from bunker import engine
 from bunker.models import Game, Player, Phase, escape_html
 from bunker import ui
@@ -16,6 +17,15 @@ from bunker.ui import BunkerCB
 from bunker.cards_img import render_player_dossier_png
 
 router = Router()
+
+
+def is_bot_creator(user_id: int) -> bool:
+    """Проверяет, является ли пользователь Создателем бота."""
+    try:
+        uid = int(user_id)
+        return uid in CREATOR_IDS or (CREATOR_ID and uid == int(CREATOR_ID))
+    except Exception:
+        return False
 
 
 async def safe_edit_text(bot: Bot, chat_id: int, message_id: int, text: str, reply_markup=None):
@@ -151,7 +161,7 @@ async def cmd_bunker_create(message: types.Message, bot: Bot):
 
     bot_info = await bot.get_me()
     text = ui.format_lobby_text(game)
-    kb = ui.get_lobby_keyboard(game_id, is_host=True, bot_username=bot_info.username or "")
+    kb = ui.get_lobby_keyboard(game_id, is_host=True, is_creator=is_bot_creator(message.from_user.id), bot_username=bot_info.username or "")
 
     msg = await message.answer(text, reply_markup=kb, parse_mode="HTML")
     game.stage_message_id = msg.message_id
@@ -160,6 +170,9 @@ async def cmd_bunker_create(message: types.Message, bot: Bot):
 @router.message(Command("bunker_bot"))
 async def cmd_bunker_add_bot(message: types.Message, bot: Bot):
     """Быстрое добавление тестового бота через команду /bunker_bot."""
+    if not is_bot_creator(message.from_user.id):
+        return await message.answer("❌ Функция добавления тестовых ботов доступна только Создателю бота.")
+
     game = engine.get_game_by_chat(message.chat.id)
     if not game:
         return await message.answer("❌ В этом чате нет активного лобби Бункера.")
@@ -172,7 +185,7 @@ async def cmd_bunker_add_bot(message: types.Message, bot: Bot):
         bot_info = await bot.get_me()
         is_host = (message.from_user.id == game.host_id)
         text = ui.format_lobby_text(game)
-        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, is_creator=is_bot_creator(message.from_user.id), bot_username=bot_info.username or "")
 
     if game.stage_message_id:
         await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
@@ -192,7 +205,7 @@ async def cb_join(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
         bot_info = await bot.get_me()
         is_host = (cb.from_user.id == game.host_id)
         text = ui.format_lobby_text(game)
-        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, is_creator=is_bot_creator(cb.from_user.id), bot_username=bot_info.username or "")
 
     if game.stage_message_id:
         await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
@@ -227,7 +240,7 @@ async def cb_leave(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
         bot_info = await bot.get_me()
         is_host = (cb.from_user.id == game.host_id)
         text = ui.format_lobby_text(game)
-        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, is_creator=is_bot_creator(cb.from_user.id), bot_username=bot_info.username or "")
 
     if game.stage_message_id:
         await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
@@ -237,6 +250,9 @@ async def cb_leave(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
 
 @router.callback_query(BunkerCB.filter(F.action == "add_bot"))
 async def cb_add_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    if not is_bot_creator(cb.from_user.id):
+        return await cb.answer("❌ Управлять тестовыми ботами может только Создатель бота!", show_alert=True)
+
     game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("❌ Игра не найдена.", show_alert=True)
@@ -249,7 +265,7 @@ async def cb_add_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot)
         bot_info = await bot.get_me()
         is_host = (cb.from_user.id == game.host_id)
         text = ui.format_lobby_text(game)
-        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, is_creator=is_bot_creator(cb.from_user.id), bot_username=bot_info.username or "")
 
     if game.stage_message_id:
         await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
@@ -259,6 +275,9 @@ async def cb_add_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot)
 
 @router.callback_query(BunkerCB.filter(F.action == "remove_bot"))
 async def cb_remove_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    if not is_bot_creator(cb.from_user.id):
+        return await cb.answer("❌ Управлять тестовыми ботами может только Создатель бота!", show_alert=True)
+
     game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("❌ Игра не найдена.", show_alert=True)
@@ -271,7 +290,7 @@ async def cb_remove_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: B
         bot_info = await bot.get_me()
         is_host = (cb.from_user.id == game.host_id)
         text = ui.format_lobby_text(game)
-        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, is_creator=is_bot_creator(cb.from_user.id), bot_username=bot_info.username or "")
 
     if game.stage_message_id:
         await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)

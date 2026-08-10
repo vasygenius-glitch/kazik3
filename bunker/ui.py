@@ -69,14 +69,18 @@ def format_lobby_text(game: Game) -> str:
     return clamp_text("\n".join(text))
 
 
-def get_lobby_keyboard(game_id: str, is_host: bool, bot_username: str = "") -> InlineKeyboardMarkup:
+def get_lobby_keyboard(game_id: str, is_host: bool, is_creator: bool = False, bot_username: str = "") -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="➕ Вступить", callback_data=BunkerCB(action="join", game_id=game_id).pack())
     b.button(text="➖ Покинуть", callback_data=BunkerCB(action="leave", game_id=game_id).pack())
 
-    # Кнопки управления тестовыми ИИ-ботами
-    b.button(text="🤖 + Бот", callback_data=BunkerCB(action="add_bot", game_id=game_id).pack())
-    b.button(text="🤖 - Бот", callback_data=BunkerCB(action="remove_bot", game_id=game_id).pack())
+    row_adjustments = [2]
+
+    # Кнопки управления тестовыми ИИ-ботами (доступны только Создателю бота)
+    if is_creator:
+        b.button(text="🤖 + Бот", callback_data=BunkerCB(action="add_bot", game_id=game_id).pack())
+        b.button(text="🤖 - Бот", callback_data=BunkerCB(action="remove_bot", game_id=game_id).pack())
+        row_adjustments.append(2)
 
     # если username бота неизвестен — не создаём битый URL, шлём callback
     if bot_username:
@@ -85,10 +89,13 @@ def get_lobby_keyboard(game_id: str, is_host: bool, bot_username: str = "") -> I
         b.button(text="🃏 Мои карты в ЛС",
                  callback_data=BunkerCB(action="my_cards", game_id=game_id).pack())
 
+    row_adjustments.append(1)
+
     if is_host:
         b.button(text="🚀 НАЧАТЬ ИГРУ", callback_data=BunkerCB(action="start", game_id=game_id).pack())
+        row_adjustments.append(1)
 
-    b.adjust(2, 2, 1, 1)
+    b.adjust(*row_adjustments)
     return b.as_markup()
 
 
