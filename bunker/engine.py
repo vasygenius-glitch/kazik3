@@ -449,6 +449,9 @@ def start_tiebreak(game: Game) -> None:
     set_phase(game, Phase.TIEBREAK)
 
 
+_rng = random.SystemRandom()
+
+
 def kick_player_from_game(game: Game, kicked_id: int) -> str:
     p = game.players.get(kicked_id)
     if not p or not p.alive:
@@ -456,14 +459,9 @@ def kick_player_from_game(game: Game, kicked_id: int) -> str:
     p.alive = False
     p.shielded = False
     reveal_all_cards(p)
-    lines = [f"💀 Изгнан(а): <b>{p.safe_name}</b> — карты вскрыты:"]
-    for c in p.cards.values():
-        lines.append(f"   {c.icon} <b>{escape_html(c.category_name)}:</b> "
-                     f"{escape_html(shorten(c.value, 70))}")
-    if p.special_card:
-        used = "использована" if p.special_card.used else "не использована"
-        lines.append(f"   ✨ {p.special_card.icon} {escape_html(p.special_card.name)} ({used})")
-    return "\n".join(lines)
+    cards_summary = " · ".join(f"{c.icon}{escape_html(shorten(c.value, 30))}" for c in p.cards.values())
+    sc_info = f" · ✨{p.special_card.icon}{escape_html(p.special_card.name)}" if p.special_card else ""
+    return f"💀 Изгнан(а) <b>{p.safe_name}</b>:\n<i>{cards_summary}{sc_info}</i>"
 
 
 def advance_round(game: Game) -> bool:
@@ -535,7 +533,7 @@ def use_special_card(game: Game, user_id: int, arg: str = "") -> Tuple[bool, str
         hidden = p.hidden_cards()
         if not hidden:
             return False, "Все ваши карты уже раскрыты.", ""
-        card = random.choice(hidden)
+        card = _rng.choice(hidden)
         in_play = {c.value for pl in game.players.values()
                    for cid, c in pl.cards.items() if cid == card.category_id}
         card.value = random_value_for(card.category_id, in_play)
@@ -550,7 +548,7 @@ def use_special_card(game: Game, user_id: int, arg: str = "") -> Tuple[bool, str
         hidden = target.hidden_cards()
         if not hidden or target.user_id == user_id or not target.alive:
             return False, "У этого игрока нечего смотреть.", ""
-        card = random.choice(hidden)
+        card = _rng.choice(hidden)
         priv = (f"🔍 Досмотр <b>{target.safe_name}</b>:\n"
                 f"{card.icon} <b>{escape_html(card.category_name)}:</b> {escape_html(card.value)}")
         event = f"🔍 <b>{p.safe_name}</b> досмотрел(а) <b>{target.safe_name}</b>"
@@ -595,7 +593,7 @@ def process_bot_actions(game: Game, max_actions: int = 1) -> List[str]:
     bots = [p for p in game.alive_players() if p.is_bot]
     if not bots:
         return events
-    random.shuffle(bots)
+    _rng.shuffle(bots)
 
     for b in bots:
         if len(events) >= max_actions:
@@ -606,7 +604,7 @@ def process_bot_actions(game: Game, max_actions: int = 1) -> List[str]:
             hidden = b.hidden_cards()
             if not hidden:
                 continue
-            ok, _, ev = reveal_player_card(game, b.user_id, random.choice(hidden).category_id)
+            ok, _, ev = reveal_player_card(game, b.user_id, _rng.choice(hidden).category_id)
             if ok:
                 events.append(ev)
         elif game.phase is Phase.DISCUSSION:
@@ -619,7 +617,7 @@ def process_bot_actions(game: Game, max_actions: int = 1) -> List[str]:
             targets = [t for t in allowed_targets(game, b.user_id) if t != 0] \
                 or allowed_targets(game, b.user_id)
             if targets:
-                ok, _, ev = cast_vote(game, b.user_id, random.choice(targets))
+                ok, _, ev = cast_vote(game, b.user_id, _rng.choice(targets))
                 if ok:
                     events.append(ev)
     return [e for e in events if e]
@@ -692,24 +690,16 @@ def calculate_epilogue(game: Game) -> str:
         weak.append(f"перенаселение (+{over})")
 
     score = max(5, min(99, score))
+    status = "🎉 <b>УСПЕХ!</b> Группа выжила." if score >= 70 else "💀 <b>ТРАГЕДИЯ.</b> Двери закрыты."
+    surv_names = ", ".join(p.safe_name for p in survivors)
+    dead_names = ", ".join(p.safe_name for p in game.dead_players()) or "нет"
+
     lines = [
-        head,
-        f"🏚 {escape_html(sc.bunker_name)} · {sc.duration_years} год(а) под землёй",
-        "",
-        "🚪 <b>Выжившие:</b>",
-    ]
-    for p in survivors:
-        prof = p.cards["profession"].value if "profession" in p.cards else "без профессии"
-        lines.append(f"• <b>{p.safe_name}</b> — {escape_html(shorten(prof, 46))}")
-    if game.dead_players():
-        lines.append("💀 <b>Изгнаны:</b> " + ", ".join(p.safe_name for p in game.dead_players()))
-    lines += [
-        "",
-        f"📊 <b>Шанс выживания:</b> {score}%",
-        f"✅ {', '.join(strong) if strong else 'сильных сторон нет'}",
-        f"⚠️ {', '.join(weak) if weak else 'слабых сторон нет'}",
-        "",
-        (f"🎉 <b>УСПЕХ!</b> Группа пережила «{escape_html(sc.title)}»."
-         if score >= 70 else "💀 <b>ТРАГЕДИЯ.</b> Двери так и не открылись."),
+        f"📖 <b>ЭПИЛОГ · {escape_html(sc.title)}</b> ({score}%)",
+        f"🚪 <b>Выжили:</b> {surv_names}",
+        f"💀 <b>Изгнаны:</b> {dead_names}",
+        f"✅ {', '.join(strong) if strong else 'нет'}",
+        f"⚠️ {', '.join(weak) if weak else 'нет'}",
+        status
     ]
     return "\n".join(lines)

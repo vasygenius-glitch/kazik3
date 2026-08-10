@@ -1,5 +1,5 @@
 # bunker/deck.py
-"""Раздача карт. Значения внутри категории не повторяются у игроков."""
+"""Раздача карт с криптографически стойкой рандомизацией SystemRandom."""
 from __future__ import annotations
 
 import random
@@ -9,16 +9,18 @@ from typing import Dict, List, Optional
 from bunker.data import CATEGORIES, CATEGORY_POOLS, SPECIAL_CARDS_POOL
 from bunker.models import Card, SpecialCard
 
+_rng = random.SystemRandom()
+
 
 def _unique_sample(pool: List[str], n: int) -> List[str]:
     values = list(dict.fromkeys(pool))
     if not values:
         return ["данные утеряны"] * n
-    random.shuffle(values)
+    _rng.shuffle(values)
     out = values[:n]
-    while len(out) < n:                     # игроков больше, чем карт в категории
+    while len(out) < n:                     # игроков больше, чем уникальных карт в категории
         extra = values[:]
-        random.shuffle(extra)
+        _rng.shuffle(extra)
         out.extend(extra[: n - len(out)])
     return out
 
@@ -39,7 +41,7 @@ def deal_special_cards(num_players: int) -> List[Optional[SpecialCard]]:
     for _ in range(num_players):
         if not pool:
             pool = [replace(c) for c in SPECIAL_CARDS_POOL]
-            random.shuffle(pool)
+            _rng.shuffle(pool)
         out.append(pool.pop())
     return out
 
@@ -48,4 +50,4 @@ def random_value_for(cat_id: str, exclude: set[str]) -> str:
     pool = [v for v in CATEGORY_POOLS.get(cat_id, []) if v not in exclude]
     if not pool:
         pool = CATEGORY_POOLS.get(cat_id, ["данные утеряны"])
-    return random.choice(pool)
+    return _rng.choice(pool)
