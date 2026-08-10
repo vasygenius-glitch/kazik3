@@ -37,6 +37,7 @@ from crash import router as crash_router
 from admin_dashboard import router as admin_dashboard_router
 from court import router as court_router
 from cards_system import router as cards_system_router
+from bunker import router as bunker_router
 
 import asyncio
 from user_manager import get_user_data, update_user_balance
@@ -134,4 +135,5 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(admin_dashboard_router)
     dp.include_router(court_router)
     dp.include_router(cards_system_router)
+    dp.include_router(bunker_router)
     dp.include_router(catch_all_router)
