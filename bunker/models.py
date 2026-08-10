@@ -129,6 +129,7 @@ class Game:
     nominees: List[int] = field(default_factory=list)
     tie_candidates: List[int] = field(default_factory=list)
     tie_attempts: int = 0
+    consecutive_no_reveals: int = 0
     stage_message_id: Optional[int] = None
     logs: List[str] = field(default_factory=list)
     timer_seconds: int = 0

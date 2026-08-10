@@ -156,8 +156,9 @@ async def send_player_dossier(
             f"<b>ХАРАКТЕРИСТИКИ ПЕРСОНАЖА:</b>\n"
         )
         for card in player.cards.values():
-            val = escape_html(card.value) if card.revealed else "🔒 [ЗАКРЫТО]"
-            text_dossier += f"• {card.icon} <b>{escape_html(card.category_name)}:</b> {val}\n"
+            val = escape_html(str(card.value))
+            status_tag = " 🔓 <i>(раскрыта чату)</i>" if card.revealed else " 🔒 <i>(в секрете)</i>"
+            text_dossier += f"• {card.icon} <b>{escape_html(card.category_name)}:</b> {val}{status_tag}\n"
 
         if player.special_card:
             sc = player.special_card

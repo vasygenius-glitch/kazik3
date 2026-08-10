@@ -421,8 +421,19 @@ def kick_player_from_game(game: Game, kicked_id: int) -> str:
 
 def advance_round(game: Game) -> bool:
     """
-    Переход к следующему раунду. True — игра продолжается, False — пора в эпилог.
+    Переход к следующему раунду. True — игра продолжается, False — пора в эпилог или отмену.
     """
+    reveals_in_round = sum(p.reveals_this_round for p in game.alive_players())
+    if reveals_in_round == 0:
+        game.consecutive_no_reveals += 1
+    else:
+        game.consecutive_no_reveals = 0
+
+    if game.consecutive_no_reveals >= 3:
+        game.log("⚠️ <b>3 раунда подряд никто не раскрыл ни одной карты!</b> Игра перезапускается.")
+        set_phase(game, Phase.FINISHED, timer=0)
+        return False
+
     game.reset_round_state()
     if game.alive_count <= game.capacity or game.current_round >= game.total_rounds:
         set_phase(game, Phase.EPILOGUE)

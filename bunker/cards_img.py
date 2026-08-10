@@ -64,20 +64,17 @@ def render_player_dossier_png(player: Player, scenario: Scenario) -> io.BytesIO:
 
     for key, card in player.cards.items():
         is_rev = card.revealed
-        bg_color = (30, 40, 55) if is_rev else (25, 28, 36)
-        border_color = (70, 120, 180) if is_rev else (45, 50, 65)
+        bg_color = (30, 45, 60) if is_rev else (25, 28, 36)
+        border_color = (70, 150, 220) if is_rev else (45, 50, 65)
 
         draw.rectangle([(40, y), (width - 40, y + 42)], fill=bg_color, outline=border_color, width=1)
         
-        cat_text = f"{card.icon} {card.category_name}:"
+        status_tag = " [🔓]" if is_rev else " [🔒]"
+        cat_text = f"{card.icon} {card.category_name}{status_tag}:"
         draw.text((50, y + 10), cat_text, fill=(220, 225, 235), font=font_body)
 
-        if is_rev:
-            val_text = str(card.value)
-            val_color = (100, 230, 140)
-        else:
-            val_text = "🔒 [ЗАКРЫТО / НЕ РАСКРЫТО]"
-            val_color = (130, 140, 155)
+        val_text = str(card.value)
+        val_color = (100, 230, 140) if is_rev else (240, 210, 130)
 
         draw.text((280, y + 10), val_text, fill=val_color, font=font_body)
         y += 50
