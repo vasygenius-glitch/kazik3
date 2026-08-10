@@ -57,3 +57,22 @@ async def test_feedback_with_text():
     chat_id, sent_text = bot.sent_messages[0]
     assert "НОВОЕ ПРЕДЛОЖЕНИЕ" in sent_text
     assert "Добавьте больше катастроф" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_cmd_changelog():
+    """Проверка команды /новости /обновления."""
+    from feedback import cmd_changelog
+    class DummyMessage:
+        def __init__(self):
+            self.replies = []
+        async def answer(self, text, parse_mode=None):
+            self.replies.append(text)
+            return self
+
+    msg = DummyMessage()
+    await cmd_changelog(msg)
+    assert len(msg.replies) == 1
+    assert "КРУПНОЕ ОБНОВЛЕНИЕ БОТА" in msg.replies[0]
+    assert "/bunker" in msg.replies[0]
+
