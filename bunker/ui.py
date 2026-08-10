@@ -143,6 +143,14 @@ def format_stage_text(game: Game, bot_username: str = "") -> str:
         f"📌 <b>Статус:</b> {_phase_title(game)}",
         f"🚪 <b>Мест в бункере:</b> {game.capacity} · <b>в игре:</b> {alive}/{len(game.players)}",
     ]
+
+    if game.phase is Phase.REVEAL:
+        lines.append("🔓 <i>Раскрывайте карты и доказывайте в чате, почему именно вы должны выжить!</i>")
+    elif game.phase is Phase.DISCUSSION:
+        lines.append("🎤 <b>ОБСУЖДЕНИЕ И ЗАЩИТА:</b>\n<i>Объясните в чате, почему вы крутой и необходимый специалист для выживания в бункере!</i>")
+    elif game.phase.is_voting:
+        lines.append("🗳 <i>Голосуйте за кандидата на изгнание или выберите «Никого не изгонять»!</i>")
+
     if game.timer_seconds:
         lines.append(
             f"⏱ <b>Время фазы:</b> {game.timer_seconds} сек. "
@@ -249,13 +257,18 @@ def get_vote_keyboard(game: Game, voter_id: int, targets: List[int]) -> Optional
         return None
     b = InlineKeyboardBuilder()
     for tid in targets:
-        target = game.players.get(tid)
-        if not target:
-            continue
-        b.button(
-            text=f"🗳 {target.name}",
-            callback_data=BunkerCB(action="vote_do", game_id=game.game_id, extra=str(tid)).pack(),
-        )
+        if tid == 0:
+            b.button(
+                text="⛔ Никого не изгонять",
+                callback_data=BunkerCB(action="vote_do", game_id=game.game_id, extra="0").pack(),
+            )
+        else:
+            target = game.players.get(tid)
+            if target:
+                b.button(
+                    text=f"🗳 {target.name}",
+                    callback_data=BunkerCB(action="vote_do", game_id=game.game_id, extra=str(tid)).pack(),
+                )
     b.button(text="⬅️ Назад", callback_data=BunkerCB(action="refresh", game_id=game.game_id).pack())
     b.adjust(1)
     return b.as_markup()

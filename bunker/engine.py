@@ -201,6 +201,12 @@ def set_phase(game: Game, phase: Phase, timer: Optional[int] = None) -> None:
     game.touch()
 
 
+from bunker.data import (
+    CATEGORIES, PROFESSIONS, HEALTH_CONDITIONS, GENDER_AGE,
+    TRAITS, HOBBIES, BAGGAGE, FACTS_1, FACTS_2, PHOBIAS, BIOLOGY,
+    SPECIAL_CARDS_POOL, SCENARIOS, calculate_bunker_capacity
+)
+
 def start_game_engine(game: Game) -> Tuple[bool, str]:
     """Запускает партию, раздаёт карты и вычисляет вместимость бункера."""
     if game.phase is not Phase.LOBBY:
@@ -213,9 +219,8 @@ def start_game_engine(game: Game) -> Tuple[bool, str]:
         return False, "Не найдено ни одного сценария (проверьте data.py)."
 
     game.scenario = random.choice(SCENARIOS)
-    # мест примерно половина, но всегда 1..count-1, иначе раундов не будет
-    game.capacity = min(max(1, count // 2), count - 1)
-    game.total_rounds = count - game.capacity
+    game.capacity = calculate_bunker_capacity(count)
+    game.total_rounds = max(1, count - game.capacity)
     game.current_round = 1
 
     hands = deal_hands(count)
@@ -306,11 +311,13 @@ def register_skip(game: Game, user_id: int) -> Tuple[bool, str, bool]:
 #                              голосование                                    #
 # --------------------------------------------------------------------------- #
 def allowed_targets(game: Game, voter_id: int) -> List[int]:
-    """Кого можно выбрать: живые, кроме себя; в переголосовании — только спорные."""
+    """Кого можно выбрать: живые, кроме себя; + 0 (Пропустить изгнание)."""
     targets = [p.user_id for p in game.alive_players() if p.user_id != voter_id]
     if game.phase is Phase.TIEBREAK and game.tie_candidates:
         allowed = set(game.tie_candidates)
         targets = [t for t in targets if t in allowed]
+    else:
+        targets.append(0)  # 0 = Никого не изгонять
     return targets
 
 
@@ -327,16 +334,20 @@ def cast_vote(game: Game, voter_id: int, target_id: int) -> Tuple[bool, str]:
     if voter_id == target_id:
         return False, "Голосовать за себя нельзя."
 
-    target = game.players.get(target_id)
-    if not target or not target.alive:
-        return False, "Нельзя проголосовать за этого игрока."
-    if target_id not in allowed_targets(game, voter_id):
-        return False, "В переголосовании можно выбирать только спорных кандидатов."
+    if target_id != 0:
+        target = game.players.get(target_id)
+        if not target or not target.alive:
+            return False, "Нельзя проголосовать за этого игрока."
+        if target_id not in allowed_targets(game, voter_id):
+            return False, "В переголосовании можно выбирать только спорных кандидатов."
+        target_name = target.name
+    else:
+        target_name = "«Никого не изгонять»"
 
     voter.voted_for = target_id
     game.votes[voter_id] = target_id
     game.log(f"🗳 <b>{voter.safe_name}</b> проголосовал.")
-    return True, f"Ваш голос за {target.name} принят!"
+    return True, f"Ваш голос за {target_name} принят!"
 
 
 def check_voting_complete(game: Game) -> bool:
@@ -351,9 +362,12 @@ def tally_votes(game: Game) -> Dict[int, float]:
     tally: Dict[int, float] = {}
     for voter_id, target_id in game.votes.items():
         voter = game.players.get(voter_id)
-        target = game.players.get(target_id)
         if not voter or not voter.alive:
             continue
+        if target_id == 0:
+            tally[0] = tally.get(0, 0.0) + max(0.0, voter.vote_weight)
+            continue
+        target = game.players.get(target_id)
         if not target or not target.alive or target.shielded:
             continue
         tally[target_id] = tally.get(target_id, 0.0) + max(0.0, voter.vote_weight)
@@ -377,6 +391,10 @@ def process_voting_results(game: Game) -> Tuple[Optional[int], bool]:
 
     top_votes = max(tally.values())
     ties = sorted(tid for tid, v in tally.items() if v == top_votes)
+
+    if 0 in ties:
+        game.log("⛔ Большинство проголосовало «Никого не изгонять»! Раунд завершился без изгнаний.")
+        return None, False
 
     if len(ties) > 1:
         if game.phase is Phase.TIEBREAK or game.tie_attempts >= 1:

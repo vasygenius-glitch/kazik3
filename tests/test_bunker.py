@@ -30,7 +30,7 @@ def test_bunker_basic_game_flow():
     started, msg = start_game_engine(game)
     assert started is True
     assert game.phase == Phase.INTRO
-    assert game.capacity == 1
+    assert 1 <= game.capacity <= 3
 
     player_111 = game.players[111]
     assert len(player_111.cards) == 10
