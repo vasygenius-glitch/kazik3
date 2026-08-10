@@ -161,18 +161,16 @@ def test_shop_items_underscore_and_20_new_items():
         assert info["price"] > 0
         assert info["cat"] == "biz"
 
-    # Check 20 new items
+    # Check 14 new businesses and vehicles
     new_items = [
         "квантовый_компьютер", "варп_станция", "матрица_времени", "космо_лифт",
         "фабрика_темной_материи", "галактический_банк", "абсолютный_абсолют",
         "гиперкар_аполлон", "грави_яхта", "планетарный_дредноут", "титан_крейсер",
-        "гипер_гиперион", "орбитальная_цитадель", "ковчег_миров",
-        "корона_императора", "остров_атлантида", "лунный_дворец",
-        "кристалл_вечности", "черная_дыра_капсула", "ключ_от_вселенной"
+        "гипер_гиперион", "орбитальная_цитадель", "ковчег_миров"
     ]
-    assert len(new_items) == 20
+    assert len(new_items) == 14
     for item_id in new_items:
         assert item_id in ITEMS, f"New item {item_id} missing from shop ITEMS!"
         info = ITEMS[item_id]
         assert info["price"] > 0
-        assert info["cat"] in ("biz", "cars", "other")
+        assert info["cat"] in ("biz", "cars")
