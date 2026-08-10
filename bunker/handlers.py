@@ -241,6 +241,24 @@ async def _open_in_dm(bot: Bot, cb: types.CallbackQuery, game, player,
                     show_alert=True)
 
 
+@router.callback_query(BunkerCB.filter(F.action.in_({"pause", "next_phase"})))
+async def cb_control(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("❌ Игра не найдена.", show_alert=True)
+    if not can_manage(game, cb.from_user.id):
+        return await cb.answer("❌ Управлять игрой может только организатор.", show_alert=True)
+
+    async with game.lock:
+        if callback_data.action == "pause":
+            ok, msg = engine.toggle_pause(game)
+        else:
+            ok, msg = engine.force_next_phase(game)
+        if ok:
+            await runner.render_board(bot, game, force=True)
+    await cb.answer(msg, show_alert=not ok)
+
+
 @router.callback_query(BunkerCB.filter(F.action == "my_cards"))
 async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
     game, player = _get(callback_data, cb.from_user.id)

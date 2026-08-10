@@ -153,8 +153,11 @@ def _hint(game: Game) -> str:
 def _render_board(game: Game, level: int) -> str:
     sc = game.scenario
     left = engine.seconds_left(game)
-    bucket = -(-left // 10) * 10          # округление вверх до 10 с
-    timer = f" · ⏳ ~{fmt_timer(bucket)}" if game.timer_seconds and left else ""
+    if game.is_paused:
+        timer = " · ⏸ <b>ПАУЗА</b>"
+    else:
+        bucket = -(-left // 10) * 10          # округление вверх до 10 с
+        timer = f" · ⏳ ~{fmt_timer(bucket)}" if game.timer_seconds and left else ""
     out = [
         f"☢️ <b>БУНКЕР</b> · {escape_html(sc.title) if sc else '—'}",
         f"🏚 {escape_html(sc.bunker_name) if sc else '—'} · 🎟 мест {game.capacity} · "
@@ -213,11 +216,16 @@ def get_board_keyboard(game: Game, bot_username: str = "") -> Optional[InlineKey
         kb.button(text="🗳 Голосовать", callback_data=cb("vote_menu", gid))
     else:
         kb.button(text="🃏 Личное дело", callback_data=cb("my_cards", gid))
+
+    pause_btn = "▶️ Снять" if game.is_paused else "⏸ Пауза"
+    kb.button(text=pause_btn, callback_data=cb("pause", gid))
+    kb.button(text="⏩ След. фаза", callback_data=cb("next_phase", gid))
+
     kb.button(text="🃏 Моё дело", callback_data=cb("my_cards", gid))
     kb.button(text="🔄", callback_data=cb("refresh", gid))
     if bot_username:
         kb.button(text="📩 ЛС", url=deep_link(bot_username, gid))
-    kb.adjust(1, 3)
+    kb.adjust(1, 2, 3)
     return kb.as_markup()
 
 

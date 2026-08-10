@@ -302,12 +302,30 @@ async def _resolve_votes(bot: Bot, game: Game) -> None:
         await _finish(bot, game)
 
 
+async def _auto_cleanup_task(bot: Bot, game: Game) -> None:
+    try:
+        await asyncio.sleep(30)
+        async with game.lock:
+            if game.board_message_id:
+                await safe_edit(bot, game.chat_id, game.board_message_id,
+                                "🏁 <b>Партия «Бункер» завершена.</b>\n<i>Игровые данные автоматически очищены.</i>", None)
+            for p in game.humans():
+                if p.prompt_message_id:
+                    await safe_edit(bot, p.user_id, p.prompt_message_id,
+                                    "🏁 <b>Сеанс завершён.</b>", None)
+            engine.drop_game(game.game_id)
+    except Exception:
+        log.exception("bunker auto cleanup error for %s", game.game_id)
+
+
 async def _finish(bot: Bot, game: Game) -> None:
     await safe_send(bot, game.chat_id, engine.calculate_epilogue(game))
     engine.finish_game(game)
+    game.push_event("🧹 <b>Автоочистка через 30 секунд…</b>")
     await render_board(bot, game, force=True)
     for p in game.humans():
         if p.prompt_message_id:
             await safe_edit(bot, p.user_id, p.prompt_message_id,
                             "🏁 Партия завершена. Спасибо за игру!", None)
     cancel_timer(game)
+    asyncio.create_task(_auto_cleanup_task(bot, game), name=f"bunker_clean:{game.game_id}")

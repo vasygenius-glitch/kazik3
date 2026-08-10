@@ -176,11 +176,40 @@ def set_phase(game: Game, phase: Phase, timer: Optional[int] = None) -> None:
 
 
 def seconds_left(game: Game) -> int:
+    if game.is_paused:
+        return max(0, game.paused_seconds_left)
     return max(0, int(round(game.phase_deadline - time.time()))) if game.phase_deadline else 0
 
 
 def phase_expired(game: Game) -> bool:
+    if game.is_paused:
+        return False
     return bool(game.phase_deadline) and time.time() >= game.phase_deadline
+
+
+def toggle_pause(game: Game) -> Tuple[bool, str]:
+    if not game.phase.in_game:
+        return False, "Пауза возможна только во время игры."
+    if game.is_paused:
+        game.phase_deadline = time.time() + game.paused_seconds_left
+        game.is_paused = False
+        game.push_event("▶️ <b>Организатор снял игру с паузы</b>")
+        return True, "▶️ Игра снята с паузы."
+    else:
+        game.paused_seconds_left = seconds_left(game)
+        game.is_paused = True
+        game.push_event("⏸ <b>Организатор поставил игру на паузу</b>")
+        return True, "⏸ Игра поставлена на паузу."
+
+
+def force_next_phase(game: Game) -> Tuple[bool, str]:
+    if not game.phase.in_game:
+        return False, "Переход возможен только во время игры."
+    if game.is_paused:
+        game.is_paused = False
+    game.phase_deadline = time.time() - 1
+    game.push_event("⏩ <b>Организатор досрочно переключил фазу</b>")
+    return True, "⏩ Переход к следующей фазе."
 
 
 def phase_complete(game: Game) -> bool:

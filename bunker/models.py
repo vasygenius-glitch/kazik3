@@ -194,6 +194,8 @@ class Game:
     events: List[str] = field(default_factory=list)
     timer_seconds: int = 0
     phase_deadline: float = 0.0
+    is_paused: bool = False
+    paused_seconds_left: int = 0
     phase_started_at: float = field(default_factory=time.time)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
