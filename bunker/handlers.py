@@ -113,11 +113,18 @@ async def send_player_dossier(
     sc_title = scenario.title if scenario else "Неизвестно"
     sc_bunker = scenario.bunker_name if scenario else "Неизвестно"
 
+    roleplay_tip = (
+        "\n\n🎭 <b>Совет по отыгрышу:</b> Желательно отыгрывать свои карты в чате (но это необязательно)! "
+        "Например: если вы Паникёр — распускайте слухи и паникуйте; если Хладнокровный — держите спокойствие; "
+        "если Душнила — поправляйте каждую ошибку других!"
+    )
+
     caption_text = (
         f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО ВЫЖИВАЮЩЕГО</b>\n"
         f"Катастрофа: <b>{escape_html(sc_title)}</b>\n"
-        f"Бункер: <b>{escape_html(sc_bunker)}</b>\n\n"
+        f"Бункер: <b>{escape_html(sc_bunker)}</b>\n"
         f"Секретные карты выданы! Никому их не показывай до фазы раскрытия."
+        f"{roleplay_tip}"
     )
 
     # 1. Попытка отправить изображение PNG
@@ -156,6 +163,8 @@ async def send_player_dossier(
             sc = player.special_card
             used_str = " (ИСПОЛЬЗОВАНА)" if sc.used else ""
             text_dossier += f"\n✨ <b>СПЕЦКАРТА:</b> {sc.icon} <b>{escape_html(sc.name)}{used_str}</b> — {escape_html(sc.description)}\n"
+
+        text_dossier += roleplay_tip
 
         if message:
             await message.answer(text_dossier, reply_markup=reply_markup, parse_mode="HTML")
