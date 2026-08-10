@@ -100,6 +100,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(seasons_router)
     
     # Остальные модули
+    dp.include_router(bunker_router)
     dp.include_router(economy_router)
     dp.include_router(blackjack_router)
     dp.include_router(rps_router)
@@ -135,5 +136,4 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(admin_dashboard_router)
     dp.include_router(court_router)
     dp.include_router(cards_system_router)
-    dp.include_router(bunker_router)
     dp.include_router(catch_all_router)

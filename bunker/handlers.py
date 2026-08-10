@@ -37,7 +37,7 @@ async def safe_edit_text(bot: Bot, chat_id: int, message_id: int, text: str, rep
         pass
 
 
-@router.message(Command("start"), F.text.contains("b"))
+@router.message(Command("start"), F.text.regexp(r"^/start\s+b"))
 async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
     """Обработка deep-link в ЛС бота: /start <game_id>"""
     parts = message.text.split()
