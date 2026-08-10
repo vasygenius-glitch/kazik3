@@ -1,206 +1,458 @@
 # bunker/engine.py
+from __future__ import annotations
+
 import random
 import time
-from typing import Dict, List, Tuple, Optional
-from bunker.models import Game, Player, Phase, Scenario
+from typing import Dict, List, Optional, Tuple
+
 from bunker.data import SCENARIOS
-from bunker.deck import generate_player_cards, generate_special_card
+from bunker.deck import deal_hands, deal_special_cards
+from bunker.models import (
+    MAX_PLAYERS, MIN_PLAYERS, Game, Phase, Player, escape_html,
+)
 
 # Хранилище активных игр в памяти: {game_id: Game}
 active_games: Dict[str, Game] = {}
 
+GAME_TTL_SECONDS = 6 * 3600          # игру без активности 6 часов считаем брошенной
+REVEALS_PER_ROUND = {1: 2}           # в первом раунде вскрывают 2 карты, далее — 1
+DEFAULT_REVEALS = 1
+
+PHASE_TIMERS: Dict[Phase, int] = {
+    Phase.INTRO: 45,
+    Phase.REVEAL: 90,
+    Phase.DISCUSSION: 120,
+    Phase.DEFENSE: 60,
+    Phase.VOTING: 60,
+    Phase.TIEBREAK: 45,
+    Phase.KICK: 10,
+    Phase.EPILOGUE: 0,
+    Phase.FINISHED: 0,
+}
+
+
+# --------------------------------------------------------------------------- #
+#                            жизненный цикл игры                              #
+# --------------------------------------------------------------------------- #
 def create_new_game(game_id: str, chat_id: int, host_id: int, host_name: str) -> Game:
-    """Создаёт новую игру в режиме лобби."""
+    """Создаёт новую игру в режиме лобби (и подчищает мусор)."""
+    cleanup_stale_games()
     game = Game(
         game_id=game_id,
         chat_id=chat_id,
         host_id=host_id,
         host_name=host_name,
         phase=Phase.LOBBY,
-        created_at=time.time()
+        created_at=time.time(),
     )
     active_games[game_id] = game
     return game
 
+
 def get_game(game_id: str) -> Optional[Game]:
-    """Возвращает активную игру по game_id."""
     return active_games.get(game_id)
 
-def get_game_by_chat(chat_id: int) -> Optional[Game]:
-    """Возвращает активную игру для конкретного чата."""
-    for g in active_games.values():
-        if g.chat_id == chat_id and g.phase != Phase.FINISHED:
-            return g
-    return None
 
-def start_game_engine(game: Game) -> bool:
-    """Запускает партию, распределяет карты и вычисляет вместимость бункера."""
-    if len(game.players) < 2:
-        return False
-        
-    game.scenario = random.choice(SCENARIOS)
+def get_game_by_chat(chat_id: int) -> Optional[Game]:
+    """Возвращает незавершённую игру чата (самую свежую)."""
+    candidates = [
+        g for g in active_games.values()
+        if g.chat_id == chat_id and g.phase is not Phase.FINISHED
+    ]
+    return max(candidates, key=lambda g: g.created_at, default=None)
+
+
+def drop_game(game_id: str) -> None:
+    active_games.pop(game_id, None)
+
+
+def cleanup_stale_games(now: Optional[float] = None) -> int:
+    """Удаляет завершённые и заброшенные игры — иначе active_games течёт."""
+    now = now or time.time()
+    stale = [
+        gid for gid, g in active_games.items()
+        if g.phase is Phase.FINISHED or (now - g.updated_at) > GAME_TTL_SECONDS
+    ]
+    for gid in stale:
+        del active_games[gid]
+    return len(stale)
+
+
+# --------------------------------------------------------------------------- #
+#                                   лобби                                     #
+# --------------------------------------------------------------------------- #
+def add_player(game: Game, user_id: int, name: str, username: str = "") -> Tuple[bool, str]:
+    if game.phase is not Phase.LOBBY:
+        return False, "Игра уже началась — присоединиться нельзя."
+    if user_id in game.players:
+        return False, "Вы уже в лобби."
+    if len(game.players) >= MAX_PLAYERS:
+        return False, f"Лобби заполнено (максимум {MAX_PLAYERS} игроков)."
+
+    clean_name = (name or "").strip()[:32] or f"Игрок {len(game.players) + 1}"
+    game.players[user_id] = Player(
+        user_id=user_id,
+        name=clean_name,
+        username=username or "",
+        seat=len(game.players) + 1,
+    )
+    game.touch()
+    return True, f"{clean_name}, вы в лобби!"
+
+
+def remove_player(game: Game, user_id: int) -> Tuple[bool, str]:
+    if game.phase is not Phase.LOBBY:
+        return False, "Выйти можно только до старта игры."
+    player = game.players.pop(user_id, None)
+    if player is None:
+        return False, "Вас нет в лобби."
+
+    # переназначаем места, чтобы не было дыр в нумерации
+    for idx, p in enumerate(game.players.values(), 1):
+        p.seat = idx
+
+    # если ушёл организатор — передаём права следующему
+    if user_id == game.host_id and game.players:
+        new_host = next(iter(game.players.values()))
+        game.host_id = new_host.user_id
+        game.host_name = new_host.name
+        game.log(f"👑 Новый организатор: <b>{new_host.safe_name}</b>")
+
+    game.touch()
+    return True, "Вы покинули лобби."
+
+
+# --------------------------------------------------------------------------- #
+#                                  старт                                      #
+# --------------------------------------------------------------------------- #
+def set_phase(game: Game, phase: Phase, timer: Optional[int] = None) -> None:
+    game.phase = phase
+    game.timer_seconds = PHASE_TIMERS.get(phase, 60) if timer is None else timer
+    game.phase_deadline = time.time() + game.timer_seconds if game.timer_seconds else 0.0
+    game.touch()
+
+
+def start_game_engine(game: Game) -> Tuple[bool, str]:
+    """Запускает партию, раздаёт карты и вычисляет вместимость бункера."""
+    if game.phase is not Phase.LOBBY:
+        return False, "Игра уже запущена."
+
     count = len(game.players)
-    
-    # Расчёт мест в бункере: примерно половина участников
-    game.capacity = max(1, count // 2)
+    if count < MIN_PLAYERS:
+        return False, f"Нужно минимум {MIN_PLAYERS} игрока для старта."
+    if not SCENARIOS:
+        return False, "Не найдено ни одного сценария (проверьте data.py)."
+
+    game.scenario = random.choice(SCENARIOS)
+    # мест примерно половина, но всегда 1..count-1, иначе раундов не будет
+    game.capacity = min(max(1, count // 2), count - 1)
     game.total_rounds = count - game.capacity
     game.current_round = 1
-    
-    # Выдача карт игрокам
-    for idx, player in enumerate(game.players.values(), 1):
+
+    hands = deal_hands(count)
+    specials = deal_special_cards(count)
+
+    for idx, (player, hand, special) in enumerate(
+        zip(game.players.values(), hands, specials), 1
+    ):
         player.seat = idx
-        player.cards = generate_player_cards()
-        player.special_card = generate_special_card()
+        player.cards = hand
+        player.special_card = special
+        player.is_rat = special.id == "rat"
         player.alive = True
-        
-    game.phase = Phase.INTRO
-    game.timer_seconds = 45
-    game.logs.append(f"Выбран сценарий: {game.scenario.title}. Мест в бункере: {game.capacity}.")
-    return True
+        player.reset_round_state()
+
+    game.reset_round_state()
+    set_phase(game, Phase.INTRO)
+    game.log(
+        f"{game.scenario.icon} Сценарий: <b>{escape_html(game.scenario.title)}</b>. "
+        f"Мест в бункере: {game.capacity} из {count}."
+    )
+    return True, "Игра началась!"
+
+
+# --------------------------------------------------------------------------- #
+#                            раскрытие карт                                   #
+# --------------------------------------------------------------------------- #
+def reveals_allowed(game: Game) -> int:
+    return REVEALS_PER_ROUND.get(game.current_round, DEFAULT_REVEALS)
+
 
 def reveal_player_card(game: Game, user_id: int, cat_id: str) -> Tuple[bool, str]:
-    """Раскрывает указанную карту игрока."""
+    """Раскрывает указанную карту игрока (с проверкой фазы и лимита)."""
+    if game.phase is not Phase.REVEAL:
+        return False, "Сейчас не фаза раскрытия карт."
+
     player = game.players.get(user_id)
-    if not player or not player.alive:
-        return False, "Вы не можете производить действия."
+    if player is None:
+        return False, "Вы не участвуете в этой игре."
+    if not player.alive:
+        return False, "Изгнанные игроки не раскрывают карты."
+
+    limit = reveals_allowed(game)
+    if player.reveals_this_round >= limit:
+        return False, f"В этом раунде вы уже раскрыли карт: {limit}."
 
     card = player.cards.get(cat_id)
-    if not card:
+    if card is None:
         return False, "Карта не найдена."
-        
     if card.revealed:
         return False, "Эта карта уже раскрыта."
 
     card.revealed = True
-    game.logs.append(f"👤 {player.name} раскрыл карту {card.icon} <b>{card.category_name}</b>: {card.value}")
-    return True, f"Карта {card.category_name} успешно раскрыта!"
+    player.reveals_this_round += 1
+    game.log(
+        f"👤 <b>{player.safe_name}</b> раскрыл {card.icon} "
+        f"<b>{escape_html(card.category_name)}</b>: {escape_html(card.value)}"
+    )
+    return True, f"Карта «{card.category_name}» раскрыта!"
+
+
+def check_reveal_complete(game: Game) -> bool:
+    limit = reveals_allowed(game)
+    return all(
+        p.reveals_this_round >= limit or not p.hidden_cards()
+        for p in game.alive_players()
+    )
+
+
+def register_skip(game: Game, user_id: int) -> Tuple[bool, str, bool]:
+    """Голос за досрочное завершение обсуждения. -> (ok, текст, все_пропустили)"""
+    if game.phase is not Phase.DISCUSSION:
+        return False, "Сейчас нет обсуждения.", False
+    player = game.players.get(user_id)
+    if not player or not player.alive:
+        return False, "Вы не участвуете в обсуждении.", False
+    if player.has_skipped:
+        return False, "Вы уже пропустили обсуждение.", False
+
+    player.has_skipped = True
+    alive = game.alive_players()
+    done = all(p.has_skipped for p in alive)
+    game.touch()
+    return True, "Ваш голос за пропуск учтён.", done
+
+
+# --------------------------------------------------------------------------- #
+#                              голосование                                    #
+# --------------------------------------------------------------------------- #
+def allowed_targets(game: Game, voter_id: int) -> List[int]:
+    """Кого можно выбрать: живые, кроме себя; в переголосовании — только спорные."""
+    targets = [p.user_id for p in game.alive_players() if p.user_id != voter_id]
+    if game.phase is Phase.TIEBREAK and game.tie_candidates:
+        allowed = set(game.tie_candidates)
+        targets = [t for t in targets if t in allowed]
+    return targets
+
 
 def cast_vote(game: Game, voter_id: int, target_id: int) -> Tuple[bool, str]:
     """Регистрирует голос игрока."""
-    if game.phase not in [Phase.VOTING, Phase.TIEBREAK]:
+    if not game.phase.is_voting:
         return False, "Сейчас не фаза голосования."
 
     voter = game.players.get(voter_id)
-    target = game.players.get(target_id)
-
     if not voter or not voter.alive:
         return False, "Вы не участвуете в голосовании."
+    if voter_id in game.votes:
+        return False, "Вы уже проголосовали."
+    if voter_id == target_id:
+        return False, "Голосовать за себя нельзя."
 
+    target = game.players.get(target_id)
     if not target or not target.alive:
         return False, "Нельзя проголосовать за этого игрока."
+    if target_id not in allowed_targets(game, voter_id):
+        return False, "В переголосовании можно выбирать только спорных кандидатов."
 
     voter.voted_for = target_id
     game.votes[voter_id] = target_id
-    game.logs.append(f"🗳 {voter.name} проголосовал.")
+    game.log(f"🗳 <b>{voter.safe_name}</b> проголосовал.")
     return True, f"Ваш голос за {target.name} принят!"
 
-def check_voting_complete(game: Game) -> bool:
-    """Проверяет, все ли живые игроки проголосовали."""
-    alive_players = [p for p in game.players.values() if p.alive]
-    return len(game.votes) >= len(alive_players)
 
-def process_voting_results(game: Game) -> Tuple[Optional[int], bool]:
-    """
-    Подсчитывает итоги голосования.
-    Возвращает (kicked_user_id, is_tie).
-    """
+def check_voting_complete(game: Game) -> bool:
+    """Учитываем только голоса ЖИВЫХ игроков (мёртвые/старые голоса не считаются)."""
+    alive_ids = {p.user_id for p in game.alive_players()}
+    voted = alive_ids & set(game.votes)
+    return len(voted) >= len(alive_ids) and bool(alive_ids)
+
+
+def tally_votes(game: Game) -> Dict[int, float]:
+    """Подсчёт с учётом веса голоса и «Брони» (shielded)."""
     tally: Dict[int, float] = {}
     for voter_id, target_id in game.votes.items():
         voter = game.players.get(voter_id)
-        weight = voter.vote_weight if voter else 1.0
-        tally[target_id] = tally.get(target_id, 0.0) + weight
+        target = game.players.get(target_id)
+        if not voter or not voter.alive:
+            continue
+        if not target or not target.alive or target.shielded:
+            continue
+        tally[target_id] = tally.get(target_id, 0.0) + max(0.0, voter.vote_weight)
+    return tally
+
+
+def process_voting_results(game: Game) -> Tuple[Optional[int], bool]:
+    """
+    Итоги голосования -> (kicked_user_id, is_tie).
+    Повторная ничья решается жребием, чтобы игра не зациклилась.
+    """
+    tally = tally_votes(game)
 
     if not tally:
-        # Если никто не проголосовал — выбираем случайного
-        alive_ids = [p.user_id for p in game.players.values() if p.alive]
-        kicked_id = random.choice(alive_ids)
+        pool = [p.user_id for p in game.alive_players() if not p.shielded]
+        if not pool:
+            return None, False
+        kicked_id = random.choice(pool)
+        game.log("⚠️ Голосов нет — изгнанник определён жребием.")
         return kicked_id, False
 
-    sorted_tally = sorted(tally.items(), key=lambda x: x[1], reverse=True)
-    top_target, top_votes = sorted_tally[0]
-
-    # Проверка на ничью
-    ties = [tid for tid, vcount in sorted_tally if vcount == top_votes]
+    top_votes = max(tally.values())
+    ties = sorted(tid for tid, v in tally.items() if v == top_votes)
 
     if len(ties) > 1:
+        if game.phase is Phase.TIEBREAK or game.tie_attempts >= 1:
+            kicked_id = random.choice(ties)
+            game.log("⚖️ Повторная ничья — решает жребий.")
+            return kicked_id, False
         game.tie_candidates = ties
-        return None, True  # Ничья
-        
-    return top_target, False
+        game.tie_attempts += 1
+        return None, True
+
+    return ties[0], False
+
 
 def kick_player_from_game(game: Game, kicked_id: int) -> str:
     """Изгоняет игрока из бункера."""
     player = game.players.get(kicked_id)
-    if player:
-        player.alive = False
-        game.logs.append(f"💀 Игрок <b>{player.name}</b> был изгнан голосованием из бункера!")
-        return f"💀 Игрок {player.name} изгнан из бункера!"
-    return ""
+    if not player or not player.alive:
+        return ""
+    player.alive = False
+    player.shielded = False
+    game.log(f"💀 Игрок <b>{player.safe_name}</b> изгнан голосованием!")
+    return f"💀 Игрок {player.name} изгнан из бункера!"
+
+
+def advance_round(game: Game) -> bool:
+    """
+    Переход к следующему раунду. True — игра продолжается, False — пора в эпилог.
+    """
+    game.reset_round_state()
+    if game.alive_count <= game.capacity or game.current_round >= game.total_rounds:
+        set_phase(game, Phase.EPILOGUE)
+        return False
+    game.current_round += 1
+    set_phase(game, Phase.REVEAL)
+    return True
+
+
+def finish_game(game: Game) -> None:
+    set_phase(game, Phase.FINISHED, timer=0)
+
+
+# --------------------------------------------------------------------------- #
+#                                 эпилог                                      #
+# --------------------------------------------------------------------------- #
+KEY_ROLES = (
+    ("медицина", 15, ("хирург", "врач", "медиц")),
+    ("техника", 15, ("инженер", "сварщик", "механик", "сантехник")),
+    ("продовольствие", 10, ("агроном", "фермер", "повар", "охотник")),
+)
+SEVERE_HEALTH = ("диабет", "сердц", "астма", "порок")
+
+
+def _survivor_values(survivors: List[Player], cat_id: str) -> List[str]:
+    return [p.cards[cat_id].value for p in survivors if cat_id in p.cards]
+
+
+def _apply_scenario_weights(game: Game, survivors: List[Player]) -> Tuple[int, List[str], List[str]]:
+    """Наконец-то используем Scenario.weights: 'категория:подстрока' -> модификатор."""
+    delta, pros, cons = 0, [], []
+    for key, mod in (game.scenario.weights or {}).items():
+        cat_id, _, needle = key.partition(":")
+        if not needle:
+            continue
+        needle_l = needle.lower()
+        matched = any(needle_l in v.lower() for v in _survivor_values(survivors, cat_id))
+        if not matched:
+            continue
+        delta += mod * 3
+        (pros if mod > 0 else cons).append(f"{escape_html(needle)} ({mod:+d})")
+    return delta, pros, cons
+
 
 def calculate_epilogue(game: Game) -> str:
-    """Генерирует связный эпилог и подсчитывает процент выживаемости бункера."""
+    """Генерирует эпилог и оценивает шанс выживания группы."""
     sc = game.scenario
-    survivors = [p for p in game.players.values() if p.alive]
-    
-    score = 60  # Базовый балл выживания
-    
-    strengths = []
-    weaknesses = []
+    if sc is None:
+        return "📖 Эпилог недоступен: сценарий не был выбран."
 
-    # Анализ профессий выживших
-    professions = [p.cards.get("profession").value if p.cards.get("profession") else "" for p in survivors]
-    healths = [p.cards.get("health").value if p.cards.get("health") else "" for p in survivors]
+    survivors = game.alive_players()
+    if not survivors:
+        return (
+            f"📖 <b>ЭПИЛОГ · {escape_html(sc.title)}</b>\n"
+            f"💀 Бункер «{escape_html(sc.bunker_name)}» остался пустым — выживших нет."
+        )
 
-    # Проверка ключевых ролей
-    has_medic = any("Хирург" in pr or "Врач" in pr for pr in professions)
-    has_engineer = any("Инженер" in pr or "Сварщик" in pr or "Механик" in pr for pr in professions)
-    has_agronomy = any("Агроном" in pr or "Фермер" in pr for pr in professions)
+    score = 50
+    strengths: List[str] = []
+    weaknesses: List[str] = []
 
-    if has_medic:
-        score += 15
-        strengths.append("Медицинское обеспечение (есть квалифицированный врач)")
-    else:
-        score -= 15
-        weaknesses.append("Отсутствие врача (любая эпидемия губительна)")
+    professions = " | ".join(_survivor_values(survivors, "profession")).lower()
+    for label, bonus, keywords in KEY_ROLES:
+        if any(k in professions for k in keywords):
+            score += bonus
+            strengths.append(f"есть специалист: {label}")
+        elif label != "продовольствие":
+            score -= bonus
+            weaknesses.append(f"нет специалиста: {label}")
 
-    if has_engineer:
-        score += 15
-        strengths.append("Техническое обслуживание оборудования")
-    else:
-        score -= 15
-        weaknesses.append("Отсутствие инженера (оборудование ломается)")
-
-    if has_agronomy:
-        score += 10
-        strengths.append("Продовольственная независимость")
-
-    # Учёт тяжелых болезней
-    sick_count = sum(1 for h in healths if "диабет" in h.lower() or "сердца" in h.lower() or "астма" in h.lower())
-    if sick_count > 0:
-        score -= (sick_count * 8)
-        weaknesses.append(f"Наличие тяжелобольных в изолированном пространстве ({sick_count} чел.)")
-
-    score = max(5, min(100, score))
-
-    text = (
-        f"📖 <b>ФИНАЛЬНЫЙ ЭПИЛОГ · {sc.duration_years} ЛЕТ СТИХИИ</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🚪 <b>Выжившие в бункере:</b>\n"
+    sick = sum(
+        1 for h in _survivor_values(survivors, "health")
+        if any(k in h.lower() for k in SEVERE_HEALTH)
     )
+    if sick:
+        score -= sick * 8
+        weaknesses.append(f"тяжелобольных в группе: {sick}")
+
+    w_delta, w_pros, w_cons = _apply_scenario_weights(game, survivors)
+    score += w_delta
+    strengths.extend(w_pros)
+    weaknesses.extend(w_cons)
+
+    if len(survivors) > game.capacity:
+        over = len(survivors) - game.capacity
+        score -= over * 10
+        weaknesses.append(f"перенаселение бункера (+{over} чел.)")
+
+    score = max(5, min(99, score))
+
+    lines = [
+        f"📖 <b>ФИНАЛЬНЫЙ ЭПИЛОГ · {sc.duration_years} ЛЕТ ПОД ЗЕМЛЁЙ</b>",
+        "━" * 18,
+        f"{sc.icon} <b>{escape_html(sc.title)}</b> · {escape_html(sc.bunker_name)}",
+        "",
+        "🚪 <b>Выжившие:</b>",
+    ]
     for p in survivors:
-        prof = p.cards['profession'].value if 'profession' in p.cards else 'Без профессии'
-        text += f"• 👤 <b>{p.name}</b> ({prof})\n"
+        prof = p.cards["profession"].value if "profession" in p.cards else "без профессии"
+        lines.append(f"• 👤 <b>{p.safe_name}</b> — {escape_html(prof)}")
 
-    text += (
-        f"\n📊 <b>Шанс выживания группы:</b> {score}%\n\n"
-        f"✅ <b>Сильные стороны:</b> {', '.join(strengths) if strengths else 'Минимальные'}\n"
-        f"⚠️ <b>Слабые стороны:</b> {', '.join(weaknesses) if weaknesses else 'Не выявлены'}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-    )
+    lines += [
+        "",
+        f"📊 <b>Шанс выживания группы:</b> {score}%",
+        f"✅ <b>Сильные стороны:</b> {', '.join(strengths) if strengths else 'минимальные'}",
+        f"⚠️ <b>Слабые стороны:</b> {', '.join(weaknesses) if weaknesses else 'не выявлены'}",
+        "━" * 18,
+    ]
 
     if score >= 70:
-        text += f"🎉 <b>УСПЕХ!</b> Бункер успешно пережил катастрофу «{sc.title}» и открыл двери в новый мир!"
+        lines.append(f"🎉 <b>УСПЕХ!</b> Бункер пережил «{escape_html(sc.title)}» и открыл двери в новый мир!")
     else:
-        text += f"💀 <b>ТРАГЕДИЯ!</b> Группа столкнулась с неустранимыми проблемами в бункере и не смогла дожить до открытия."
+        lines.append("💀 <b>ТРАГЕДИЯ!</b> Группа не смогла дожить до открытия дверей.")
 
-    return text
+    rats = [p for p in survivors if p.is_rat]
+    if rats and score < 70:
+        names = ", ".join(p.safe_name for p in rats)
+        lines.append(f"\n🐀 <b>Крыса победила:</b> {names} (+50% личных очков).")
+
+    return "\n".join(lines)

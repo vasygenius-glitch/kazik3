@@ -1,207 +1,226 @@
 # bunker/handlers.py
+from __future__ import annotations
+
 import asyncio
+import time
 from aiogram import Router, types, F, Bot
 from aiogram.filters import Command, or_f
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.types import BufferedInputFile, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import BufferedInputFile
+from aiogram.exceptions import TelegramBadRequest
 
-from bunker.models import Game, Player, Phase
-from bunker.engine import (
-    create_new_game, get_game, get_game_by_chat, start_game_engine,
-    reveal_player_card, cast_vote, check_voting_complete, process_voting_results,
-    kick_player_from_game, calculate_epilogue
-)
-from bunker.ui import (
-    BunkerCB, format_lobby_text, get_lobby_keyboard,
-    format_stage_text, get_stage_keyboard
-)
+from bunker import engine
+from bunker.models import Game, Player, Phase, escape_html
+from bunker import ui
+from bunker.ui import BunkerCB
 from bunker.cards_img import render_player_dossier_png
 
 router = Router()
 
-@router.message(Command("start"), F.text.contains("bnk_"))
+
+async def safe_edit_text(bot: Bot, chat_id: int, message_id: int, text: str, reply_markup=None):
+    """Безопасное редактирование сообщения с перехватом TelegramBadRequest."""
+    try:
+        await bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML"
+        )
+    except TelegramBadRequest as e:
+        if "message is not modified" in str(e).lower():
+            pass
+        else:
+            raise e
+    except Exception:
+        pass
+
+
+@router.message(Command("start"), F.text.contains("b"))
 async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
-    """Обработка deep-link в ЛС бота: /start bnk_<chat_id>_<timestamp>"""
+    """Обработка deep-link в ЛС бота: /start <game_id>"""
     parts = message.text.split()
     if len(parts) < 2:
         return
-        
+
     game_id = parts[1].strip()
-    game = get_game(game_id)
+    game = engine.get_game(game_id)
     if not game:
         return await message.answer("❌ Игра не найдена или уже завершена.")
-        
+
     player = game.players.get(message.from_user.id)
     if not player:
         return await message.answer("❌ Вы не являетесь участником этой игры.")
 
-    if game.phase == Phase.LOBBY or not game.scenario or not player.cards:
+    if game.phase is Phase.LOBBY or not game.scenario or not player.cards:
         return await message.answer(
             f"⌛ <b>Вы успешно перешли в ЛС бота!</b>\n"
-            f"Сейчас идет подготовка к игре. Как только организатор нажмет «НАЧАТЬ ИГРУ», вам сюда сразу придет ваша личная карточка выживающего!"
+            f"Сейчас идет подготовка к игре. Как только организатор нажмет «НАЧАТЬ ИГРУ», вам сюда придут ваши секретные карты!"
         )
 
-    # Отправляем карточку игроку в ЛС
     png_buf = render_player_dossier_png(player, game.scenario)
     photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{player.user_id}.png")
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔓 Раскрыть карту", callback_data=BunkerCB(action="reveal_menu", game_id=game_id).pack())
-    builder.adjust(1)
+    if game.phase is Phase.REVEAL:
+        builder.button(text="🔓 Раскрыть карту", callback_data=BunkerCB(action="reveal_menu", game_id=game_id).pack())
 
     await message.answer_photo(
         photo=photo_file,
         caption=(
             f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО</b>\n"
-            f"Катастрофа: <b>{game.scenario.title}</b>\n"
-            f"Бункер: <b>{game.scenario.bunker_name}</b>\n\n"
-            f"Используй кнопку ниже, чтобы выбрать карту для раскрытия в чате!"
+            f"Катастрофа: <b>{escape_html(game.scenario.title)}</b>\n"
+            f"Бункер: <b>{escape_html(game.scenario.bunker_name)}</b>\n\n"
+            f"Используй кнопки в чате для действий!"
         ),
-        reply_markup=builder.as_markup()
+        reply_markup=builder.as_markup() if builder.export() else None,
+        parse_mode="HTML"
     )
+
 
 @router.message(or_f(Command("bunker123"), Command("bunker"), F.text.regexp(r"^[!/]+(bunker123|bunker|бункер)(\s|$)")))
 async def cmd_bunker_create(message: types.Message, bot: Bot):
     """Создание игры Бункер в чате."""
     chat_id = message.chat.id
-    existing_game = get_game_by_chat(chat_id)
-    if existing_game:
+    existing_game = engine.get_game_by_chat(chat_id)
+    if existing_game and existing_game.phase is not Phase.FINISHED:
         return await message.answer(
-            f"⚠️ В этом чате уже запущена подготовка или игра «Бункер»!\n"
-            f"Завершите текущую партию или используйте существующее лобби."
+            "⚠️ В этом чате уже запущена подготовка или игра «Бункер»!\n"
+            "Завершите текущую партию или используйте существующее лобби."
         )
 
-    game_id = f"bnk_{chat_id}_{int(message.date.timestamp())}"
-    host_name = message.from_user.full_name
-    game = create_new_game(game_id, chat_id, message.from_user.id, host_name)
-    
-    # Автоматически добавляем создателя в лобби
-    game.players[message.from_user.id] = Player(
-        user_id=message.from_user.id,
-        name=host_name,
-        username=message.from_user.username or "",
-        seat=1
-    )
+    # Короткий ID для умещения в 64-байтный CallbackData
+    short_cid = abs(chat_id) % 1000000
+    short_time = int(time.time()) % 100000
+    game_id = f"b{short_cid}_{short_time}"
 
-    text = format_lobby_text(game)
-    kb = get_lobby_keyboard(game_id, is_host=True)
-    
-    msg = await message.answer(text, reply_markup=kb)
+    host_name = message.from_user.full_name
+    game = engine.create_new_game(game_id, chat_id, message.from_user.id, host_name)
+    engine.add_player(game, message.from_user.id, host_name, message.from_user.username or "")
+
+    bot_info = await bot.get_me()
+    text = ui.format_lobby_text(game)
+    kb = ui.get_lobby_keyboard(game_id, is_host=True, bot_username=bot_info.username or "")
+
+    msg = await message.answer(text, reply_markup=kb, parse_mode="HTML")
     game.stage_message_id = msg.message_id
 
+
 @router.callback_query(BunkerCB.filter(F.action == "join"))
-async def cb_join(cb: types.CallbackQuery, callback_data: BunkerCB):
-    game = get_game(callback_data.game_id)
-    if not game or game.phase != Phase.LOBBY:
-        return await cb.answer("❌ Игра не доступна для входа.", show_alert=True)
+async def cb_join(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("❌ Игра не найдена.", show_alert=True)
 
-    uid = cb.from_user.id
-    if uid in game.players:
-        return await cb.answer("Вы уже в лобби!", show_alert=True)
+    async with game.lock:
+        ok, msg = engine.add_player(game, cb.from_user.id, cb.from_user.full_name, cb.from_user.username or "")
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
 
-    game.players[uid] = Player(
-        user_id=uid,
-        name=cb.from_user.full_name,
-        username=cb.from_user.username or "",
-        seat=len(game.players) + 1
-    )
+        bot_info = await bot.get_me()
+        is_host = (cb.from_user.id == game.host_id)
+        text = ui.format_lobby_text(game)
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
 
-    is_host = (uid == game.host_id)
-    text = format_lobby_text(game)
-    kb = get_lobby_keyboard(game.game_id, is_host=is_host)
-    
-    try:
-        await cb.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        pass
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
 
-    await cb.answer("✅ Вы успешно вошли в лобби игры!")
+    await cb.answer(msg)
+
 
 @router.callback_query(BunkerCB.filter(F.action == "leave"))
-async def cb_leave(cb: types.CallbackQuery, callback_data: BunkerCB):
-    game = get_game(callback_data.game_id)
-    if not game or game.phase != Phase.LOBBY:
-        return await cb.answer("❌ Нельзя покинуть игру сейчас.", show_alert=True)
+async def cb_leave(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("❌ Игра не найдена.", show_alert=True)
 
-    uid = cb.from_user.id
-    if uid not in game.players:
-        return await cb.answer("Вы не состоите в лобби.", show_alert=True)
+    async with game.lock:
+        ok, msg = engine.remove_player(game, cb.from_user.id)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
 
-    del game.players[uid]
+        if not game.players:
+            engine.drop_game(game.game_id)
+            if game.stage_message_id:
+                try:
+                    await bot.edit_message_text(
+                        chat_id=game.chat_id,
+                        message_id=game.stage_message_id,
+                        text="🚪 Все игроки покинули лобби. Игра отменена."
+                    )
+                except Exception:
+                    pass
+            return await cb.answer("Вы покинули лобби. Лобби закрыто.")
 
-    is_host = (cb.from_user.id == game.host_id)
-    text = format_lobby_text(game)
-    kb = get_lobby_keyboard(game.game_id, is_host=is_host)
+        bot_info = await bot.get_me()
+        is_host = (cb.from_user.id == game.host_id)
+        text = ui.format_lobby_text(game)
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
 
-    try:
-        await cb.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        pass
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
 
-    await cb.answer("Вы покинули лобби.")
+    await cb.answer(msg)
+
 
 @router.callback_query(BunkerCB.filter(F.action == "start"))
 async def cb_start(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
-    game = get_game(callback_data.game_id)
-    if not game or game.phase != Phase.LOBBY:
-        return await cb.answer("❌ Игра уже запущена.", show_alert=True)
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("❌ Игра не найдена.", show_alert=True)
 
     if cb.from_user.id != game.host_id:
         return await cb.answer("❌ Только организатор может начать игру!", show_alert=True)
 
-    if len(game.players) < 2:
-        return await cb.answer("❌ Для старта нужно минимум 2 игрока!", show_alert=True)
+    async with game.lock:
+        ok, msg = engine.start_game_engine(game)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
 
-    success = start_game_engine(game)
-    if not success:
-        return await cb.answer("❌ Ошибка при старте игры.", show_alert=True)
+        bot_info = await bot.get_me()
 
-    bot_info = await bot.get_me()
-    
-    # Рассылка тайных карт в ЛС каждому игроку
-    for p in game.players.values():
-        try:
-            png_buf = render_player_dossier_png(p, game.scenario)
-            photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{p.user_id}.png")
+        # Рассылка карт
+        for p in game.players.values():
+            try:
+                png_buf = render_player_dossier_png(p, game.scenario)
+                photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{p.user_id}.png")
+                await bot.send_photo(
+                    chat_id=p.user_id,
+                    photo=photo_file,
+                    caption=(
+                        f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО ВЫЖИВАЮЩЕГО</b>\n"
+                        f"Катастрофа: <b>{escape_html(game.scenario.title)}</b>\n"
+                        f"Бункер: <b>{escape_html(game.scenario.bunker_name)}</b> ({escape_html(game.scenario.bunker_size)})\n\n"
+                        f"Секретные карты выданы! Никому их не показывай до фазы раскрытия."
+                    ),
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
 
-            builder = InlineKeyboardBuilder()
-            builder.button(text="🔓 Раскрыть карту", callback_data=BunkerCB(action="reveal_menu", game_id=game.game_id).pack())
+        text = ui.format_stage_text(game, bot_info.username or "")
+        kb = ui.get_stage_keyboard(game, bot_info.username or "")
 
-            await bot.send_photo(
-                chat_id=p.user_id,
-                photo=photo_file,
-                caption=(
-                    f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО ВЫЖИВАЮЩЕГО</b>\n"
-                    f"Катастрофа: <b>{game.scenario.title}</b>\n"
-                    f"Бункер: <b>{game.scenario.bunker_name}</b> ({game.scenario.bunker_size})\n\n"
-                    f"Никому не показывай закрытые характеристики раньше времени!"
-                ),
-                reply_markup=builder.as_markup()
-            )
-        except Exception:
-            # Пользователь не начал диалог с ботом
-            pass
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
 
-    game.phase = Phase.REVEAL
-    text = format_stage_text(game, bot_info.username)
-    kb = get_stage_keyboard(game, bot_info.username)
-    
-    await cb.message.edit_text(text, reply_markup=kb)
-    await cb.answer("🚀 Игра «Бункер» началась! Картам присвоены грифы секретности.")
+    await cb.answer("🚀 Игра «Бункер» началась!")
+
 
 @router.callback_query(BunkerCB.filter(F.action == "my_cards"))
 async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
-    game = get_game(callback_data.game_id)
+    game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("❌ Игра не найдена.", show_alert=True)
 
     p = game.players.get(cb.from_user.id)
     if not p:
-        return await cb.answer("Вы не являетесь участником данной игры. Нажмите «Вступить»!", show_alert=True)
+        return await cb.answer("Вы не являетесь участником данной игры.", show_alert=True)
 
-    if game.phase == Phase.LOBBY or not game.scenario or not p.cards:
+    if game.phase is Phase.LOBBY or not game.scenario or not p.cards:
         return await cb.answer(
-            "⌛ Игра еще не началась! Карты будут вызданы каждому участнику после нажатия «НАЧАТЬ ИГРУ».",
+            "⌛ Игра еще не началась! Ваши секретные карты будут выданы после нажатия «НАЧАТЬ ИГРУ».",
             show_alert=True
         )
 
@@ -212,180 +231,161 @@ async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot
         await bot.send_photo(
             chat_id=cb.from_user.id,
             photo=photo_file,
-            caption="🃏 Ваша личная карточка выживающего."
+            caption="🃏 Ваша личная карточка выживающего.",
+            parse_mode="HTML"
         )
         await cb.answer("Карточка отправлена вам в ЛС! 📩")
     except Exception:
+        username = bot_info.username or ""
         await cb.answer(
-            f"❌ Не удалось отправить карточку в ЛС! Сначала нажмите /start в боте: t.me/{bot_info.username}?start={game.game_id}",
+            f"❌ Сначала нажмите /start в боте: t.me/{username}?start={game.game_id}",
             show_alert=True
         )
 
+
 @router.callback_query(BunkerCB.filter(F.action == "reveal_menu"))
 async def cb_reveal_menu(cb: types.CallbackQuery, callback_data: BunkerCB):
-    game = get_game(callback_data.game_id)
+    game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("Игра не найдена.", show_alert=True)
 
-    p = game.players.get(cb.from_user.id)
-    if not p or not p.alive:
-        return await cb.answer("Вы не можете раскрывать карты.", show_alert=True)
+    kb = ui.get_reveal_keyboard(game, cb.from_user.id)
+    if not kb:
+        return await cb.answer("У вас нет доступных карт для раскрытия.", show_alert=True)
 
-    builder = InlineKeyboardBuilder()
-    for cat_id, card in p.cards.items():
-        if not card.revealed:
-            builder.button(
-                text=f"{card.icon} {card.category_name}",
-                callback_data=BunkerCB(action="reveal_do", game_id=game.game_id, extra=cat_id).pack()
-            )
-            
-    builder.adjust(2)
-    if not builder.export():
-        return await cb.answer("У вас все карты уже раскрыты!", show_alert=True)
-
-    await cb.message.answer("Выберите карту для публичного раскрытия в чате:", reply_markup=builder.as_markup())
+    await cb.message.answer("Выберите карту для публичного раскрытия:", reply_markup=kb)
     await cb.answer()
+
 
 @router.callback_query(BunkerCB.filter(F.action == "reveal_do"))
 async def cb_reveal_do(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
-    game = get_game(callback_data.game_id)
+    game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("Игра не найдена.", show_alert=True)
 
-    cat_id = callback_data.extra
-    success, msg = reveal_player_card(game, cb.from_user.id, cat_id)
-    if not success:
-        return await cb.answer(msg, show_alert=True)
+    async with game.lock:
+        ok, msg = engine.reveal_player_card(game, cb.from_user.id, callback_data.extra)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
 
-    bot_info = await bot.get_me()
-    text = format_stage_text(game, bot_info.username)
-    kb = get_stage_keyboard(game, bot_info.username)
+        if engine.check_reveal_complete(game):
+            engine.set_phase(game, Phase.DISCUSSION)
+            game.log("⏳ Все игроки раскрыли карты! Началась фаза обсуждения.")
 
-    # Обновляем сцену в чате
+        bot_info = await bot.get_me()
+        text = ui.format_stage_text(game, bot_info.username or "")
+        kb = ui.get_stage_keyboard(game, bot_info.username or "")
+
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
+
     try:
-        await bot.edit_message_text(chat_id=game.chat_id, message_id=game.stage_message_id, text=text, reply_markup=kb)
+        await cb.message.delete()
     except Exception:
         pass
 
-    await cb.answer(msg, show_alert=True)
+    await cb.answer(msg)
+
 
 @router.callback_query(BunkerCB.filter(F.action == "skip"))
 async def cb_skip(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
-    game = get_game(callback_data.game_id)
-    if not game or game.phase != Phase.DISCUSSION:
-        return await cb.answer("Сейчас не фаза обсуждения.", show_alert=True)
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("Игра не найдена.", show_alert=True)
 
-    p = game.players.get(cb.from_user.id)
-    if not p or not p.alive:
-        return await cb.answer("Вы не участвуете в игре.", show_alert=True)
+    async with game.lock:
+        ok, msg, all_done = engine.register_skip(game, cb.from_user.id)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
 
-    p.has_skipped = True
-    skips_count = sum(1 for pl in game.players.values() if pl.alive and pl.has_skipped)
-    alive_count = sum(1 for pl in game.players.values() if pl.alive)
+        if all_done:
+            engine.set_phase(game, Phase.VOTING)
+            game.votes.clear()
+            game.log("🗳 Обсуждение завершено досрочно! Переход к голосованию.")
 
-    bot_info = await bot.get_me()
-    
-    if skips_count >= alive_count:
-        # Все пропустили — переходим к голосованию
-        game.phase = Phase.VOTING
-        game.votes.clear()
-        game.logs.append("⏳ Игроки единогласно пропустили обсуждение! Переход к голосованию.")
+        bot_info = await bot.get_me()
+        text = ui.format_stage_text(game, bot_info.username or "")
+        kb = ui.get_stage_keyboard(game, bot_info.username or "")
 
-    text = format_stage_text(game, bot_info.username)
-    kb = get_stage_keyboard(game, bot_info.username)
-    
-    try:
-        await bot.edit_message_text(chat_id=game.chat_id, message_id=game.stage_message_id, text=text, reply_markup=kb)
-    except Exception:
-        pass
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
 
-    await cb.answer("Вы проголосовали за пропуск обсуждения.")
+    await cb.answer(msg)
+
 
 @router.callback_query(BunkerCB.filter(F.action == "vote_menu"))
 async def cb_vote_menu(cb: types.CallbackQuery, callback_data: BunkerCB):
-    game = get_game(callback_data.game_id)
-    if not game or game.phase not in [Phase.VOTING, Phase.TIEBREAK]:
-        return await cb.answer("Голосование сейчас недоступно.", show_alert=True)
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("Игра не найдена.", show_alert=True)
 
-    voter = game.players.get(cb.from_user.id)
-    if not voter or not voter.alive:
-        return await cb.answer("Вы не можете голосовать.", show_alert=True)
+    targets = engine.allowed_targets(game, cb.from_user.id)
+    kb = ui.get_vote_keyboard(game, cb.from_user.id, targets)
+    if not kb:
+        return await cb.answer("Вы не можете голосовать сейчас.", show_alert=True)
 
-    builder = InlineKeyboardBuilder()
-    for p in game.players.values():
-        if p.alive and p.user_id != cb.from_user.id:
-            builder.button(
-                text=f"❌ Изгнать {p.name}",
-                callback_data=BunkerCB(action="vote_do", game_id=game.game_id, extra=str(p.user_id)).pack()
-            )
-            
-    builder.adjust(1)
-    await cb.message.answer("🗳 <b>Голосование:</b> выберите кандидата на изгнание из бункера:", reply_markup=builder.as_markup())
+    await cb.message.answer("🗳 <b>Голосование:</b> выберите кандидата на изгнание из бункера:", reply_markup=kb, parse_mode="HTML")
     await cb.answer()
+
 
 @router.callback_query(BunkerCB.filter(F.action == "vote_do"))
 async def cb_vote_do(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
-    game = get_game(callback_data.game_id)
+    game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("Игра не найдена.", show_alert=True)
 
-    target_id = int(callback_data.extra)
-    success, msg = cast_vote(game, cb.from_user.id, target_id)
-    if not success:
-        return await cb.answer(msg, show_alert=True)
-
-    bot_info = await bot.get_me()
-
-    # Если проголосовали все
-    if check_voting_complete(game):
-        kicked_id, is_tie = process_voting_results(game)
-        if is_tie:
-            game.phase = Phase.TIEBREAK
-            game.votes.clear()
-            game.logs.append("⚖️ Ничья при голосовании! Запущено повторное переголосование.")
-        else:
-            kick_msg = kick_player_from_game(game, kicked_id)
-            
-            # Проверка условий завершения (осталось выживших == вместимости бункера)
-            alive_count = sum(1 for p in game.players.values() if p.alive)
-            if alive_count <= game.capacity:
-                game.phase = Phase.EPILOGUE
-                epilogue_text = calculate_epilogue(game)
-                game.logs.append("📖 Игра завершена! Состав бункера сформирован.")
-                
-                # Публикуем эпилог в чат
-                await bot.send_message(chat_id=game.chat_id, text=epilogue_text)
-            else:
-                game.current_round += 1
-                game.phase = Phase.REVEAL
-                game.votes.clear()
-                for p in game.players.values():
-                    p.has_skipped = False
-                    p.voted_for = None
-
-    text = format_stage_text(game, bot_info.username)
-    kb = get_stage_keyboard(game, bot_info.username)
-    
     try:
-        await bot.edit_message_text(chat_id=game.chat_id, message_id=game.stage_message_id, text=text, reply_markup=kb)
+        target_id = int(callback_data.extra)
+    except ValueError:
+        return await cb.answer("Неверная цель голосования.", show_alert=True)
+
+    async with game.lock:
+        ok, msg = engine.cast_vote(game, cb.from_user.id, target_id)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
+
+        if engine.check_voting_complete(game):
+            kicked_id, is_tie = engine.process_voting_results(game)
+            if is_tie:
+                engine.set_phase(game, Phase.TIEBREAK)
+                game.votes.clear()
+                game.log("⚖️ Ничья при голосовании! Запущено повторное переголосование среди лидирующих.")
+            else:
+                if kicked_id:
+                    engine.kick_player_from_game(game, kicked_id)
+
+                cont = engine.advance_round(game)
+                if not cont:
+                    epilogue_text = engine.calculate_epilogue(game)
+                    engine.finish_game(game)
+                    await bot.send_message(chat_id=game.chat_id, text=epilogue_text, parse_mode="HTML")
+
+        bot_info = await bot.get_me()
+        text = ui.format_stage_text(game, bot_info.username or "")
+        kb = ui.get_stage_keyboard(game, bot_info.username or "")
+
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
+
+    try:
+        await cb.message.delete()
     except Exception:
         pass
 
-    await cb.answer(msg, show_alert=True)
+    await cb.answer(msg)
+
 
 @router.callback_query(BunkerCB.filter(F.action == "refresh"))
 async def cb_refresh(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
-    game = get_game(callback_data.game_id)
+    game = engine.get_game(callback_data.game_id)
     if not game:
         return await cb.answer("Игра не найдена.", show_alert=True)
 
     bot_info = await bot.get_me()
-    text = format_stage_text(game, bot_info.username)
-    kb = get_stage_keyboard(game, bot_info.username)
-    
-    try:
-        await cb.message.edit_text(text, reply_markup=kb)
-    except Exception:
-        pass
+    text = ui.format_stage_text(game, bot_info.username or "")
+    kb = ui.get_stage_keyboard(game, bot_info.username or "")
+
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
 
     await cb.answer("Сцена обновлена 🔄")
