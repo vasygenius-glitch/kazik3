@@ -10,20 +10,19 @@ from typing import Dict, List, Optional
 
 MIN_PLAYERS = 2
 MAX_PLAYERS = 16
-TELEGRAM_TEXT_LIMIT = 4096
-BOARD_SOFT_LIMIT = 3600          # после этого табло переключается в компактный режим
+TG_TEXT_LIMIT = 4096
+BOARD_SOFT_LIMIT = 3400      # дальше табло сжимается
+EVENTS_SHOW = 3              # сколько событий видно на табло
+EVENTS_KEEP = 6
 
 
 def escape_html(text: object) -> str:
-    """Безопасная вставка пользовательских данных в parse_mode=HTML."""
     return html.escape(str(text), quote=False)
 
 
 def shorten(text: object, limit: int = 60) -> str:
-    s = str(text).strip()
-    if len(s) <= limit:
-        return s
-    return s[: limit - 1].rstrip() + "…"
+    s = " ".join(str(text).split())
+    return s if len(s) <= limit else s[: limit - 1].rstrip() + "…"
 
 
 class Phase(Enum):
@@ -45,6 +44,10 @@ class Phase(Enum):
         return self in (Phase.EPILOGUE, Phase.FINISHED)
 
     @property
+    def in_game(self) -> bool:
+        return self not in (Phase.LOBBY, Phase.EPILOGUE, Phase.FINISHED)
+
+    @property
     def title(self) -> str:
         return PHASE_TITLES.get(self, "—")
 
@@ -52,40 +55,41 @@ class Phase(Enum):
 PHASE_TITLES: Dict[Phase, str] = {
     Phase.LOBBY: "🚪 Лобби",
     Phase.INTRO: "📜 Брифинг",
-    Phase.REVEAL: "🔓 Раскрытие карт",
+    Phase.REVEAL: "🔓 Раскрытие",
     Phase.DISCUSSION: "💬 Обсуждение",
     Phase.VOTING: "🗳 Голосование",
     Phase.TIEBREAK: "⚖️ Переголосование",
     Phase.EPILOGUE: "📖 Эпилог",
-    Phase.FINISHED: "🏁 Игра завершена",
+    Phase.FINISHED: "🏁 Завершена",
 }
 
-# Наборы значений для меню настроек
+# наборы значений для меню настроек (переключаются по кругу)
+REVEAL_CHOICES = (30, 45, 60, 90, 120)
 DISCUSSION_CHOICES = (30, 60, 90, 120, 180, 300)
-REVEAL_CHOICES = (30, 60, 90, 120, 180)
-VOTING_CHOICES = (30, 45, 60, 90, 120)
+VOTING_CHOICES = (30, 45, 60, 90)
 FIRST_REVEAL_CHOICES = (1, 2, 3)
 ROUND_REVEAL_CHOICES = (1, 2)
 
 
 @dataclass
 class GameSettings:
-    """Настраивается организатором в лобби кнопкой «⚙️ Настройки»."""
-    intro_seconds: int = 25
-    reveal_seconds: int = 90
-    discussion_seconds: int = 60          # ← обсуждение по умолчанию 1 минута
-    voting_seconds: int = 60
-    tiebreak_seconds: int = 45
+    intro_seconds: int = 20
+    reveal_seconds: int = 60
+    discussion_seconds: int = 60        # обсуждение по умолчанию — 1 минута
+    voting_seconds: int = 45
+    tiebreak_seconds: int = 30
     reveals_first_round: int = 2
     reveals_per_round: int = 1
-    allow_no_reveal: bool = True          # можно «ничего не открывать»
-    show_card_images: bool = True         # присылать PNG-дело в ЛС
+    allow_no_reveal: bool = True        # можно «ничего не открывать»
+    use_special_cards: bool = True
+    open_votes: bool = False            # показывать, кто за кого голосовал
+    phase_pings: bool = False           # доп. сообщение в чат на каждой фазе
 
 
 @dataclass
 class Card:
     category_id: str
-    category_name: str       # без эмодзи! иконка хранится отдельно
+    category_name: str
     value: str
     icon: str
     revealed: bool = False
@@ -111,15 +115,17 @@ class Player:
     alive: bool = True
     shielded: bool = False
     vote_weight: float = 1.0
-    is_rat: bool = False
     voted_for: Optional[int] = None
     has_skipped: bool = False
     is_bot: bool = False
     reveals_this_round: int = 0
-    no_reveal_choice: bool = False     # игрок выбрал «ничего не открывать»
-    dm_available: bool = False         # ЛС с ботом открыто
-    dm_warned: bool = False            # уже предупреждали, что ЛС закрыто
-    prompt_message_id: Optional[int] = None   # ID меню в ЛС (чтобы редактировать/удалять)
+    no_reveal_choice: bool = False
+    # ЛС
+    dm_available: bool = False
+    dm_warned: bool = False
+    prompt_message_id: Optional[int] = None
+    prompt_signature: str = ""
+    dossier_message_id: Optional[int] = None
 
     @property
     def safe_name(self) -> str:
@@ -183,10 +189,12 @@ class Game:
     lobby_message_id: Optional[int] = None
     board_message_id: Optional[int] = None
     board_signature: str = ""
+    board_edited_at: float = 0.0
 
-    logs: List[str] = field(default_factory=list)
+    events: List[str] = field(default_factory=list)
     timer_seconds: int = 0
     phase_deadline: float = 0.0
+    phase_started_at: float = field(default_factory=time.time)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -217,11 +225,16 @@ class Game:
     def host_safe_name(self) -> str:
         return escape_html(self.host_name)
 
-    def log(self, message: str, keep: int = 30) -> None:
-        self.logs.append(message)
-        if len(self.logs) > keep:
-            del self.logs[:-keep]
+    def push_event(self, text: str) -> None:
+        """Событие попадает в ленту на табло, а не отдельным сообщением в чат."""
+        if not text:
+            return
+        self.events.append(text)
+        del self.events[:-EVENTS_KEEP]
         self.touch()
+
+    def clear_events(self) -> None:
+        self.events.clear()
 
     def reset_round_state(self) -> None:
         self.votes.clear()

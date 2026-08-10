@@ -1,77 +1,51 @@
 # bunker/deck.py
+"""Раздача карт. Значения внутри категории не повторяются у игроков."""
 from __future__ import annotations
 
 import random
 from dataclasses import replace
-from typing import Dict, List, Sequence, TypeVar
+from typing import Dict, List, Optional
 
-from bunker.data import (
-    BAGGAGE, BIOLOGY, CATEGORIES, FACTS_1, FACTS_2, GENDER_AGE,
-    HEALTH_CONDITIONS, HOBBIES, PHOBIAS, PROFESSIONS, SPECIAL_CARDS_POOL, TRAITS,
-)
+from bunker.data import CATEGORIES, CATEGORY_POOLS, SPECIAL_CARDS_POOL
 from bunker.models import Card, SpecialCard
 
-T = TypeVar("T")
 
-_POOLS: Dict[str, Sequence[str]] = {
-    "gender_age": GENDER_AGE,
-    "health": HEALTH_CONDITIONS,
-    "profession": PROFESSIONS,
-    "trait": TRAITS,
-    "hobby": HOBBIES,
-    "baggage": BAGGAGE,
-    "fact1": FACTS_1,
-    "fact2": FACTS_2,
-    "phobia": PHOBIAS,
-    "biology": BIOLOGY,
-}
-
-
-def _draw(pool: Sequence[T], count: int) -> List[T]:
-    """Тянет count элементов без повторов, пока хватает пула (потом — по кругу)."""
-    if count <= 0:
-        return []
-    items = list(pool) or []
-    if not items:
-        raise ValueError("Пустой пул карт")
-    out: List[T] = []
-    while len(out) < count:
-        need = min(len(items), count - len(out))
-        out.extend(random.sample(items, need))
+def _unique_sample(pool: List[str], n: int) -> List[str]:
+    values = list(dict.fromkeys(pool))
+    if not values:
+        return ["данные утеряны"] * n
+    random.shuffle(values)
+    out = values[:n]
+    while len(out) < n:                     # игроков больше, чем карт в категории
+        extra = values[:]
+        random.shuffle(extra)
+        out.extend(extra[: n - len(out)])
     return out
 
 
-def deal_hands(player_count: int) -> List[Dict[str, Card]]:
-    """
-    Раздаёт руки сразу всем игрокам: внутри одной категории значения
-    не повторяются, пока хватает пула (раньше могло быть 4 «Хирурга»).
-    """
-    if player_count <= 0:
-        return []
-    hands: List[Dict[str, Card]] = [{} for _ in range(player_count)]
+def deal_hands(num_players: int) -> List[Dict[str, Card]]:
+    hands: List[Dict[str, Card]] = [{} for _ in range(num_players)]
     for cat_id, cat_name, icon in CATEGORIES:
-        values = _draw(_POOLS.get(cat_id) or ["Неизвестно"], player_count)
-        random.shuffle(values)
-        for hand, value in zip(hands, values):
-            hand[cat_id] = Card(
-                category_id=cat_id,
-                category_name=cat_name,
-                value=value,
-                icon=icon,
-                revealed=False,
-            )
+        for hand, value in zip(hands, _unique_sample(CATEGORY_POOLS.get(cat_id, []), num_players)):
+            hand[cat_id] = Card(cat_id, cat_name, value, icon)
     return hands
 
 
-def deal_special_cards(count: int) -> List[SpecialCard]:
-    """Копии (replace), иначе used=True «протекал» бы в глобальный пул."""
-    return [replace(sc, used=False) for sc in _draw(SPECIAL_CARDS_POOL, count)]
+def deal_special_cards(num_players: int) -> List[Optional[SpecialCard]]:
+    if not SPECIAL_CARDS_POOL:
+        return [None] * num_players
+    out: List[Optional[SpecialCard]] = []
+    pool: List[SpecialCard] = []
+    for _ in range(num_players):
+        if not pool:
+            pool = [replace(c) for c in SPECIAL_CARDS_POOL]
+            random.shuffle(pool)
+        out.append(pool.pop())
+    return out
 
 
-# --- обратная совместимость со старым API ---------------------------------- #
-def generate_player_cards() -> Dict[str, Card]:
-    return deal_hands(1)[0]
-
-
-def generate_special_card() -> SpecialCard:
-    return deal_special_cards(1)[0]
+def random_value_for(cat_id: str, exclude: set[str]) -> str:
+    pool = [v for v in CATEGORY_POOLS.get(cat_id, []) if v not in exclude]
+    if not pool:
+        pool = CATEGORY_POOLS.get(cat_id, ["данные утеряны"])
+    return random.choice(pool)

@@ -1,389 +1,313 @@
 # bunker/runner.py
-"""Оркестратор: рассылка сообщений, табло и автопереходы фаз по таймеру.
-
-ВАЖНО про блокировки:
-  * функции с префиксом «_» ДОЛЖНЫ вызываться при уже захваченном game.lock;
-  * публичные `sync_locked()` вызывается ПОД локом (из хендлеров),
-    `tick()` берёт лок сам (фоновая задача).
-asyncio.Lock не реентрантный — повторный захват = дедлок.
-"""
+"""Оркестрация: табло, таймеры, ЛС. Единственный модуль, что говорит с Telegram."""
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Optional
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramAPIError, TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter,
+)
+from aiogram.types import InlineKeyboardMarkup, Message
 
 from bunker import engine, ui
-from bunker.cards_img import render_player_dossier_png
-from bunker.models import Game, Phase, Player
+from bunker.models import TG_TEXT_LIMIT, Game, Phase, Player
 
 log = logging.getLogger(__name__)
 
-TICK_SECONDS = 3
-MAX_TRANSITIONS_PER_TICK = 8
-_bot_username_cache: dict[int, str] = {}
+TICK = 1.0
+BOARD_MIN_INTERVAL = 3.0        # не чаще одной правки табло в 3 с
+BOT_THINK_DELAY = 1.5           # пауза перед ходами ботов
+_bot_username: str = ""
 
 
+# ------------------------------ низкий уровень ------------------------------ #
 async def get_bot_username(bot: Bot) -> str:
-    if bot.id in _bot_username_cache:
-        return _bot_username_cache[bot.id]
-    try:
-        me = await bot.get_me()
-        _bot_username_cache[bot.id] = me.username or ""
-    except TelegramAPIError:
-        return ""
-    return _bot_username_cache[bot.id]
-
-
-# --------------------------------------------------------------------------- #
-#                            безопасные врапперы                              #
-# --------------------------------------------------------------------------- #
-async def safe_send(bot: Bot, chat_id: int, text: str, reply_markup=None,
-                    disable_notification: bool = False):
-    try:
-        return await bot.send_message(chat_id, text, reply_markup=reply_markup,
-                                      parse_mode="HTML",
-                                      disable_web_page_preview=True,
-                                      disable_notification=disable_notification)
-    except TelegramForbiddenError:
-        return None
-    except TelegramAPIError as e:
-        log.warning("send_message failed (%s): %s", chat_id, e)
-        return None
-
-
-async def safe_edit(bot: Bot, chat_id: int, message_id: int, text: str, reply_markup=None) -> bool:
-    try:
-        await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text,
-                                    reply_markup=reply_markup, parse_mode="HTML",
-                                    disable_web_page_preview=True)
-        return True
-    except TelegramBadRequest as e:
-        msg = str(e).lower()
-        if "message is not modified" in msg:
-            return True
-        return False
-    except TelegramAPIError:
-        return False
-
-
-async def safe_delete(bot: Bot, chat_id: int, message_id: int) -> None:
-    try:
-        await bot.delete_message(chat_id, message_id)
-    except TelegramAPIError:
-        pass
-
-
-# --------------------------------------------------------------------------- #
-#                            личные сообщения                                 #
-# --------------------------------------------------------------------------- #
-async def _dm(bot: Bot, game: Game, player: Player, text: str, reply_markup=None,
-              replace_prompt: bool = False) -> bool:
-    """Отправка в ЛС. Возвращает False, если ЛС закрыто."""
-    if player.is_bot:
-        return True
-    if replace_prompt and player.prompt_message_id:
-        await safe_delete(bot, player.user_id, player.prompt_message_id)
-        player.prompt_message_id = None
-
-    msg = await safe_send(bot, player.user_id, text, reply_markup)
-    if msg is None:
-        player.dm_available = False
-        return False
-
-    player.dm_available = True
-    if replace_prompt:
-        player.prompt_message_id = msg.message_id
-    return True
-
-
-async def _warn_no_dm(bot: Bot, game: Game, player: Player) -> None:
-    if player.dm_warned or player.is_bot:
-        return
-    player.dm_warned = True
-    username = await get_bot_username(bot)
-    link = ui.deep_link(username, game.game_id) if username else "ЛС бота"
-    await safe_send(
-        bot, game.chat_id,
-        f"⚠️ {player.mention}, у меня закрыт доступ в ваши личные сообщения — "
-        f"я не могу прислать карты.\n👉 Откройте: {link} и нажмите <b>Start</b>.",
-    )
-
-
-async def send_dossier(bot: Bot, game: Game, player: Player,
-                       reply_markup=None, with_image: Optional[bool] = None) -> bool:
-    """Личное дело в ЛС: текст (всегда) + PNG (опционально)."""
-    if player.is_bot or not player.cards:
-        return False
-
-    if with_image is None:
-        with_image = game.settings.show_card_images
-    if with_image:
+    global _bot_username
+    if not _bot_username:
         try:
-            from aiogram.types import BufferedInputFile
-            buf = render_player_dossier_png(player, game.scenario)
-            data = buf.getvalue() if buf else b""
-            if len(data) > 500:
-                await bot.send_photo(
-                    chat_id=player.user_id,
-                    photo=BufferedInputFile(data, filename=f"dossier_{player.user_id}.png"),
-                    caption="☢️ Ваше личное дело (секретно)",
-                )
+            _bot_username = (await bot.me()).username or ""
+        except TelegramAPIError:
+            return ""
+    return _bot_username
+
+
+async def safe_send(bot: Bot, chat_id: int, text: str,
+                    kb: Optional[InlineKeyboardMarkup] = None, **kw) -> Optional[Message]:
+    for attempt in (1, 2):
+        try:
+            return await bot.send_message(chat_id, text[:TG_TEXT_LIMIT], reply_markup=kb,
+                                          parse_mode="HTML",
+                                          disable_web_page_preview=True, **kw)
+        except TelegramRetryAfter as e:
+            await asyncio.sleep(e.retry_after + 1)
         except TelegramForbiddenError:
-            player.dm_available = False
-            return False
-        except Exception as e:                              # noqa: BLE001
-            log.debug("dossier image skipped: %s", e)
-
-    text = ui.format_dossier_text(game, player)
-    kb = reply_markup if reply_markup is not None else ui.get_dossier_keyboard(game, player)
-    return await _dm(bot, game, player, text, kb)
+            return None
+        except TelegramAPIError as e:
+            log.warning("send_message %s: %s", chat_id, e)
+            return None
+    return None
 
 
-async def _send_phase_prompts(bot: Bot, game: Game) -> None:
-    """Личное меню действий по текущей фазе."""
-    for p in game.alive_players():
-        if p.is_bot:
-            continue
-        if game.phase is Phase.REVEAL:
-            kb = ui.get_reveal_keyboard(game, p.user_id)
-            if kb is None:
-                continue
-            ok = await _dm(bot, game, p, ui.format_reveal_prompt(game, p), kb, replace_prompt=True)
-        elif game.phase.is_voting:
-            kb = ui.get_vote_keyboard(game, p.user_id)
-            if kb is None:
-                continue
-            ok = await _dm(bot, game, p, ui.format_vote_prompt(game), kb, replace_prompt=True)
-        else:
-            continue
-        if not ok:
-            await _warn_no_dm(bot, game, p)
+async def safe_edit(bot: Bot, chat_id: int, message_id: int, text: str,
+                    kb: Optional[InlineKeyboardMarkup] = None) -> bool:
+    try:
+        await bot.edit_message_text(text[:TG_TEXT_LIMIT], chat_id=chat_id,
+                                    message_id=message_id, reply_markup=kb,
+                                    parse_mode="HTML", disable_web_page_preview=True)
+        return True
+    except TelegramRetryAfter as e:
+        await asyncio.sleep(e.retry_after + 1)
+        return False
+    except TelegramBadRequest as e:
+        return "not modified" in str(e).lower()
+    except TelegramForbiddenError:
+        return False
+    except TelegramAPIError as e:
+        log.warning("edit_message %s/%s: %s", chat_id, message_id, e)
+        return False
 
 
-async def _clear_prompts(bot: Bot, game: Game) -> None:
-    for p in game.players.values():
-        if p.prompt_message_id:
-            await safe_delete(bot, p.user_id, p.prompt_message_id)
-            p.prompt_message_id = None
-
-
-# --------------------------------------------------------------------------- #
-#                                 табло                                       #
-# --------------------------------------------------------------------------- #
-async def _render_board(bot: Bot, game: Game, force_new: bool = False) -> None:
-    username = await get_bot_username(bot)
+# ---------------------------------- ТАБЛО ----------------------------------- #
+async def post_board(bot: Bot, game: Game) -> None:
+    """Публикует новое табло (старое теряет кнопки)."""
     text = ui.format_board_text(game)
-    kb = ui.get_board_keyboard(game, username)
-
-    if force_new or not game.board_message_id:
-        if game.board_message_id:
-            await safe_delete(bot, game.chat_id, game.board_message_id)
-        msg = await safe_send(bot, game.chat_id, text, kb)
-        if msg:
-            game.board_message_id = msg.message_id
-            game.board_signature = text
-        return
-
-    if text == game.board_signature:
-        return
-    if await safe_edit(bot, game.chat_id, game.board_message_id, text, kb):
+    kb = ui.get_board_keyboard(game, await get_bot_username(bot))
+    if game.board_message_id:
+        await safe_edit(bot, game.chat_id, game.board_message_id,
+                        "☢️ <i>Табло перенесено ниже 👇</i>", None)
+    msg = await safe_send(bot, game.chat_id, text, kb)
+    if msg:
+        game.board_message_id = msg.message_id
         game.board_signature = text
+        game.board_edited_at = time.time()
+
+
+async def render_board(bot: Bot, game: Game, *, force: bool = False) -> None:
+    """Обновляет табло на месте. Вызывать, держа game.lock."""
+    text = ui.format_board_text(game)
+    if not force:
+        if text == game.board_signature:
+            return
+        if time.time() - game.board_edited_at < BOARD_MIN_INTERVAL:
+            return
+    if not game.board_message_id:
+        return await post_board(bot, game)
+
+    kb = ui.get_board_keyboard(game, await get_bot_username(bot))
+    ok = await safe_edit(bot, game.chat_id, game.board_message_id, text, kb)
+    if ok:
+        game.board_signature = text
+        game.board_edited_at = time.time()
     else:
-        msg = await safe_send(bot, game.chat_id, text, kb)
-        if msg:
-            game.board_message_id = msg.message_id
-            game.board_signature = text
+        game.board_message_id = None
+        await post_board(bot, game)
 
 
-# --------------------------------------------------------------------------- #
-#                          переходы между фазами                              #
-# --------------------------------------------------------------------------- #
-async def _begin_reveal(bot: Bot, game: Game) -> None:
-    engine.set_phase(game, Phase.REVEAL)
-    limit = engine.reveals_allowed(game)
-    await safe_send(
-        bot, game.chat_id,
-        f"🔓 <b>РАУНД {game.current_round}/{game.total_rounds} · РАСКРЫТИЕ КАРТ</b>\n"
-        f"Каждый обязан раскрыть <b>{limit}</b> карт(ы) "
-        f"{'или отказаться' if game.settings.allow_no_reveal else ''}.\n"
-        f"⏳ {ui.fmt_timer(game.timer_seconds)} · выбор делается <b>в ЛС бота</b>.",
-    )
-    await _send_phase_prompts(bot, game)
+async def refresh(bot: Bot, game: Game, *, force: bool = False) -> None:
+    async with game.lock:
+        await render_board(bot, game, force=force)
 
 
-async def _begin_discussion(bot: Bot, game: Game) -> None:
-    await _clear_prompts(bot, game)
-    engine.set_phase(game, Phase.DISCUSSION)
-    await safe_send(
-        bot, game.chat_id,
-        f"💬 <b>ОБСУЖДЕНИЕ · {ui.fmt_timer(game.timer_seconds)}</b>\n"
-        f"Доказывайте свою полезность, ищите слабых, договаривайтесь.\n"
-        f"Когда все нажмут «⏭ Я готов(а)» — перейдём к голосованию досрочно.",
-    )
+# ----------------------------------- ЛС ------------------------------------- #
+async def dm(bot: Bot, game: Game, player: Player, text: str,
+             kb: Optional[InlineKeyboardMarkup] = None, *, fresh: bool = False) -> bool:
+    """Одно редактируемое меню на игрока — никакого спама в ЛС."""
+    if player.is_bot:
+        return False
+    sig = text + (str(kb) if kb else "")
+    if not fresh and player.prompt_message_id and sig == player.prompt_signature:
+        return True
+    if not fresh and player.prompt_message_id:
+        if await safe_edit(bot, player.user_id, player.prompt_message_id, text, kb):
+            player.prompt_signature = sig
+            player.dm_available = True
+            return True
+    msg = await safe_send(bot, player.user_id, text, kb)
+    if msg:
+        player.prompt_message_id = msg.message_id
+        player.prompt_signature = sig
+        player.dm_available = True
+        return True
+    player.dm_available = False
+    return False
 
 
-async def _begin_voting(bot: Bot, game: Game, tiebreak: bool = False) -> None:
-    await _clear_prompts(bot, game)
-    game.votes.clear()
-    for p in game.players.values():
-        p.voted_for = None
-    engine.set_phase(game, Phase.TIEBREAK if tiebreak else Phase.VOTING)
-    title = "⚖️ <b>ПЕРЕГОЛОСОВАНИЕ</b>" if tiebreak else "🗳 <b>ГОЛОСОВАНИЕ</b>"
-    await safe_send(
-        bot, game.chat_id,
-        f"{title} · {ui.fmt_timer(game.timer_seconds)}\n"
-        f"Голосуем тайно в ЛС бота. Кто наберёт больше голосов — покидает бункер.",
-    )
-    await _send_phase_prompts(bot, game)
+async def send_dossier(bot: Bot, game: Game, player: Player) -> bool:
+    text = ui.format_dossier_text(game, player)
+    kb = ui.get_dossier_keyboard(game, player)
+    if player.dossier_message_id and await safe_edit(
+            bot, player.user_id, player.dossier_message_id, text, kb):
+        player.dm_available = True
+        return True
+    msg = await safe_send(bot, player.user_id, text, kb)
+    if msg:
+        player.dossier_message_id = msg.message_id
+        player.dm_available = True
+        return True
+    player.dm_available = False
+    return False
 
 
-async def _finish_voting(bot: Bot, game: Game) -> None:
-    kicked_id, is_tie, comment = engine.process_voting_results(game)
-    if comment:
-        await safe_send(bot, game.chat_id, comment)
-
-    if is_tie:
-        await _begin_voting(bot, game, tiebreak=True)
-        return
-
-    await _clear_prompts(bot, game)
-    if kicked_id:
-        text = engine.kick_player_from_game(game, kicked_id)
+async def broadcast_prompts(bot: Bot, game: Game) -> None:
+    """Рассылает/обновляет личные меню всем живым людям."""
+    for p in game.alive_players():
+        text, kb = ui.prompt_for(game, p)
         if text:
-            await safe_send(bot, game.chat_id, text)
-
-    if engine.advance_round(game):
-        await _render_board(bot, game, force_new=True)
-        await _begin_reveal(bot, game)
-    else:
-        await _begin_epilogue(bot, game)
+            await dm(bot, game, p, text, kb)
+            await asyncio.sleep(0.05)
+    await warn_closed_dms(bot, game)
 
 
-async def _begin_epilogue(bot: Bot, game: Game) -> None:
-    await _clear_prompts(bot, game)
-    engine.set_phase(game, Phase.EPILOGUE, timer=0)
-    epilogue = engine.calculate_epilogue(game)
-    await _render_board(bot, game, force_new=True)          # финальное табло: всё открыто
-    await safe_send(bot, game.chat_id, epilogue)
-    engine.finish_game(game)
-    engine.drop_game(game.game_id)
-
-
-async def _resolve_transitions(bot: Bot, game: Game) -> bool:
-    """Двигает фазы, пока есть что двигать. -> True, если фаза менялась."""
-    changed = False
-    for _ in range(MAX_TRANSITIONS_PER_TICK):
-        public = engine.process_bot_actions(game)
-        for line in public:
-            await safe_send(bot, game.chat_id, line, disable_notification=True)
-
-        phase = game.phase
-        expired = engine.phase_expired(game)
-
-        if phase is Phase.INTRO:
-            if expired:
-                await _begin_reveal(bot, game)
-                changed = True
-                continue
-            break
-
-        if phase is Phase.REVEAL:
-            if engine.check_reveal_complete(game):
-                await _begin_discussion(bot, game)
-                changed = True
-                continue
-            if expired:
-                for line in engine.auto_close_reveal(game):
-                    await safe_send(bot, game.chat_id, line, disable_notification=True)
-                await _begin_discussion(bot, game)
-                changed = True
-                continue
-            break
-
-        if phase is Phase.DISCUSSION:
-            if engine.discussion_complete(game) or expired:
-                await _begin_voting(bot, game)
-                changed = True
-                continue
-            break
-
-        if phase.is_voting:
-            if engine.check_voting_complete(game) or expired:
-                await _finish_voting(bot, game)
-                changed = True
-                continue
-            break
-
-        if phase is Phase.EPILOGUE:
-            await _begin_epilogue(bot, game)
-            changed = True
-            break
-
-        break
-    return changed
-
-
-# --------------------------------------------------------------------------- #
-#                              публичный API                                  #
-# --------------------------------------------------------------------------- #
-async def sync_locked(bot: Bot, game: Game, force_new_board: bool = False) -> None:
-    """Вызывать ТОЛЬКО при захваченном game.lock."""
-    if game.phase is Phase.LOBBY:
+async def warn_closed_dms(bot: Bot, game: Game) -> None:
+    """Одно предупреждение в чат на всех, у кого закрыт ЛС."""
+    lost = [p for p in game.alive_players()
+            if not p.is_bot and not p.dm_available and not p.dm_warned]
+    if not lost:
         return
-    changed = await _resolve_transitions(bot, game)
-    if game.phase is Phase.FINISHED:
-        return
-    await _render_board(bot, game, force_new=force_new_board or changed)
+    for p in lost:
+        p.dm_warned = True
+    username = await get_bot_username(bot)
+    link = ui.deep_link(username, game.game_id) if username else ""
+    names = ", ".join(p.mention for p in lost)
+    await safe_send(bot, game.chat_id,
+                    f"📩 {names} — откройте ЛС бота, иначе не получите карты."
+                    + (f'\n<a href="{link}">Нажмите здесь</a>' if link else ""),
+                    disable_notification=True)
 
 
+# ------------------------------- ПОТОК ИГРЫ --------------------------------- #
 async def start_game_flow(bot: Bot, game: Game) -> None:
-    """Первый запуск партии. Вызывать под локом."""
-    await safe_send(bot, game.chat_id, ui.format_intro_text(game))
-    for p in game.players.values():
-        if p.is_bot:
-            continue
-        ok = await send_dossier(bot, game, p)
-        if not ok:
-            await _warn_no_dm(bot, game, p)
-    game.board_message_id = None
-    await _render_board(bot, game, force_new=True)
+    """Вызывать, держа game.lock, сразу после engine.start_game_engine."""
+    game.push_event(ui.format_intro_text(game))
+    await post_board(bot, game)
+    for p in game.ordered_players():
+        if not p.is_bot:
+            await send_dossier(bot, game, p)
+            await asyncio.sleep(0.05)
+    await warn_closed_dms(bot, game)
     ensure_timer(bot, game)
 
 
 def ensure_timer(bot: Bot, game: Game) -> None:
-    if game.timer_task and not game.timer_task.done():
-        return
-    game.timer_task = asyncio.create_task(_timer_loop(bot, game), name=f"bunker-{game.game_id}")
+    if game.timer_task is None or game.timer_task.done():
+        game.timer_task = asyncio.create_task(_loop(bot, game), name=f"bunker:{game.game_id}")
 
 
 def cancel_timer(game: Game) -> None:
-    task = game.timer_task
-    game.timer_task = None
-    if task and not task.done() and task is not asyncio.current_task():
+    task, game.timer_task = game.timer_task, None
+    if task and not task.done():
         task.cancel()
 
 
-async def _timer_loop(bot: Bot, game: Game) -> None:
+async def _loop(bot: Bot, game: Game) -> None:
     try:
         while True:
-            await asyncio.sleep(TICK_SECONDS)
-            if game.phase is Phase.FINISHED:
+            await asyncio.sleep(TICK)
+            if game.phase.is_over or game.phase is Phase.LOBBY:
                 return
             async with game.lock:
-                if game.phase is Phase.FINISHED:
+                if game.phase.is_over or game.phase is Phase.LOBBY:
                     return
-                try:
-                    await sync_locked(bot, game)
-                except Exception as e:                       # noqa: BLE001
-                    log.exception("bunker tick error: %s", e)
-                if game.phase is Phase.FINISHED:
-                    return
+                if time.time() - game.phase_started_at > BOT_THINK_DELAY:
+                    for ev in engine.process_bot_actions(game):
+                        game.push_event(ev)
+                if engine.phase_complete(game) or engine.phase_expired(game):
+                    await advance_phase(bot, game)
+                    if game.phase.is_over:
+                        return
+                else:
+                    await render_board(bot, game)
     except asyncio.CancelledError:
         raise
-    finally:
-        if game.timer_task is asyncio.current_task():
-            game.timer_task = None
+    except Exception:                                            # noqa: BLE001
+        log.exception("bunker loop crashed (game=%s)", game.game_id)
+        await safe_send(bot, game.chat_id,
+                        "⚠️ Внутренняя ошибка движка. Партия остановлена: /bunker_stop")
+
+
+async def advance_phase(bot: Bot, game: Game) -> None:
+    """Переход к следующей фазе. Вызывать, держа game.lock."""
+    phase = game.phase
+
+    if phase is Phase.INTRO:
+        engine.set_phase(game, Phase.REVEAL)
+        game.clear_events()
+        await _announce(bot, game, f"🔓 Раунд {game.current_round}: раскрытие карт в ЛС.")
+        await broadcast_prompts(bot, game)
+
+    elif phase is Phase.REVEAL:
+        late = engine.auto_close_reveal(game)
+        if late:
+            game.push_event(f"⌛ Не успели определиться: {late}")
+        engine.set_phase(game, Phase.DISCUSSION)
+        await _announce(bot, game,
+                        f"💬 Обсуждение — {ui.fmt_timer(game.settings.discussion_seconds)}.")
+        await broadcast_prompts(bot, game)
+
+    elif phase is Phase.DISCUSSION:
+        engine.set_phase(game, Phase.VOTING)
+        await _announce(bot, game, "🗳 Голосование в ЛС бота.")
+        await broadcast_prompts(bot, game)
+
+    elif phase.is_voting:
+        await _resolve_votes(bot, game)
+        return
+
+    await render_board(bot, game, force=True)
+
+
+async def _announce(bot: Bot, game: Game, text: str) -> None:
+    """Короткий пинг в чат — только если организатор включил их в настройках."""
+    if game.settings.phase_pings:
+        await safe_send(bot, game.chat_id, text, disable_notification=True)
+
+
+async def _resolve_votes(bot: Bot, game: Game) -> None:
+    kicked_id, tie, comment = engine.process_voting_results(game)
+
+    if tie:
+        engine.start_tiebreak(game)
+        game.push_event(comment)
+        await render_board(bot, game, force=True)
+        await broadcast_prompts(bot, game)
+        return
+
+    parts = [f"📊 <b>Итоги раунда {game.current_round}</b>"]
+    if game.settings.open_votes and game.votes:
+        for voter_id, target_id in game.votes.items():
+            v = game.players.get(voter_id)
+            t = "никого" if target_id == 0 else game.players[target_id].name
+            if v:
+                parts.append(f"• {v.safe_name} → {t}")
+    if comment:
+        parts.append(comment)
+    if kicked_id:
+        parts.append(engine.kick_player_from_game(game, kicked_id))
+
+    going_on = engine.advance_round(game)
+    if going_on:
+        parts.append(f"\n🔁 <b>Раунд {game.current_round}</b> — открывайте карты в ЛС.")
+
+    # единственное сообщение в чат за раунд
+    await safe_send(bot, game.chat_id, "\n".join(p for p in parts if p))
+    await render_board(bot, game, force=True)
+
+    if going_on:
+        await broadcast_prompts(bot, game)
+    else:
+        await _finish(bot, game)
+
+
+async def _finish(bot: Bot, game: Game) -> None:
+    await safe_send(bot, game.chat_id, engine.calculate_epilogue(game))
+    engine.finish_game(game)
+    await render_board(bot, game, force=True)
+    for p in game.humans():
+        if p.prompt_message_id:
+            await safe_edit(bot, p.user_id, p.prompt_message_id,
+                            "🏁 Партия завершена. Спасибо за игру!", None)
+    cancel_timer(game)

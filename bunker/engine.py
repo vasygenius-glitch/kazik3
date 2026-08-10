@@ -1,43 +1,44 @@
 # bunker/engine.py
-"""Чистая игровая логика. Никаких вызовов Telegram API здесь нет."""
+"""Чистая игровая логика. Telegram API здесь не вызывается."""
 from __future__ import annotations
 
 import random
 import time
 from typing import Dict, List, Optional, Tuple
 
-from bunker.data import SCENARIOS, calculate_bunker_capacity
-from bunker.deck import deal_hands, deal_special_cards
+from bunker.data import CATEGORIES, HEALTHY_VALUE, SCENARIOS, calculate_bunker_capacity
+from bunker.deck import deal_hands, deal_special_cards, random_value_for
 from bunker.models import (
-    MAX_PLAYERS, MIN_PLAYERS, Game, Phase, Player, escape_html, shorten,
+    DISCUSSION_CHOICES, FIRST_REVEAL_CHOICES, MAX_PLAYERS, MIN_PLAYERS,
+    REVEAL_CHOICES, ROUND_REVEAL_CHOICES, VOTING_CHOICES,
+    Game, Phase, Player, escape_html, shorten,
 )
 
-# Хранилище активных игр в памяти: {game_id: Game}
 active_games: Dict[str, Game] = {}
-
 GAME_TTL_SECONDS = 6 * 3600
 
 BOT_NAMES = [
     "🤖 Ева", "🤖 Валли", "🤖 Т-800", "🤖 Джарвис", "🤖 Бэндер", "🤖 Марвин",
     "🤖 HAL-9000", "🤖 R2-D2", "🤖 C-3PO", "🤖 Оптимус", "🤖 Альтрон", "🤖 Аэлита",
 ]
+CATEGORY_NAMES = {cid: (name, icon) for cid, name, icon in CATEGORIES}
 
 
-# --------------------------------------------------------------------------- #
-#                          жизненный цикл игры                                #
-# --------------------------------------------------------------------------- #
+# ------------------------------- жизненный цикл ---------------------------- #
 def create_new_game(game_id: str, chat_id: int, host_id: int, host_name: str) -> Game:
     cleanup_stale_games()
-    game = Game(
-        game_id=game_id,
-        chat_id=chat_id,
-        host_id=host_id,
-        host_name=host_name,
-        phase=Phase.LOBBY,
-        created_at=time.time(),
-    )
+    game = Game(game_id=game_id, chat_id=chat_id, host_id=host_id, host_name=host_name)
     active_games[game_id] = game
     return game
+
+
+def new_game_id(chat_id: int) -> str:
+    base = f"b{abs(chat_id) % 100000}{int(time.time()) % 10000}"
+    gid, n = base, 0
+    while gid in active_games:
+        n += 1
+        gid = f"{base}x{n}"
+    return gid
 
 
 def get_game(game_id: str) -> Optional[Game]:
@@ -45,20 +46,15 @@ def get_game(game_id: str) -> Optional[Game]:
 
 
 def get_game_by_chat(chat_id: int) -> Optional[Game]:
-    candidates = [
-        g for g in active_games.values()
-        if g.chat_id == chat_id and g.phase is not Phase.FINISHED
-    ]
-    return max(candidates, key=lambda g: g.created_at, default=None)
+    cands = [g for g in active_games.values()
+             if g.chat_id == chat_id and g.phase is not Phase.FINISHED]
+    return max(cands, key=lambda g: g.created_at, default=None)
 
 
 def find_player_game(user_id: int) -> Optional[Game]:
-    """Ищет активную игру, в которой участвует пользователь (для ЛС)."""
-    candidates = [
-        g for g in active_games.values()
-        if user_id in g.players and g.phase is not Phase.FINISHED
-    ]
-    return max(candidates, key=lambda g: g.updated_at, default=None)
+    cands = [g for g in active_games.values()
+             if user_id in g.players and g.phase is not Phase.FINISHED]
+    return max(cands, key=lambda g: g.updated_at, default=None)
 
 
 def drop_game(game_id: str) -> None:
@@ -67,18 +63,14 @@ def drop_game(game_id: str) -> None:
 
 def cleanup_stale_games(now: Optional[float] = None) -> List[Game]:
     now = now or time.time()
-    stale = [
-        g for g in list(active_games.values())
-        if g.phase is Phase.FINISHED or (now - g.updated_at) > GAME_TTL_SECONDS
-    ]
+    stale = [g for g in list(active_games.values())
+             if g.phase is Phase.FINISHED or (now - g.updated_at) > GAME_TTL_SECONDS]
     for g in stale:
         active_games.pop(g.game_id, None)
     return stale
 
 
-# --------------------------------------------------------------------------- #
-#                                  лобби                                     #
-# --------------------------------------------------------------------------- #
+# ------------------------------------ лобби -------------------------------- #
 def add_player(game: Game, user_id: int, name: str, username: str = "",
                is_bot: bool = False) -> Tuple[bool, str]:
     if game.phase is not Phase.LOBBY:
@@ -86,121 +78,82 @@ def add_player(game: Game, user_id: int, name: str, username: str = "",
     if user_id in game.players:
         return False, "Вы уже в лобби."
     if len(game.players) >= MAX_PLAYERS:
-        return False, f"Лобби заполнено (максимум {MAX_PLAYERS} игроков)."
+        return False, f"Лобби заполнено (максимум {MAX_PLAYERS})."
 
-    clean_name = (name or "").strip()[:32] or f"Игрок {len(game.players) + 1}"
-    game.players[user_id] = Player(
-        user_id=user_id,
-        name=clean_name,
-        username=username or "",
-        seat=len(game.players) + 1,
-        is_bot=is_bot,
-    )
+    clean = (name or "").strip()[:32] or f"Игрок {len(game.players) + 1}"
+    game.players[user_id] = Player(user_id=user_id, name=clean, username=username or "",
+                                   seat=len(game.players) + 1, is_bot=is_bot)
     game.touch()
-    return True, f"{clean_name}, вы в лобби!"
+    return True, f"{clean}, вы в лобби!"
 
 
 def remove_player(game: Game, user_id: int) -> Tuple[bool, str]:
     if game.phase is not Phase.LOBBY:
-        return False, "Выйти можно только до старта игры."
-    player = game.players.pop(user_id, None)
-    if player is None:
+        return False, "Выйти можно только до старта."
+    if game.players.pop(user_id, None) is None:
         return False, "Вас нет в лобби."
-
     for idx, p in enumerate(game.ordered_players(), 1):
         p.seat = idx
-
     if user_id == game.host_id and game.players:
         new_host = game.ordered_players()[0]
-        game.host_id = new_host.user_id
-        game.host_name = new_host.name
-        game.log(f"👑 Новый организатор: <b>{new_host.safe_name}</b>")
-
+        game.host_id, game.host_name = new_host.user_id, new_host.name
     game.touch()
     return True, "Вы покинули лобби."
 
 
 def add_test_bot(game: Game) -> Tuple[bool, str]:
     if game.phase is not Phase.LOBBY:
-        return False, "Добавлять ботов можно только в лобби."
-    if len(game.players) >= MAX_PLAYERS:
-        return False, f"Лобби заполнено (максимум {MAX_PLAYERS} игроков)."
-
-    existing = {p.name for p in game.players.values()}
-    free = [n for n in BOT_NAMES if n not in existing]
-    bot_name = free[0] if free else f"🤖 Бот #{len(game.players) + 1}"
-
-    bot_uid = 900_000_000 + random.randint(1, 9_999_999)
-    while bot_uid in game.players:
-        bot_uid += 1
-    return add_player(game, bot_uid, bot_name, "", is_bot=True)
+        return False, "Ботов можно добавлять только в лобби."
+    taken = {p.name for p in game.players.values()}
+    free = [n for n in BOT_NAMES if n not in taken]
+    name = free[0] if free else f"🤖 Бот #{len(game.players) + 1}"
+    uid = 900_000_000 + random.randint(1, 9_999_999)
+    while uid in game.players:
+        uid += 1
+    return add_player(game, uid, name, "", is_bot=True)
 
 
 def remove_test_bot(game: Game) -> Tuple[bool, str]:
-    if game.phase is not Phase.LOBBY:
-        return False, "Удалять ботов можно только до старта игры."
     bots = [p for p in game.ordered_players() if p.is_bot]
     if not bots:
-        return False, "В лобби нет тестовых ботов."
+        return False, "Тестовых ботов нет."
     return remove_player(game, bots[-1].user_id)
 
 
-# --------------------------------------------------------------------------- #
-#                             настройки игры                                  #
-# --------------------------------------------------------------------------- #
-SETTINGS_MAP = {
-    "reveal": ("reveal_seconds", "Время раскрытия"),
-    "disc": ("discussion_seconds", "Время обсуждения"),
-    "vote": ("voting_seconds", "Время голосования"),
-    "first": ("reveals_first_round", "Карт в 1-м раунде"),
-    "per": ("reveals_per_round", "Карт в раунде"),
-    "nore": ("allow_no_reveal", "Можно ничего не открывать"),
-    "img": ("show_card_images", "Картинка личного дела"),
+# --------------------------------- настройки -------------------------------- #
+SETTINGS: Dict[str, tuple] = {
+    "reveal": ("reveal_seconds",      "🔓 Раскрытие",      REVEAL_CHOICES),
+    "disc":   ("discussion_seconds",  "💬 Обсуждение",     DISCUSSION_CHOICES),
+    "vote":   ("voting_seconds",      "🗳 Голосование",    VOTING_CHOICES),
+    "first":  ("reveals_first_round", "🃏 1-й раунд",      FIRST_REVEAL_CHOICES),
+    "per":    ("reveals_per_round",   "🃏 Далее",          ROUND_REVEAL_CHOICES),
+    "nore":   ("allow_no_reveal",     "🙈 Можно скрыть",   None),
+    "spec":   ("use_special_cards",   "✨ Спецкарты",      None),
+    "open":   ("open_votes",          "👁 Открытые голоса", None),
+    "ping":   ("phase_pings",         "🔔 Пинги фаз",      None),
 }
 
 
 def cycle_setting(game: Game, key: str) -> Tuple[bool, str]:
-    """Переключает значение настройки по кругу."""
-    from bunker.models import (
-        DISCUSSION_CHOICES, FIRST_REVEAL_CHOICES, REVEAL_CHOICES,
-        ROUND_REVEAL_CHOICES, VOTING_CHOICES,
-    )
     if game.phase is not Phase.LOBBY:
-        return False, "Настройки можно менять только до старта игры."
-
-    choices_map = {
-        "reveal": REVEAL_CHOICES,
-        "disc": DISCUSSION_CHOICES,
-        "vote": VOTING_CHOICES,
-        "first": FIRST_REVEAL_CHOICES,
-        "per": ROUND_REVEAL_CHOICES,
-    }
-    if key in ("nore", "img"):
-        attr = SETTINGS_MAP[key][0]
+        return False, "Настройки меняются только до старта."
+    item = SETTINGS.get(key)
+    if not item:
+        return False, "Неизвестная настройка."
+    attr, label, choices = item
+    if choices is None:
         setattr(game.settings, attr, not getattr(game.settings, attr))
         game.touch()
-        state = "включено" if getattr(game.settings, attr) else "выключено"
-        return True, f"{SETTINGS_MAP[key][1]}: {state}"
-
-    if key not in choices_map:
-        return False, "Неизвестная настройка."
-
-    attr = SETTINGS_MAP[key][0]
-    choices = choices_map[key]
-    current = getattr(game.settings, attr)
-    try:
-        idx = choices.index(current)
-    except ValueError:
-        idx = -1
-    new_value = choices[(idx + 1) % len(choices)]
-    setattr(game.settings, attr, new_value)
+        return True, f"{label}: {'да' if getattr(game.settings, attr) else 'нет'}"
+    cur = getattr(game.settings, attr)
+    idx = choices.index(cur) if cur in choices else -1
+    val = choices[(idx + 1) % len(choices)]
+    setattr(game.settings, attr, val)
     game.touch()
-    return True, f"{SETTINGS_MAP[key][1]}: {new_value}"
+    return True, f"{label}: {val}"
 
 
-# --------------------------------------------------------------------------- #
-#                           фазы и таймеры                                    #
-# --------------------------------------------------------------------------- #
+# ------------------------------ фазы и таймеры ------------------------------ #
 def phase_duration(game: Game, phase: Phase) -> int:
     s = game.settings
     return {
@@ -214,88 +167,80 @@ def phase_duration(game: Game, phase: Phase) -> int:
 
 def set_phase(game: Game, phase: Phase, timer: Optional[int] = None) -> None:
     game.phase = phase
-    duration = phase_duration(game, phase) if timer is None else timer
-    game.timer_seconds = max(0, int(duration))
+    dur = phase_duration(game, phase) if timer is None else int(timer)
+    game.timer_seconds = max(0, dur)
     game.phase_deadline = time.time() + game.timer_seconds if game.timer_seconds else 0.0
+    game.phase_started_at = time.time()
+    game.board_signature = ""          # форсируем перерисовку табло
     game.touch()
 
 
 def seconds_left(game: Game) -> int:
-    if not game.phase_deadline:
-        return 0
-    return max(0, int(round(game.phase_deadline - time.time())))
+    return max(0, int(round(game.phase_deadline - time.time()))) if game.phase_deadline else 0
 
 
 def phase_expired(game: Game) -> bool:
     return bool(game.phase_deadline) and time.time() >= game.phase_deadline
 
 
-# --------------------------------------------------------------------------- #
-#                                  старт                                      #
-# --------------------------------------------------------------------------- #
+def phase_complete(game: Game) -> bool:
+    """Фазу можно закрыть досрочно — все определились."""
+    if game.phase is Phase.REVEAL:
+        return check_reveal_complete(game)
+    if game.phase is Phase.DISCUSSION:
+        return discussion_complete(game)
+    if game.phase.is_voting:
+        return check_voting_complete(game)
+    return False
+
+
+# ----------------------------------- старт ---------------------------------- #
 def start_game_engine(game: Game) -> Tuple[bool, str]:
     if game.phase is not Phase.LOBBY:
         return False, "Игра уже запущена."
-
     count = len(game.players)
     if count < MIN_PLAYERS:
-        return False, f"Нужно минимум {MIN_PLAYERS} игрока для старта."
+        return False, f"Нужно минимум {MIN_PLAYERS} игрока."
     if not SCENARIOS:
-        return False, "Не найдено ни одного сценария (проверьте data.py)."
+        return False, "Не найдено ни одного сценария (data.py)."
 
     hands = deal_hands(count)
-    specials = deal_special_cards(count)
-    if len(hands) < count or len(specials) < count:
-        return False, "Ошибка раздачи карт: колода вернула меньше рук, чем игроков."
+    specials = deal_special_cards(count) if game.settings.use_special_cards else [None] * count
+    if len(hands) < count:
+        return False, "Ошибка раздачи карт."
 
     game.scenario = random.choice(SCENARIOS)
-    game.capacity = max(1, calculate_bunker_capacity(count))
+    game.capacity = max(1, min(count - 1, calculate_bunker_capacity(count)))
     game.total_rounds = max(1, count - game.capacity)
     game.current_round = 1
     game.consecutive_no_reveals = 0
+    game.clear_events()
 
-    for idx, (player, hand, special) in enumerate(
-        zip(game.ordered_players(), hands, specials), 1
-    ):
-        player.seat = idx
-        player.cards = hand
-        player.special_card = special
-        player.is_rat = bool(special and special.id == "rat")
-        player.alive = True
-        player.reset_round_state()
+    for idx, (p, hand, sc) in enumerate(zip(game.ordered_players(), hands, specials), 1):
+        p.seat, p.cards, p.special_card, p.alive = idx, hand, sc, True
+        p.reset_round_state()
 
     game.reset_round_state()
     set_phase(game, Phase.INTRO)
-    game.log(
-        f"{game.scenario.icon} Сценарий: <b>{escape_html(game.scenario.title)}</b>. "
-        f"Мест в бункере: {game.capacity} из {count}."
-    )
     return True, "Игра началась!"
 
 
 def cancel_game(game: Game) -> None:
     set_phase(game, Phase.FINISHED, timer=0)
-    game.log("🚫 Игра отменена организатором.")
 
 
 def finish_game(game: Game) -> None:
     set_phase(game, Phase.FINISHED, timer=0)
 
 
-# --------------------------------------------------------------------------- #
-#                           раскрытие карт                                    #
-# --------------------------------------------------------------------------- #
+# ------------------------------ раскрытие карт ------------------------------ #
 def reveals_allowed(game: Game) -> int:
     s = game.settings
     return s.reveals_first_round if game.current_round == 1 else s.reveals_per_round
 
 
 def player_reveal_done(game: Game, player: Player) -> bool:
-    if not player.alive:
-        return True
-    if player.no_reveal_choice:
-        return True
-    if not player.hidden_cards():
+    if not player.alive or player.no_reveal_choice or not player.hidden_cards():
         return True
     return player.reveals_this_round >= reveals_allowed(game)
 
@@ -306,91 +251,75 @@ def check_reveal_complete(game: Game) -> bool:
 
 
 def reveal_player_card(game: Game, user_id: int, cat_id: str) -> Tuple[bool, str, str]:
-    """-> (ok, приватный текст, публичный текст для чата)"""
+    """-> (ok, текст для ЛС, событие для табло)"""
     if game.phase is not Phase.REVEAL:
-        return False, "Сейчас не фаза раскрытия карт.", ""
-
-    player = game.players.get(user_id)
-    if player is None:
-        return False, "Вы не участвуете в этой игре.", ""
-    if not player.alive:
-        return False, "Изгнанные игроки не раскрывают карты.", ""
-
+        return False, "Сейчас не фаза раскрытия.", ""
+    p = game.players.get(user_id)
+    if p is None or not p.alive:
+        return False, "Вы не раскрываете карты.", ""
     limit = reveals_allowed(game)
-    if player.reveals_this_round >= limit:
-        return False, f"В этом раунде вы уже раскрыли карт: {limit}.", ""
-
-    card = player.cards.get(cat_id)
+    if p.reveals_this_round >= limit:
+        return False, f"В этом раунде вы уже раскрыли {limit}.", ""
+    card = p.cards.get(cat_id)
     if card is None:
         return False, "Карта не найдена.", ""
     if card.revealed:
         return False, "Эта карта уже раскрыта.", ""
 
     card.revealed = True
-    player.reveals_this_round += 1
-    player.no_reveal_choice = False
-
-    public = (
-        f"🔓 <b>{player.safe_name}</b> раскрывает {card.icon} "
-        f"<b>{escape_html(card.category_name)}</b>: {escape_html(shorten(card.value, 70))}"
-    )
-    game.log(public)
-    left = max(0, limit - player.reveals_this_round)
-    private = f"Карта «{card.category_name}» раскрыта! Осталось раскрыть: {left}."
-    return True, private, public
+    p.reveals_this_round += 1
+    p.no_reveal_choice = False
+    event = (f"🔓 <b>{p.safe_name}</b> → {card.icon} "
+             f"{escape_html(shorten(card.value, 42))}")
+    left = max(0, limit - p.reveals_this_round)
+    tail = f" Осталось: {left}." if left else " Ход сделан."
+    return True, f"Открыто: {card.icon} {card.category_name}.{tail}", event
 
 
 def declare_no_reveal(game: Game, user_id: int) -> Tuple[bool, str, str]:
-    """Игрок решает ничего не открывать в этом раунде."""
     if game.phase is not Phase.REVEAL:
-        return False, "Сейчас не фаза раскрытия карт.", ""
-    player = game.players.get(user_id)
-    if not player or not player.alive:
+        return False, "Сейчас не фаза раскрытия.", ""
+    p = game.players.get(user_id)
+    if not p or not p.alive:
         return False, "Вы не участвуете в раскрытии.", ""
     if not game.settings.allow_no_reveal:
-        return False, "Организатор запретил скрывать карты — нужно раскрыть карту.", ""
-    if player.no_reveal_choice:
-        return False, "Вы уже решили ничего не открывать.", ""
+        return False, "Организатор запретил скрывать карты.", ""
+    if p.reveals_this_round:
+        return False, "Вы уже раскрыли карту в этом раунде.", ""
+    if p.no_reveal_choice:
+        return False, "Вы уже сделали этот выбор.", ""
 
-    player.no_reveal_choice = True
-    public = f"🙈 <b>{player.safe_name}</b> решил(а) ничего не раскрывать в этом раунде."
-    game.log(public)
-    return True, "Хорошо, в этом раунде вы ничего не раскрываете.", public
+    p.no_reveal_choice = True
+    return True, "Хорошо, вы ничего не открываете.", f"🙈 <b>{p.safe_name}</b> ничего не открыл(а)"
 
 
-def auto_close_reveal(game: Game) -> List[str]:
-    """По истечении таймера все, кто не выбрал — считаются «ничего не открыл»."""
-    msgs: List[str] = []
+def auto_close_reveal(game: Game) -> int:
+    late = 0
     for p in game.alive_players():
         if not player_reveal_done(game, p):
             p.no_reveal_choice = True
-            msgs.append(f"⌛ <b>{p.safe_name}</b> не успел(а) раскрыть карту.")
-    return msgs
+            late += 1
+    return late
 
 
 def reveal_all_cards(player: Player) -> None:
-    for card in player.cards.values():
-        card.revealed = True
+    for c in player.cards.values():
+        c.revealed = True
 
 
-# --------------------------------------------------------------------------- #
-#                              обсуждение                                     #
-# --------------------------------------------------------------------------- #
-def register_skip(game: Game, user_id: int) -> Tuple[bool, str, bool]:
+# -------------------------------- обсуждение -------------------------------- #
+def register_skip(game: Game, user_id: int) -> Tuple[bool, str]:
     if game.phase is not Phase.DISCUSSION:
-        return False, "Сейчас нет обсуждения.", False
-    player = game.players.get(user_id)
-    if not player or not player.alive:
-        return False, "Вы не участвуете в обсуждении.", False
-    if player.has_skipped:
-        return False, "Вы уже готовы к голосованию.", False
-
-    player.has_skipped = True
+        return False, "Сейчас нет обсуждения."
+    p = game.players.get(user_id)
+    if not p or not p.alive:
+        return False, "Вы не участвуете в обсуждении."
+    if p.has_skipped:
+        return False, "Вы уже готовы."
+    p.has_skipped = True
     game.touch()
     alive = game.alive_players()
-    done = all(p.has_skipped for p in alive)
-    ready = sum(1 for p in alive if p.has_skipped)
-    return True, f"Вы готовы к голосованию ({ready}/{len(alive)}).", done
+    return True, f"Готовы: {sum(1 for x in alive if x.has_skipped)}/{len(alive)}"
 
 
 def discussion_complete(game: Game) -> bool:
@@ -398,56 +327,45 @@ def discussion_complete(game: Game) -> bool:
     return bool(alive) and all(p.has_skipped for p in alive)
 
 
-# --------------------------------------------------------------------------- #
-#                              голосование                                    #
-# --------------------------------------------------------------------------- #
+# -------------------------------- голосование ------------------------------- #
 def allowed_targets(game: Game, voter_id: int) -> List[int]:
-    """Живые, кроме себя; в обычном голосовании + 0 («никого не изгонять»)."""
     voter = game.players.get(voter_id)
     if not voter or not voter.alive or not game.phase.is_voting:
         return []
     targets = [p.user_id for p in game.alive_players()
                if p.user_id != voter_id and not p.shielded]
     if game.phase is Phase.TIEBREAK and game.tie_candidates:
-        allowed = set(game.tie_candidates)
-        targets = [t for t in targets if t in allowed]
-    else:
-        targets.append(0)
+        allow = set(game.tie_candidates)
+        return [t for t in targets if t in allow]
+    targets.append(0)                     # «никого не изгонять»
     return targets
 
 
 def cast_vote(game: Game, voter_id: int, target_id: int) -> Tuple[bool, str, str]:
-    """-> (ok, приватный текст, публичный текст)"""
     if not game.phase.is_voting:
-        return False, "Сейчас не фаза голосования.", ""
-
+        return False, "Сейчас не голосование.", ""
     voter = game.players.get(voter_id)
     if not voter or not voter.alive:
-        return False, "Вы не участвуете в голосовании.", ""
+        return False, "Вы не голосуете.", ""
     if voter_id in game.votes:
         return False, "Вы уже проголосовали.", ""
-    if voter_id == target_id:
-        return False, "Голосовать за себя нельзя.", ""
-
-    targets = allowed_targets(game, voter_id)
-    if target_id not in targets:
-        return False, "Этого игрока нельзя выбрать в текущем голосовании.", ""
-
-    target_name = "«Никого не изгонять»"
-    if target_id != 0:
-        target_name = game.players[target_id].name
+    if target_id not in allowed_targets(game, voter_id):
+        return False, "Такую цель выбрать нельзя.", ""
 
     voter.voted_for = target_id
     game.votes[voter_id] = target_id
-    alive = len(game.alive_players())
-    public = f"🗳 <b>{voter.safe_name}</b> проголосовал(а) ({len(game.votes)}/{alive})."
-    game.log(public)
-    return True, f"Ваш голос за {target_name} принят!", public
+    game.touch()
+
+    name = "«Никого не изгонять»" if target_id == 0 else game.players[target_id].name
+    event = ""
+    if game.settings.open_votes:
+        event = f"🗳 <b>{voter.safe_name}</b> → {escape_html(shorten(name, 24))}"
+    return True, f"Голос за {name} принят.", event
 
 
 def check_voting_complete(game: Game) -> bool:
-    alive_ids = {p.user_id for p in game.alive_players()}
-    return bool(alive_ids) and alive_ids.issubset(set(game.votes))
+    alive = {p.user_id for p in game.alive_players()}
+    return bool(alive) and alive.issubset(game.votes.keys())
 
 
 def tally_votes(game: Game) -> Dict[int, float]:
@@ -456,81 +374,81 @@ def tally_votes(game: Game) -> Dict[int, float]:
         voter = game.players.get(voter_id)
         if not voter or not voter.alive:
             continue
-        weight = max(0.0, voter.vote_weight)
+        w = max(0.0, voter.vote_weight)
         if target_id == 0:
-            tally[0] = tally.get(0, 0.0) + weight
+            tally[0] = tally.get(0, 0.0) + w
             continue
-        target = game.players.get(target_id)
-        if not target or not target.alive or target.shielded:
+        t = game.players.get(target_id)
+        if not t or not t.alive or t.shielded:
             continue
-        tally[target_id] = tally.get(target_id, 0.0) + weight
+        tally[target_id] = tally.get(target_id, 0.0) + w
     return tally
 
 
 def process_voting_results(game: Game) -> Tuple[Optional[int], bool, str]:
-    """-> (kicked_id | None, ничья?, комментарий для чата)"""
+    """-> (кого изгнать | None, ничья?, комментарий)"""
     tally = tally_votes(game)
-
     if not tally:
         pool = [p.user_id for p in game.alive_players() if not p.shielded]
         if not pool:
-            return None, False, "⛔ Голосов нет и изгонять некого — раунд без изгнаний."
-        kicked_id = random.choice(pool)
-        return kicked_id, False, "⚠️ Никто не проголосовал — изгнанник определён жребием."
+            return None, False, "⛔ Изгонять некого — раунд без изгнаний."
+        return random.choice(pool), False, "⚠️ Никто не голосовал — решил жребий."
 
     top = max(tally.values())
-    ties = sorted(tid for tid, v in tally.items() if v == top)
+    ties = sorted(t for t, v in tally.items() if v == top)
 
-    if 0 in ties:
-        return None, False, "⛔ Большинство выбрало «Никого не изгонять» — раунд без изгнаний."
+    if 0 in ties and len(ties) == 1:
+        return None, False, "⛔ Большинство: «никого не изгонять»."
+    ties = [t for t in ties if t != 0] or [0]
+    if ties == [0]:
+        return None, False, "⛔ Большинство: «никого не изгонять»."
 
     if len(ties) > 1:
         if game.phase is Phase.TIEBREAK or game.tie_attempts >= 1:
-            return random.choice(ties), False, "⚖️ Повторная ничья — решает жребий."
+            return random.choice(ties), False, "⚖️ Повторная ничья — решил жребий."
         game.tie_candidates = ties
         game.tie_attempts += 1
         names = ", ".join(f"<b>{game.players[t].safe_name}</b>" for t in ties if t in game.players)
-        return None, True, f"⚖️ Ничья между {names}! Переголосование."
-
+        return None, True, f"⚖️ Ничья: {names}"
     return ties[0], False, ""
 
 
-def kick_player_from_game(game: Game, kicked_id: int) -> str:
-    player = game.players.get(kicked_id)
-    if not player or not player.alive:
-        return ""
-    player.alive = False
-    player.shielded = False
-    reveal_all_cards(player)
+def start_tiebreak(game: Game) -> None:
+    game.votes.clear()
+    for p in game.players.values():
+        p.voted_for = None
+    set_phase(game, Phase.TIEBREAK)
 
-    lines = [f"💀 <b>{player.safe_name}</b> изгнан(а) из бункера! Его карты раскрыты:"]
-    for card in player.cards.values():
-        lines.append(f"   {card.icon} <b>{escape_html(card.category_name)}:</b> "
-                     f"{escape_html(shorten(card.value, 70))}")
-    if player.special_card:
-        sc = player.special_card
-        lines.append(f"   ✨ Спецкарта: {sc.icon} {escape_html(sc.name)}")
-    text = "\n".join(lines)
-    game.log(f"💀 <b>{player.safe_name}</b> изгнан(а) голосованием.")
-    return text
+
+def kick_player_from_game(game: Game, kicked_id: int) -> str:
+    p = game.players.get(kicked_id)
+    if not p or not p.alive:
+        return ""
+    p.alive = False
+    p.shielded = False
+    reveal_all_cards(p)
+    lines = [f"💀 Изгнан(а): <b>{p.safe_name}</b> — карты вскрыты:"]
+    for c in p.cards.values():
+        lines.append(f"   {c.icon} <b>{escape_html(c.category_name)}:</b> "
+                     f"{escape_html(shorten(c.value, 70))}")
+    if p.special_card:
+        used = "использована" if p.special_card.used else "не использована"
+        lines.append(f"   ✨ {p.special_card.icon} {escape_html(p.special_card.name)} ({used})")
+    return "\n".join(lines)
 
 
 def advance_round(game: Game) -> bool:
-    """True — игра продолжается (новый раунд), False — пора в эпилог."""
-    reveals_in_round = sum(p.reveals_this_round for p in game.alive_players())
-    if reveals_in_round == 0:
-        game.consecutive_no_reveals += 1
-    else:
-        game.consecutive_no_reveals = 0
+    """True — начинается новый раунд, False — пора в эпилог."""
+    revealed = sum(p.reveals_this_round for p in game.alive_players())
+    game.consecutive_no_reveals = game.consecutive_no_reveals + 1 if revealed == 0 else 0
 
     game.reset_round_state()
+    game.clear_events()
 
-    if game.consecutive_no_reveals >= 3:
-        game.log("⚠️ Три раунда подряд никто не раскрыл ни одной карты — игра остановлена.")
-        set_phase(game, Phase.EPILOGUE, timer=0)
-        return False
-
-    if game.alive_count <= game.capacity or game.current_round >= game.total_rounds:
+    if (game.alive_count <= game.capacity
+            or game.current_round >= game.total_rounds
+            or game.consecutive_no_reveals >= 3
+            or game.alive_count <= 1):
         set_phase(game, Phase.EPILOGUE, timer=0)
         return False
 
@@ -539,49 +457,146 @@ def advance_round(game: Game) -> bool:
     return True
 
 
-# --------------------------------------------------------------------------- #
-#                         авто-ходы тестовых ботов                            #
-# --------------------------------------------------------------------------- #
-def process_bot_actions(game: Game) -> List[str]:
-    """Выполняет ходы за ботов в текущей фазе. -> список публичных сообщений."""
-    logs: List[str] = []
-    alive_bots = [p for p in game.alive_players() if p.is_bot]
-    if not alive_bots:
-        return logs
+# ------------------------------- спецкарты ---------------------------------- #
+SPECIAL_TARGET = {"inspect": "player", "force_reveal": "category"}
 
-    if game.phase is Phase.REVEAL:
-        limit = reveals_allowed(game)
-        for b in alive_bots:
-            while b.reveals_this_round < limit and b.hidden_cards():
-                card = random.choice(b.hidden_cards())
-                ok, _, public = reveal_player_card(game, b.user_id, card.category_id)
-                if not ok:
-                    break
-                if public:
-                    logs.append(public)
 
-    elif game.phase is Phase.DISCUSSION:
-        for b in alive_bots:
+def special_target_kind(card_id: str) -> Optional[str]:
+    return SPECIAL_TARGET.get(card_id)
+
+
+def can_use_special(game: Game, player: Player) -> bool:
+    return bool(game.settings.use_special_cards and player.alive and player.special_card
+                and not player.special_card.used
+                and game.phase in (Phase.REVEAL, Phase.DISCUSSION, Phase.VOTING, Phase.TIEBREAK))
+
+
+def use_special_card(game: Game, user_id: int, arg: str = "") -> Tuple[bool, str, str]:
+    """-> (ok, приватный текст, публичное событие)"""
+    p = game.players.get(user_id)
+    if not p:
+        return False, "Вы не в игре.", ""
+    if not can_use_special(game, p):
+        return False, "Сейчас спецкарту использовать нельзя.", ""
+    sc = p.special_card
+    kind = special_target_kind(sc.id)
+    if kind and not arg:
+        return False, "Нужно выбрать цель.", ""
+
+    if sc.id == "immunity":
+        p.shielded = True
+        priv, event = "🛡 В этом раунде вас нельзя изгнать.", f"🛡 <b>{p.safe_name}</b> под защитой"
+
+    elif sc.id == "double_vote":
+        if user_id in game.votes:
+            return False, "Вы уже проголосовали.", ""
+        p.vote_weight = 2.0
+        priv, event = "⚖️ Ваш голос весит 2.", f"⚖️ <b>{p.safe_name}</b> усилил(а) голос"
+
+    elif sc.id == "heal":
+        card = p.cards.get("health")
+        if not card:
+            return False, "Карты «Здоровье» нет.", ""
+        card.value = HEALTHY_VALUE
+        priv = "🩹 Здоровье восстановлено."
+        event = (f"🩹 <b>{p.safe_name}</b> теперь здоров(а)" if card.revealed
+                 else f"🩹 <b>{p.safe_name}</b> применил(а) аптечку")
+
+    elif sc.id == "reroll":
+        hidden = p.hidden_cards()
+        if not hidden:
+            return False, "Все ваши карты уже раскрыты.", ""
+        card = random.choice(hidden)
+        in_play = {c.value for pl in game.players.values()
+                   for cid, c in pl.cards.items() if cid == card.category_id}
+        card.value = random_value_for(card.category_id, in_play)
+        priv = f"🔁 Новая карта «{card.category_name}»: {card.value}"
+        event = f"🔁 <b>{p.safe_name}</b> сменил(а) одну закрытую карту"
+
+    elif sc.id == "inspect":
+        try:
+            target = game.players[int(arg)]
+        except (ValueError, KeyError):
+            return False, "Игрок не найден.", ""
+        hidden = target.hidden_cards()
+        if not hidden or target.user_id == user_id or not target.alive:
+            return False, "У этого игрока нечего смотреть.", ""
+        card = random.choice(hidden)
+        priv = (f"🔍 Досмотр <b>{target.safe_name}</b>:\n"
+                f"{card.icon} <b>{escape_html(card.category_name)}:</b> {escape_html(card.value)}")
+        event = f"🔍 <b>{p.safe_name}</b> досмотрел(а) <b>{target.safe_name}</b>"
+
+    elif sc.id == "force_reveal":
+        cat_id = arg
+        if cat_id not in CATEGORY_NAMES:
+            return False, "Категория не найдена.", ""
+        opened = []
+        for t in game.alive_players():
+            card = t.cards.get(cat_id)
+            if card and not card.revealed:
+                card.revealed = True
+                opened.append(t.safe_name)
+        if not opened:
+            return False, "Эта категория уже открыта у всех.", ""
+        name, icon = CATEGORY_NAMES[cat_id]
+        priv = f"🔓 Открыто у {len(opened)} игрок(ов): {name}."
+        event = f"🔓 <b>{p.safe_name}</b> вскрыл(а) всем {icon} {escape_html(name)}"
+
+    else:
+        return False, "Эта спецкарта не поддерживается.", ""
+
+    sc.used = True
+    game.touch()
+    return True, priv, event
+
+
+def force_reveal_categories(game: Game) -> List[str]:
+    """Категории, где есть хотя бы одна закрытая карта у живых."""
+    out = []
+    for cid, _, _ in CATEGORIES:
+        if any((c := t.cards.get(cid)) and not c.revealed for t in game.alive_players()):
+            out.append(cid)
+    return out
+
+
+# ----------------------------- ходы тестовых ботов -------------------------- #
+def process_bot_actions(game: Game, max_actions: int = 1) -> List[str]:
+    """Боты ходят по одному действию за тик — события выглядят живее."""
+    events: List[str] = []
+    bots = [p for p in game.alive_players() if p.is_bot]
+    if not bots:
+        return events
+    random.shuffle(bots)
+
+    for b in bots:
+        if len(events) >= max_actions:
+            break
+        if game.phase is Phase.REVEAL:
+            if player_reveal_done(game, b):
+                continue
+            hidden = b.hidden_cards()
+            if not hidden:
+                continue
+            ok, _, ev = reveal_player_card(game, b.user_id, random.choice(hidden).category_id)
+            if ok:
+                events.append(ev)
+        elif game.phase is Phase.DISCUSSION:
             if not b.has_skipped:
                 register_skip(game, b.user_id)
-
-    elif game.phase.is_voting:
-        for b in alive_bots:
+                events.append("")
+        elif game.phase.is_voting:
             if b.user_id in game.votes:
                 continue
-            targets = [t for t in allowed_targets(game, b.user_id) if t != 0]
-            if not targets:
-                targets = allowed_targets(game, b.user_id)
+            targets = [t for t in allowed_targets(game, b.user_id) if t != 0] \
+                or allowed_targets(game, b.user_id)
             if targets:
-                ok, _, public = cast_vote(game, b.user_id, random.choice(targets))
-                if ok and public:
-                    logs.append(public)
-    return logs
+                ok, _, ev = cast_vote(game, b.user_id, random.choice(targets))
+                if ok:
+                    events.append(ev)
+    return [e for e in events if e]
 
 
-# --------------------------------------------------------------------------- #
-#                                 эпилог                                      #
-# --------------------------------------------------------------------------- #
+# ---------------------------------- эпилог ---------------------------------- #
 KEY_ROLES = (
     ("медицина", 15, ("хирург", "врач", "медиц", "фельдшер")),
     ("техника", 15, ("инженер", "сварщик", "механик", "сантехник", "электрик")),
@@ -590,11 +605,11 @@ KEY_ROLES = (
 SEVERE_HEALTH = ("диабет", "сердц", "астма", "порок", "туберкул", "рак", "вич", "диализ")
 
 
-def _survivor_values(survivors: List[Player], cat_id: str) -> List[str]:
+def _values(survivors: List[Player], cat_id: str) -> List[str]:
     return [p.cards[cat_id].value for p in survivors if cat_id in p.cards]
 
 
-def _apply_scenario_weights(game: Game, survivors: List[Player]) -> Tuple[int, List[str], List[str]]:
+def _scenario_weights(game: Game, survivors: List[Player]) -> Tuple[int, List[str], List[str]]:
     delta, pros, cons = 0, [], []
     if not game.scenario:
         return delta, pros, cons
@@ -602,88 +617,70 @@ def _apply_scenario_weights(game: Game, survivors: List[Player]) -> Tuple[int, L
         cat_id, _, needle = key.partition(":")
         if not needle:
             continue
-        needle_l = needle.lower()
-        if not any(needle_l in v.lower() for v in _survivor_values(survivors, cat_id)):
-            continue
-        delta += mod * 3
-        (pros if mod > 0 else cons).append(f"{escape_html(needle)} ({mod:+d})")
+        if any(needle.lower() in v.lower() for v in _values(survivors, cat_id)):
+            delta += mod * 3
+            (pros if mod > 0 else cons).append(escape_html(needle))
     return delta, pros, cons
 
 
 def calculate_epilogue(game: Game) -> str:
     sc = game.scenario
     if sc is None:
-        return "📖 Эпилог недоступен: сценарий не был выбран."
+        return "📖 Эпилог недоступен: сценарий не выбран."
 
     survivors = game.alive_players()
     for p in game.players.values():
         reveal_all_cards(p)
 
+    head = f"📖 <b>ЭПИЛОГ · {escape_html(sc.title)}</b>"
     if not survivors:
-        return (f"📖 <b>ЭПИЛОГ · {escape_html(sc.title)}</b>\n"
-                f"💀 Бункер «{escape_html(sc.bunker_name)}» остался пустым — выживших нет.")
+        return f"{head}\n💀 Бункер остался пустым — выживших нет."
 
-    score = 50
-    strengths: List[str] = []
-    weaknesses: List[str] = []
-
-    professions = " | ".join(_survivor_values(survivors, "profession")).lower()
-    for label, bonus, keywords in KEY_ROLES:
-        if any(k in professions for k in keywords):
+    score, strong, weak = 50, [], []
+    profs = " | ".join(_values(survivors, "profession")).lower()
+    for label, bonus, keys in KEY_ROLES:
+        if any(k in profs for k in keys):
             score += bonus
-            strengths.append(f"есть специалист: {label}")
+            strong.append(label)
         elif label != "продовольствие":
             score -= bonus
-            weaknesses.append(f"нет специалиста: {label}")
+            weak.append(f"нет {label}")
 
-    sick = sum(1 for h in _survivor_values(survivors, "health")
+    sick = sum(1 for h in _values(survivors, "health")
                if any(k in h.lower() for k in SEVERE_HEALTH))
     if sick:
         score -= sick * 8
-        weaknesses.append(f"тяжелобольных: {sick}")
+        weak.append(f"тяжелобольных: {sick}")
 
-    w_delta, w_pros, w_cons = _apply_scenario_weights(game, survivors)
-    score += w_delta
-    strengths.extend(w_pros)
-    weaknesses.extend(w_cons)
+    d, pros, cons = _scenario_weights(game, survivors)
+    score += d
+    strong += pros
+    weak += cons
 
     if len(survivors) > game.capacity:
         over = len(survivors) - game.capacity
         score -= over * 10
-        weaknesses.append(f"перенаселение бункера (+{over} чел.)")
+        weak.append(f"перенаселение (+{over})")
 
     score = max(5, min(99, score))
-
     lines = [
-        f"📖 <b>ФИНАЛЬНЫЙ ЭПИЛОГ · {sc.duration_years} ГОД(А) ПОД ЗЕМЛЁЙ</b>",
-        "━" * 18,
-        f"{sc.icon} <b>{escape_html(sc.title)}</b> · {escape_html(sc.bunker_name)}",
+        head,
+        f"🏚 {escape_html(sc.bunker_name)} · {sc.duration_years} год(а) под землёй",
         "",
         "🚪 <b>Выжившие:</b>",
     ]
     for p in survivors:
         prof = p.cards["profession"].value if "profession" in p.cards else "без профессии"
-        lines.append(f"• 👤 <b>{p.safe_name}</b> — {escape_html(shorten(prof, 50))}")
-
+        lines.append(f"• <b>{p.safe_name}</b> — {escape_html(shorten(prof, 46))}")
     if game.dead_players():
-        lines.append("")
         lines.append("💀 <b>Изгнаны:</b> " + ", ".join(p.safe_name for p in game.dead_players()))
-
     lines += [
         "",
-        f"📊 <b>Шанс выживания группы:</b> {score}%",
-        f"✅ <b>Сильные стороны:</b> {', '.join(strengths) if strengths else 'минимальные'}",
-        f"⚠️ <b>Слабые стороны:</b> {', '.join(weaknesses) if weaknesses else 'не выявлены'}",
-        "━" * 18,
+        f"📊 <b>Шанс выживания:</b> {score}%",
+        f"✅ {', '.join(strong) if strong else 'сильных сторон нет'}",
+        f"⚠️ {', '.join(weak) if weak else 'слабых сторон нет'}",
+        "",
+        (f"🎉 <b>УСПЕХ!</b> Группа пережила «{escape_html(sc.title)}»."
+         if score >= 70 else "💀 <b>ТРАГЕДИЯ.</b> Двери так и не открылись."),
     ]
-
-    if score >= 70:
-        lines.append(f"🎉 <b>УСПЕХ!</b> Бункер пережил «{escape_html(sc.title)}»!")
-    else:
-        lines.append("💀 <b>ТРАГЕДИЯ!</b> Группа не дожила до открытия дверей.")
-
-    rats = [p for p in survivors if p.is_rat]
-    if rats and score < 70:
-        lines.append("\n🐀 <b>Крыса победила:</b> " + ", ".join(p.safe_name for p in rats))
-
     return "\n".join(lines)
