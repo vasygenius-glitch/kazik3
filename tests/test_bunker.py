@@ -41,7 +41,7 @@ def test_bunker_basic_game_flow():
     assert len(png_buf.getvalue()) > 500
 
     game.phase = Phase.REVEAL
-    success, msg = reveal_player_card(game, 111, "profession")
+    success, _, _ = reveal_player_card(game, 111, "profession")
     assert success is True
     assert player_111.cards["profession"].revealed is True
 
@@ -54,7 +54,7 @@ def test_bunker_basic_game_flow():
     cast_vote(game, 222, 111)
 
     assert check_voting_complete(game) is True
-    kicked_id, is_tie = process_voting_results(game)
+    kicked_id, is_tie, _ = process_voting_results(game)
     assert is_tie is False
     assert kicked_id == 222
 
@@ -133,7 +133,7 @@ def test_simulated_bunker_game_instance(game_idx: int):
                 target_id = random.choice(targets)
                 cast_vote(g, voter.user_id, target_id)
 
-        kicked_id, is_tie = process_voting_results(g)
+        kicked_id, is_tie, _ = process_voting_results(g)
         if is_tie:
             g.phase = Phase.TIEBREAK
             g.votes.clear()
@@ -141,7 +141,7 @@ def test_simulated_bunker_game_instance(game_idx: int):
                 targets = [t for t in g.tie_candidates if t != voter.user_id]
                 if targets:
                     cast_vote(g, voter.user_id, random.choice(targets))
-            kicked_id, is_tie = process_voting_results(g)
+            kicked_id, is_tie, _ = process_voting_results(g)
 
         if kicked_id:
             kick_player_from_game(g, kicked_id)
