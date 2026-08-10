@@ -37,6 +37,57 @@ async def safe_edit_text(bot: Bot, chat_id: int, message_id: int, text: str, rep
         pass
 
 
+async def process_and_update_bots(game: Game, bot: Bot):
+    """Выполняет авто-ходы за всех тестовых ботов и продвигает фазы игры."""
+    engine.process_bot_actions(game)
+
+    # Проверка фазы REVEAL
+    if game.phase is Phase.REVEAL and engine.check_reveal_complete(game):
+        engine.set_phase(game, Phase.DISCUSSION)
+        game.log("⏳ Все участники раскрыли карты! Началась фаза обсуждения.")
+        engine.process_bot_actions(game)
+
+    # Проверка фазы DISCUSSION
+    if game.phase is Phase.DISCUSSION:
+        alive = game.alive_players()
+        if all(p.has_skipped for p in alive):
+            engine.set_phase(game, Phase.VOTING)
+            game.votes.clear()
+            game.log("🗳 Обсуждение завершено досрочно! Переход к голосованию.")
+            engine.process_bot_actions(game)
+
+    # Проверка фазы VOTING
+    if game.phase.is_voting and engine.check_voting_complete(game):
+        kicked_id, is_tie = engine.process_voting_results(game)
+        if is_tie:
+            engine.set_phase(game, Phase.TIEBREAK)
+            game.votes.clear()
+            game.log("⚖️ Ничья при голосовании! Запущено повторное переголосование среди лидирующих.")
+            engine.process_bot_actions(game)
+            if engine.check_voting_complete(game):
+                kicked_id_2, _ = engine.process_voting_results(game)
+                if kicked_id_2:
+                    engine.kick_player_from_game(game, kicked_id_2)
+                cont = engine.advance_round(game)
+                if not cont:
+                    epilogue_text = engine.calculate_epilogue(game)
+                    engine.finish_game(game)
+                    await bot.send_message(chat_id=game.chat_id, text=epilogue_text, parse_mode="HTML")
+                else:
+                    engine.process_bot_actions(game)
+        else:
+            if kicked_id:
+                engine.kick_player_from_game(game, kicked_id)
+
+            cont = engine.advance_round(game)
+            if not cont:
+                epilogue_text = engine.calculate_epilogue(game)
+                engine.finish_game(game)
+                await bot.send_message(chat_id=game.chat_id, text=epilogue_text, parse_mode="HTML")
+            else:
+                engine.process_bot_actions(game)
+
+
 @router.message(Command("start"), F.text.regexp(r"^/start\s+b"))
 async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
     """Обработка deep-link в ЛС бота: /start <game_id>"""
@@ -90,7 +141,6 @@ async def cmd_bunker_create(message: types.Message, bot: Bot):
             "Завершите текущую партию или используйте существующее лобби."
         )
 
-    # Короткий ID для умещения в 64-байтный CallbackData
     short_cid = abs(chat_id) % 1000000
     short_time = int(time.time()) % 100000
     game_id = f"b{short_cid}_{short_time}"
@@ -105,6 +155,27 @@ async def cmd_bunker_create(message: types.Message, bot: Bot):
 
     msg = await message.answer(text, reply_markup=kb, parse_mode="HTML")
     game.stage_message_id = msg.message_id
+
+
+@router.message(Command("bunker_bot"))
+async def cmd_bunker_add_bot(message: types.Message, bot: Bot):
+    """Быстрое добавление тестового бота через команду /bunker_bot."""
+    game = engine.get_game_by_chat(message.chat.id)
+    if not game:
+        return await message.answer("❌ В этом чате нет активного лобби Бункера.")
+
+    async with game.lock:
+        ok, msg = engine.add_test_bot(game)
+        if not ok:
+            return await message.answer(f"❌ {msg}")
+
+        bot_info = await bot.get_me()
+        is_host = (message.from_user.id == game.host_id)
+        text = ui.format_lobby_text(game)
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
 
 
 @router.callback_query(BunkerCB.filter(F.action == "join"))
@@ -164,6 +235,50 @@ async def cb_leave(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
     await cb.answer(msg)
 
 
+@router.callback_query(BunkerCB.filter(F.action == "add_bot"))
+async def cb_add_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("❌ Игра не найдена.", show_alert=True)
+
+    async with game.lock:
+        ok, msg = engine.add_test_bot(game)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
+
+        bot_info = await bot.get_me()
+        is_host = (cb.from_user.id == game.host_id)
+        text = ui.format_lobby_text(game)
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
+
+    await cb.answer(msg)
+
+
+@router.callback_query(BunkerCB.filter(F.action == "remove_bot"))
+async def cb_remove_bot(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
+    game = engine.get_game(callback_data.game_id)
+    if not game:
+        return await cb.answer("❌ Игра не найдена.", show_alert=True)
+
+    async with game.lock:
+        ok, msg = engine.remove_test_bot(game)
+        if not ok:
+            return await cb.answer(msg, show_alert=True)
+
+        bot_info = await bot.get_me()
+        is_host = (cb.from_user.id == game.host_id)
+        text = ui.format_lobby_text(game)
+        kb = ui.get_lobby_keyboard(game.game_id, is_host=is_host, bot_username=bot_info.username or "")
+
+    if game.stage_message_id:
+        await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)
+
+    await cb.answer(msg)
+
+
 @router.callback_query(BunkerCB.filter(F.action == "start"))
 async def cb_start(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
     game = engine.get_game(callback_data.game_id)
@@ -180,8 +295,10 @@ async def cb_start(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
 
         bot_info = await bot.get_me()
 
-        # Рассылка карт
+        # Рассылка карт живым игрокам
         for p in game.players.values():
+            if p.is_bot:
+                continue
             try:
                 png_buf = render_player_dossier_png(p, game.scenario)
                 photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{p.user_id}.png")
@@ -198,6 +315,9 @@ async def cb_start(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
                 )
             except Exception:
                 pass
+
+        # Выполняем действия ботов при старте (например раскрытие карт в 1 фазе)
+        await process_and_update_bots(game, bot)
 
         text = ui.format_stage_text(game, bot_info.username or "")
         kb = ui.get_stage_keyboard(game, bot_info.username or "")
@@ -216,7 +336,7 @@ async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot
 
     p = game.players.get(cb.from_user.id)
     if not p:
-        return await cb.answer("Вы не являетесь участником данной игры.", show_alert=True)
+        return await cb.answer("Вы не являетесь участником данной игры. Нажмите «Вступить»!", show_alert=True)
 
     if game.phase is Phase.LOBBY or not game.scenario or not p.cards:
         return await cb.answer(
@@ -268,9 +388,7 @@ async def cb_reveal_do(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bo
         if not ok:
             return await cb.answer(msg, show_alert=True)
 
-        if engine.check_reveal_complete(game):
-            engine.set_phase(game, Phase.DISCUSSION)
-            game.log("⏳ Все игроки раскрыли карты! Началась фаза обсуждения.")
+        await process_and_update_bots(game, bot)
 
         bot_info = await bot.get_me()
         text = ui.format_stage_text(game, bot_info.username or "")
@@ -298,10 +416,7 @@ async def cb_skip(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
         if not ok:
             return await cb.answer(msg, show_alert=True)
 
-        if all_done:
-            engine.set_phase(game, Phase.VOTING)
-            game.votes.clear()
-            game.log("🗳 Обсуждение завершено досрочно! Переход к голосованию.")
+        await process_and_update_bots(game, bot)
 
         bot_info = await bot.get_me()
         text = ui.format_stage_text(game, bot_info.username or "")
@@ -344,21 +459,7 @@ async def cb_vote_do(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot)
         if not ok:
             return await cb.answer(msg, show_alert=True)
 
-        if engine.check_voting_complete(game):
-            kicked_id, is_tie = engine.process_voting_results(game)
-            if is_tie:
-                engine.set_phase(game, Phase.TIEBREAK)
-                game.votes.clear()
-                game.log("⚖️ Ничья при голосовании! Запущено повторное переголосование среди лидирующих.")
-            else:
-                if kicked_id:
-                    engine.kick_player_from_game(game, kicked_id)
-
-                cont = engine.advance_round(game)
-                if not cont:
-                    epilogue_text = engine.calculate_epilogue(game)
-                    engine.finish_game(game)
-                    await bot.send_message(chat_id=game.chat_id, text=epilogue_text, parse_mode="HTML")
+        await process_and_update_bots(game, bot)
 
         bot_info = await bot.get_me()
         text = ui.format_stage_text(game, bot_info.username or "")
@@ -381,9 +482,11 @@ async def cb_refresh(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot)
     if not game:
         return await cb.answer("Игра не найдена.", show_alert=True)
 
-    bot_info = await bot.get_me()
-    text = ui.format_stage_text(game, bot_info.username or "")
-    kb = ui.get_stage_keyboard(game, bot_info.username or "")
+    async with game.lock:
+        await process_and_update_bots(game, bot)
+        bot_info = await bot.get_me()
+        text = ui.format_stage_text(game, bot_info.username or "")
+        kb = ui.get_stage_keyboard(game, bot_info.username or "")
 
     if game.stage_message_id:
         await safe_edit_text(bot, game.chat_id, game.stage_message_id, text, reply_markup=kb)

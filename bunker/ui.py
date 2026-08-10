@@ -74,6 +74,10 @@ def get_lobby_keyboard(game_id: str, is_host: bool, bot_username: str = "") -> I
     b.button(text="➕ Вступить", callback_data=BunkerCB(action="join", game_id=game_id).pack())
     b.button(text="➖ Покинуть", callback_data=BunkerCB(action="leave", game_id=game_id).pack())
 
+    # Кнопки управления тестовыми ИИ-ботами
+    b.button(text="🤖 + Бот", callback_data=BunkerCB(action="add_bot", game_id=game_id).pack())
+    b.button(text="🤖 - Бот", callback_data=BunkerCB(action="remove_bot", game_id=game_id).pack())
+
     # если username бота неизвестен — не создаём битый URL, шлём callback
     if bot_username:
         b.button(text="🃏 Мои карты в ЛС", url=f"https://t.me/{bot_username}?start={game_id}")
@@ -84,7 +88,7 @@ def get_lobby_keyboard(game_id: str, is_host: bool, bot_username: str = "") -> I
     if is_host:
         b.button(text="🚀 НАЧАТЬ ИГРУ", callback_data=BunkerCB(action="start", game_id=game_id).pack())
 
-    b.adjust(2, 1, 1)
+    b.adjust(2, 2, 1, 1)
     return b.as_markup()
 
 

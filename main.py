@@ -75,20 +75,18 @@ async def _create_bot() -> Bot:
     candidates = []
     if custom_proxy and custom_proxy != "https://123123-woad.vercel.app":
         candidates.append(("Кастомный ПРОКСИ (" + custom_proxy + ")", TelegramAPIServer.from_base(custom_proxy)))
+    elif custom_proxy == "https://123123-woad.vercel.app":
+        candidates.append(("Прокси Vercel", TelegramAPIServer.from_base("https://123123-woad.vercel.app")))
     
-    candidates.append(("Прямое подключение (api.telegram.org)", PRODUCTION))
-    
-    if custom_proxy == "https://123123-woad.vercel.app":
-        candidates.append(("Прокси Vercel (https://123123-woad.vercel.app)", TelegramAPIServer.from_base("https://123123-woad.vercel.app")))
+    candidates.append(("Стандартный сервер", PRODUCTION))
 
     last_error = None
     for name, server in candidates:
-        logger.info("Попытка подключения: %s...", name)
         for attempt in range(1, 3):
             bot = _build_bot(server)
             try:
                 me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
-                logger.info("✅ Успешно подключено через %s! Бот: @%s", name, me.username)
+                logger.info("✅ Успешно подключено к Telegram API! Бот: @%s", me.username)
                 return bot
             except Exception as e:
                 last_error = e

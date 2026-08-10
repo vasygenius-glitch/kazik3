@@ -81,7 +81,13 @@ def cleanup_stale_games(now: Optional[float] = None) -> int:
 # --------------------------------------------------------------------------- #
 #                                   лобби                                     #
 # --------------------------------------------------------------------------- #
-def add_player(game: Game, user_id: int, name: str, username: str = "") -> Tuple[bool, str]:
+BOT_NAMES = [
+    "🤖 Бот Ева", "🤖 Бот Валли", "🤖 Бот Т-800", "🤖 Бот Джарвис",
+    "🤖 Бот Бэндер", "🤖 Бот Марвин", "🤖 Бот HAL-9000", "🤖 Бот R2-D2",
+    "🤖 Бот C-3PO", "🤖 Бот Оптимус", "🤖 Бот Альтрон", "🤖 Бот Аэлита"
+]
+
+def add_player(game: Game, user_id: int, name: str, username: str = "", is_bot: bool = False) -> Tuple[bool, str]:
     if game.phase is not Phase.LOBBY:
         return False, "Игра уже началась — присоединиться нельзя."
     if user_id in game.players:
@@ -95,9 +101,72 @@ def add_player(game: Game, user_id: int, name: str, username: str = "") -> Tuple
         name=clean_name,
         username=username or "",
         seat=len(game.players) + 1,
+        is_bot=is_bot,
     )
     game.touch()
     return True, f"{clean_name}, вы в лобби!"
+
+def add_test_bot(game: Game) -> Tuple[bool, str]:
+    if game.phase is not Phase.LOBBY:
+        return False, "Добавлять ботов можно только в лобби."
+    if len(game.players) >= MAX_PLAYERS:
+        return False, f"Лобби заполнено (максимум {MAX_PLAYERS} игроков)."
+
+    existing_names = {p.name for p in game.players.values()}
+    available_names = [n for n in BOT_NAMES if n not in existing_names]
+    bot_name = available_names[0] if available_names else f"🤖 Бот #{len(game.players) + 1}"
+
+    bot_uid = 990000 + len(game.players) + random.randint(1, 9999)
+    while bot_uid in game.players:
+        bot_uid += 1
+
+    return add_player(game, bot_uid, bot_name, "bot", is_bot=True)
+
+def remove_test_bot(game: Game) -> Tuple[bool, str]:
+    if game.phase is not Phase.LOBBY:
+        return False, "Удалять ботов можно только до старта игры."
+
+    bot_players = [p for p in game.players.values() if p.is_bot]
+    if not bot_players:
+        return False, "В лобби нет тестовых ботов."
+
+    last_bot = bot_players[-1]
+    return remove_player(game, last_bot.user_id)
+
+def process_bot_actions(game: Game) -> List[str]:
+    """Автоматически выполняет действия за тестовых ИИ-ботов в текущей фазе."""
+    logs = []
+    alive_bots = [p for p in game.alive_players() if p.is_bot]
+    if not alive_bots:
+        return logs
+
+    if game.phase is Phase.REVEAL:
+        limit = reveals_allowed(game)
+        for bot in alive_bots:
+            if bot.reveals_this_round < limit:
+                hidden = bot.hidden_cards()
+                if hidden:
+                    card_to_rev = random.choice(hidden)
+                    ok, msg = reveal_player_card(game, bot.user_id, card_to_rev.category_id)
+                    if ok:
+                        logs.append(msg)
+
+    elif game.phase is Phase.DISCUSSION:
+        for bot in alive_bots:
+            if not bot.has_skipped:
+                register_skip(game, bot.user_id)
+
+    elif game.phase.is_voting:
+        for bot in alive_bots:
+            if bot.user_id not in game.votes:
+                targets = allowed_targets(game, bot.user_id)
+                if targets:
+                    target_id = random.choice(targets)
+                    ok, msg = cast_vote(game, bot.user_id, target_id)
+                    if ok:
+                        logs.append(msg)
+
+    return logs
 
 
 def remove_player(game: Game, user_id: int) -> Tuple[bool, str]:

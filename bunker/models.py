@@ -73,6 +73,7 @@ class Player:
     is_rat: bool = False
     voted_for: Optional[int] = None
     has_skipped: bool = False
+    is_bot: bool = False
     ready: bool = False
     reveals_this_round: int = 0
 
