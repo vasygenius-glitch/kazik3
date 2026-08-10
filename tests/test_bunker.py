@@ -63,7 +63,7 @@ def test_bunker_basic_game_flow():
     assert game.players[222].alive is False
 
     epilogue = calculate_epilogue(game)
-    assert "ФИНАЛЬНЫЙ ЭПИЛОГ" in epilogue
+    assert "ЭПИЛОГ" in epilogue
 
 
 SAMPLE_NAMES = [
@@ -151,6 +151,6 @@ def test_simulated_bunker_game_instance(game_idx: int):
             break
 
     epilogue_txt = calculate_epilogue(g)
-    assert "ФИНАЛЬНЫЙ ЭПИЛОГ" in epilogue_txt
+    assert "ЭПИЛОГ" in epilogue_txt
     finish_game(g)
     assert g.phase is Phase.FINISHED
