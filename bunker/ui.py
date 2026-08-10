@@ -91,9 +91,10 @@ def get_lobby_keyboard(game: Game, is_host: bool, is_creator: bool,
 # --------------------------------------------------------------------------- #
 def format_settings_text(game: Game) -> str:
     s = game.settings
+    sep = "━━━━━━━━━━━━━━━━━━"
     return (
         "⚙️ <b>НАСТРОЙКИ ПАРТИИ</b>\n"
-        "━" * 18 + "\n"
+        f"{sep}\n"
         "Нажимайте на кнопки — значения переключаются по кругу.\n\n"
         f"🔓 Раскрытие карт: <b>{fmt_timer(s.reveal_seconds)}</b>\n"
         f"💬 Обсуждение: <b>{fmt_timer(s.discussion_seconds)}</b>\n"
@@ -357,9 +358,10 @@ def format_intro_text(game: Game) -> str:
         return "📜 Брифинг недоступен."
     rooms = ", ".join(escape_html(r) for r in sc.bunker_rooms) or "—"
     problems = "\n".join(f"• {escape_html(p)}" for p in sc.problems) or "• нет данных"
+    sep = "━━━━━━━━━━━━━━━━━━"
     return (
         f"{sc.icon} <b>{escape_html(sc.title)}</b> · <i>{escape_html(sc.rarity)}</i>\n"
-        "━" * 18 + "\n"
+        f"{sep}\n"
         f"{escape_html(sc.intro_text)}\n\n"
         f"🏚 <b>{escape_html(sc.bunker_name)}</b> ({escape_html(sc.bunker_size)})\n"
         f"🚪 Отсеки: {rooms}\n"
