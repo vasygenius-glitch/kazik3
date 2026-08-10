@@ -38,6 +38,7 @@ from admin_dashboard import router as admin_dashboard_router
 from court import router as court_router
 from cards_system import router as cards_system_router
 from bunker import router as bunker_router
+from feedback import router as feedback_router
 
 import asyncio
 from user_manager import get_user_data, update_user_balance
@@ -100,6 +101,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(seasons_router)
     
     # Остальные модули
+    dp.include_router(feedback_router)
     dp.include_router(bunker_router)
     dp.include_router(economy_router)
     dp.include_router(blackjack_router)
