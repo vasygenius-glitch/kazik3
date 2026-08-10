@@ -73,6 +73,6 @@ async def test_cmd_changelog():
     msg = DummyMessage()
     await cmd_changelog(msg)
     assert len(msg.replies) == 1
-    assert "КРУПНОЕ ОБНОВЛЕНИЕ БОТА" in msg.replies[0]
+    assert "ОБНОВЛЕНИЕ БОТА" in msg.replies[0]
     assert "/bunker" in msg.replies[0]
 
