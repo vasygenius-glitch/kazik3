@@ -120,7 +120,7 @@ def get_stage_keyboard(game: Game, bot_username: str) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     gid = game.game_id
 
-    builder.button(text="🃏 Мои карты в ЛС", url=f"https://t.me/{bot_username}?start=bnk_{gid}")
+    builder.button(text="🃏 Мои карты в ЛС", url=f"https://t.me/{bot_username}?start={gid}")
 
     if game.phase == Phase.REVEAL:
         builder.button(text="🔓 Раскрыть карту", callback_data=BunkerCB(action="reveal_menu", game_id=gid).pack())

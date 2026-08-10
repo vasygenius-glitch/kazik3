@@ -21,12 +21,12 @@ router = Router()
 
 @router.message(Command("start"), F.text.contains("bnk_"))
 async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
-    """Обработка deep-link в ЛС бота: /start bnk_<game_id>"""
-    args = message.text.split("bnk_")
-    if len(args) < 2:
+    """Обработка deep-link в ЛС бота: /start bnk_<chat_id>_<timestamp>"""
+    parts = message.text.split()
+    if len(parts) < 2:
         return
         
-    game_id = args[1].strip()
+    game_id = parts[1].strip()
     game = get_game(game_id)
     if not game:
         return await message.answer("❌ Игра не найдена или уже завершена.")
@@ -34,6 +34,12 @@ async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
     player = game.players.get(message.from_user.id)
     if not player:
         return await message.answer("❌ Вы не являетесь участником этой игры.")
+
+    if game.phase == Phase.LOBBY or not game.scenario or not player.cards:
+        return await message.answer(
+            f"⌛ <b>Вы успешно перешли в ЛС бота!</b>\n"
+            f"Сейчас идет подготовка к игре. Как только организатор нажмет «НАЧАТЬ ИГРУ», вам сюда сразу придет ваша личная карточка выживающего!"
+        )
 
     # Отправляем карточку игроку в ЛС
     png_buf = render_player_dossier_png(player, game.scenario)
@@ -191,11 +197,17 @@ async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot
 
     p = game.players.get(cb.from_user.id)
     if not p:
-        return await cb.answer("Вы не являетесь участником данной игры.", show_alert=True)
+        return await cb.answer("Вы не являетесь участником данной игры. Нажмите «Вступить»!", show_alert=True)
+
+    if game.phase == Phase.LOBBY or not game.scenario or not p.cards:
+        return await cb.answer(
+            "⌛ Игра еще не началась! Карты будут вызданы каждому участнику после нажатия «НАЧАТЬ ИГРУ».",
+            show_alert=True
+        )
 
     bot_info = await bot.get_me()
     try:
-        png_buf = render_player_dossier_png(p, game.scenario or Game.scenario)
+        png_buf = render_player_dossier_png(p, game.scenario)
         photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{p.user_id}.png")
         await bot.send_photo(
             chat_id=cb.from_user.id,
@@ -205,7 +217,7 @@ async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot
         await cb.answer("Карточка отправлена вам в ЛС! 📩")
     except Exception:
         await cb.answer(
-            f"❌ Не удалось отправить карточку в ЛС! Сначала нажмите /start в боте: t.me/{bot_info.username}?start=bnk_{game.game_id}",
+            f"❌ Не удалось отправить карточку в ЛС! Сначала нажмите /start в боте: t.me/{bot_info.username}?start={game.game_id}",
             show_alert=True
         )
 
