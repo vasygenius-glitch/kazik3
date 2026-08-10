@@ -98,6 +98,74 @@ async def process_and_update_bots(game: Game, bot: Bot):
                 engine.process_bot_actions(game)
 
 
+async def send_player_dossier(
+    bot: Bot,
+    chat_id: int,
+    player: Player,
+    scenario,
+    reply_markup=None,
+    message: types.Message = None
+) -> bool:
+    """
+    Надёжная отправка карточки игрока (сначала высылает PNG карточку,
+    при любой ошибке или ограничении Telegram фолбэчится на чистый HTML текст).
+    """
+    sc_title = scenario.title if scenario else "Неизвестно"
+    sc_bunker = scenario.bunker_name if scenario else "Неизвестно"
+
+    caption_text = (
+        f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО ВЫЖИВАЮЩЕГО</b>\n"
+        f"Катастрофа: <b>{escape_html(sc_title)}</b>\n"
+        f"Бункер: <b>{escape_html(sc_bunker)}</b>\n\n"
+        f"Секретные карты выданы! Никому их не показывай до фазы раскрытия."
+    )
+
+    # 1. Попытка отправить изображение PNG
+    photo_sent = False
+    try:
+        png_buf = render_player_dossier_png(player, scenario)
+        buf_bytes = png_buf.getvalue() if png_buf else b""
+        if len(buf_bytes) > 500:
+            photo_file = BufferedInputFile(file=buf_bytes, filename=f"dossier_{player.user_id}.png")
+            if message:
+                await message.answer_photo(photo=photo_file, caption=caption_text, reply_markup=reply_markup, parse_mode="HTML")
+            else:
+                await bot.send_photo(chat_id=chat_id, photo=photo_file, caption=caption_text, reply_markup=reply_markup, parse_mode="HTML")
+            photo_sent = True
+    except Exception:
+        photo_sent = False
+
+    if photo_sent:
+        return True
+
+    # 2. Фолбэк на HTML текст, если отправка фото не удалась
+    try:
+        text_dossier = (
+            f"☢️ <b>ЛИЧНОЕ ДЕЛО ВЫЖИВАЮЩЕГО</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 <b>Объект:</b> {player.safe_name}\n"
+            f"Катастрофа: <b>{escape_html(sc_title)}</b>\n"
+            f"Бункер: <b>{escape_html(sc_bunker)}</b>\n\n"
+            f"<b>ХАРАКТЕРИСТИКИ ПЕРСОНАЖА:</b>\n"
+        )
+        for card in player.cards.values():
+            val = escape_html(card.value) if card.revealed else "🔒 [ЗАКРЫТО]"
+            text_dossier += f"• {card.icon} <b>{escape_html(card.category_name)}:</b> {val}\n"
+
+        if player.special_card:
+            sc = player.special_card
+            used_str = " (ИСПОЛЬЗОВАНА)" if sc.used else ""
+            text_dossier += f"\n✨ <b>СПЕЦКАРТА:</b> {sc.icon} <b>{escape_html(sc.name)}{used_str}</b> — {escape_html(sc.description)}\n"
+
+        if message:
+            await message.answer(text_dossier, reply_markup=reply_markup, parse_mode="HTML")
+        else:
+            await bot.send_message(chat_id=chat_id, text=text_dossier, reply_markup=reply_markup, parse_mode="HTML")
+        return True
+    except Exception:
+        return False
+
+
 @router.message(Command("start"), F.text.regexp(r"^/start\s+b"))
 async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
     """Обработка deep-link в ЛС бота: /start <game_id>"""
@@ -120,23 +188,17 @@ async def cmd_start_bunker_deep_link(message: types.Message, bot: Bot):
             f"Сейчас идет подготовка к игре. Как только организатор нажмет «НАЧАТЬ ИГРУ», вам сюда придут ваши секретные карты!"
         )
 
-    png_buf = render_player_dossier_png(player, game.scenario)
-    photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{player.user_id}.png")
-
     builder = InlineKeyboardBuilder()
     if game.phase is Phase.REVEAL:
         builder.button(text="🔓 Раскрыть карту", callback_data=BunkerCB(action="reveal_menu", game_id=game_id).pack())
 
-    await message.answer_photo(
-        photo=photo_file,
-        caption=(
-            f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО</b>\n"
-            f"Катастрофа: <b>{escape_html(game.scenario.title)}</b>\n"
-            f"Бункер: <b>{escape_html(game.scenario.bunker_name)}</b>\n\n"
-            f"Используй кнопки в чате для действий!"
-        ),
+    await send_player_dossier(
+        bot=bot,
+        chat_id=message.from_user.id,
+        player=player,
+        scenario=game.scenario,
         reply_markup=builder.as_markup() if builder.export() else None,
-        parse_mode="HTML"
+        message=message
     )
 
 
@@ -318,22 +380,7 @@ async def cb_start(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot):
         for p in game.players.values():
             if p.is_bot:
                 continue
-            try:
-                png_buf = render_player_dossier_png(p, game.scenario)
-                photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{p.user_id}.png")
-                await bot.send_photo(
-                    chat_id=p.user_id,
-                    photo=photo_file,
-                    caption=(
-                        f"☢️ <b>ТВОЕ ЛИЧНОЕ ДЕЛО ВЫЖИВАЮЩЕГО</b>\n"
-                        f"Катастрофа: <b>{escape_html(game.scenario.title)}</b>\n"
-                        f"Бункер: <b>{escape_html(game.scenario.bunker_name)}</b> ({escape_html(game.scenario.bunker_size)})\n\n"
-                        f"Секретные карты выданы! Никому их не показывай до фазы раскрытия."
-                    ),
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
+            await send_player_dossier(bot, p.user_id, p, game.scenario)
 
         # Выполняем действия ботов при старте (например раскрытие карт в 1 фазе)
         await process_and_update_bots(game, bot)
@@ -364,17 +411,10 @@ async def cb_my_cards(cb: types.CallbackQuery, callback_data: BunkerCB, bot: Bot
         )
 
     bot_info = await bot.get_me()
-    try:
-        png_buf = render_player_dossier_png(p, game.scenario)
-        photo_file = BufferedInputFile(png_buf.getvalue(), filename=f"dossier_{p.user_id}.png")
-        await bot.send_photo(
-            chat_id=cb.from_user.id,
-            photo=photo_file,
-            caption="🃏 Ваша личная карточка выживающего.",
-            parse_mode="HTML"
-        )
+    sent = await send_player_dossier(bot, cb.from_user.id, p, game.scenario)
+    if sent:
         await cb.answer("Карточка отправлена вам в ЛС! 📩")
-    except Exception:
+    else:
         username = bot_info.username or ""
         await cb.answer(
             f"❌ Сначала нажмите /start в боте: t.me/{username}?start={game.game_id}",
