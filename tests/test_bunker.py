@@ -143,7 +143,7 @@ def test_subsystem_pause_and_force_next():
 
     ok, msg = force_next_phase(game)
     assert ok is True
-    assert game.phase_deadline < 0
+    assert phase_expired(game) is True
 
 
 def test_subsystem_special_cards_all():
