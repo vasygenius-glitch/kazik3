@@ -474,7 +474,8 @@ async def get_clan_ref(chat_id: int, clan_name: str):
 active_clan_invites = {}
 active_clan_raids = {}
 
-@router.message(Command("clan") | (F.text & F.text.lower().startswith("клан")))
+@router.message(Command("clan", "клан"))
+@router.message(F.text & F.text.lower().startswith("клан"))
 async def cmd_clan(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
