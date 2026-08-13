@@ -62,8 +62,24 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
 
 
 
+class CustomAiohttpSession(AiohttpSession):
+
+    async def create_session(self) -> aiohttp.ClientSession:
+        if self._should_reset_connector:
+            await self.close()
+
+        if self._session is None or self._session.closed:
+            self._session = aiohttp.ClientSession(
+                connector=self._connector_type(**self._connector_init),
+                trust_env=True,
+            )
+            self._should_reset_connector = False
+
+        return self._session
+
+
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
-    session = AiohttpSession(api=api_server, timeout=30)
+    session = CustomAiohttpSession(api=api_server, timeout=30)
     session._connector_init["family"] = socket.AF_INET
     session.middleware(RetryRequestMiddleware())
     return Bot(
