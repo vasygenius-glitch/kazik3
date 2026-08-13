@@ -78,9 +78,21 @@ class CustomAiohttpSession(AiohttpSession):
         return self._session
 
 
+async def _test_network(url: str):
+    import urllib.request
+    try:
+        def _do():
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            with urllib.request.urlopen(req, timeout=4.0) as resp:
+                return resp.status
+        status = await asyncio.to_thread(_do)
+        logger.info("📡 [Сетевой тест urllib] Доступ к %s: УСПЕШНО (HTTP %s)", url, status)
+    except Exception as e:
+        logger.warning("📡 [Сетевой тест urllib] Ошибка доступа к %s: %s", url, e)
+
+
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
     session = CustomAiohttpSession(api=api_server, timeout=30)
-    session._connector_init["family"] = socket.AF_INET
     session.middleware(RetryRequestMiddleware())
     return Bot(
         token=BOT_TOKEN,
@@ -96,6 +108,9 @@ async def _create_bot() -> Bot:
         logger.info("🔑 BOT_TOKEN обнаружен: %s (длина %s)", masked, len(BOT_TOKEN))
 
     custom_proxy = os.environ.get("TELEGRAM_API_URL", "").strip().rstrip("/")
+    if custom_proxy:
+        await _test_network(custom_proxy)
+    await _test_network("https://api.telegram.org")
     
     candidates = []
     if custom_proxy and custom_proxy != "https://123123-woad.vercel.app":
