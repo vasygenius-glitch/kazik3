@@ -93,7 +93,8 @@ async def _create_bot() -> Bot:
                 return bot
             except Exception as e:
                 last_error = e
-                logger.warning("⚠️ [%s] Попытка %s/2 не удалась (%s: %s)", name, attempt, type(e).__name__, e)
+                err_str = str(e) or repr(e)
+                logger.warning("⚠️ [%s] Попытка %s/2 не удалась (%s: %s)", name, attempt, type(e).__name__, err_str)
                 await bot.session.close()
                 if attempt < 2:
                     await asyncio.sleep(1.5)
