@@ -3,7 +3,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+_raw_token = os.getenv("BOT_TOKEN", "")
+BOT_TOKEN = _raw_token.strip().strip('"').strip("'") if _raw_token else ""
 FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "firebase-key.json")
 CREATOR_USERNAME = os.getenv("CREATOR_USERNAME", "z_1l1")
 try:

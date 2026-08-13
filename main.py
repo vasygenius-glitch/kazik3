@@ -89,6 +89,12 @@ def _build_bot(api_server: TelegramAPIServer) -> Bot:
     )
 
 async def _create_bot() -> Bot:
+    if not BOT_TOKEN:
+        logger.error("❌ ОШИБКА: BOT_TOKEN не найден в переменных окружения!")
+    else:
+        masked = BOT_TOKEN[:6] + "..." + BOT_TOKEN[-4:] if len(BOT_TOKEN) > 10 else "***"
+        logger.info("🔑 BOT_TOKEN обнаружен: %s (длина %s)", masked, len(BOT_TOKEN))
+
     custom_proxy = os.environ.get("TELEGRAM_API_URL", "").strip().rstrip("/")
     
     candidates = []
@@ -104,7 +110,7 @@ async def _create_bot() -> Bot:
         for attempt in range(1, 3):
             bot = _build_bot(server)
             try:
-                me = await asyncio.wait_for(bot.get_me(), timeout=25.0)
+                me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
                 logger.info("✅ Успешно подключено к Telegram API! Бот: @%s", me.username)
                 return bot
             except Exception as e:
