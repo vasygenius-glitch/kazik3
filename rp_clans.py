@@ -474,7 +474,7 @@ async def get_clan_ref(chat_id: int, clan_name: str):
 active_clan_invites = {}
 active_clan_raids = {}
 
-@router.message(Command("clan"))
+@router.message(Command("clan") | (F.text & F.text.lower().startswith("клан")))
 async def cmd_clan(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -493,6 +493,7 @@ async def cmd_clan(message: types.Message):
         return await message.answer(
             "🛡 <b>Управление кланом:</b>\n"
             "<code>/clan create [Название]</code> — создать клан (50к сыроежек)\n"
+            "<code>/clan rename [Новое Название]</code> — переименовать клан (лидер)\n"
             "<code>/clan invite [reply]</code> — пригласить в клан\n"
             "<code>/clan kick [reply]</code> — выгнать из клана (лидер/заместитель)\n"
             "<code>/clan leave</code> — выйти из клана\n"
@@ -781,6 +782,50 @@ async def cmd_clan(message: types.Message):
         })
         target_name = escape_html(message.reply_to_message.from_user.full_name)
         await message.answer(f"👑 Лидерство клана <b>{escape_html(clan_name)}</b> успешно передано ковбою <b>{target_name}</b>!")
+
+    elif action in ["rename", "name", "переименовать"]:
+        if not clan_name:
+            return await message.answer("Вы не состоите в клане.")
+
+        if len(args) < 3 or not args[2].strip():
+            return await message.answer(
+                "Укажите новое название клана:\n"
+                "<code>/clan rename [Новое Название]</code>"
+            )
+
+        new_clan_name = args[2].strip()
+        if len(new_clan_name) < 2 or len(new_clan_name) > 30:
+            return await message.answer("Длина названия клана должна быть от 2 до 30 символов.")
+
+        if new_clan_name == clan_name:
+            return await message.answer("Новое название совпадает с текущим.")
+
+        old_clan_ref = await get_clan_ref(chat_id, clan_name)
+        doc = await old_clan_ref.get()
+        if not doc.exists:
+            await update_user_field(chat_id, user_id, 'clan', None)
+            return await message.answer("Ваш клан больше не существует.")
+
+        clan_data = doc.to_dict()
+        if user_id != clan_data.get('leader_id'):
+            return await message.answer("Переименовать клан может только Лидер.")
+
+        new_clan_ref = await get_clan_ref(chat_id, new_clan_name)
+        new_doc = await new_clan_ref.get()
+        if new_doc.exists:
+            return await message.answer("Клан с таким названием уже существует!")
+
+        clan_data['name'] = new_clan_name
+        await new_clan_ref.set(clan_data)
+
+        for m_id in clan_data.get('members', []):
+            await update_user_field(chat_id, m_id, 'clan', new_clan_name)
+
+        await old_clan_ref.delete()
+
+        await message.answer(
+            f"✏️ Клан <b>{escape_html(clan_name)}</b> успешно переименован в <b>{escape_html(new_clan_name)}</b>!"
+        )
 
     elif action == "deposit":
         if not clan_name: return

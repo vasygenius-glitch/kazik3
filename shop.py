@@ -694,6 +694,14 @@ async def process_sell_confirm(callback: types.CallbackQuery):
 
         else:
             item_cat = item.get("cat", "")
+            u_data = await get_user_data(chat_id, user_id)
+            if item.get("action") == "business":
+                biz_levels = u_data.get("biz_levels", {})
+                level = biz_levels.get(item_id, 1)
+                total_invested = item["price"]
+                for l in range(1, level):
+                    total_invested += int(item["price"] * 0.5 * l)
+                sell_price = int(total_invested * SELL_RATIO)
 
             @firestore_async.async_transactional
             async def _sell_txn(transaction):
