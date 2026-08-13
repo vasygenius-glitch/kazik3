@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import os
+import socket
 import warnings
+import aiohttp
 from urllib.parse import urlparse
 from aiohttp import web, ClientError
 from aiogram import Bot, Dispatcher
@@ -61,7 +63,8 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
 
 
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
-    session = AiohttpSession(api=api_server, timeout=30)
+    connector = aiohttp.TCPConnector(family=socket.AF_INET)
+    session = AiohttpSession(api=api_server, timeout=30, connector=connector)
     session.middleware(RetryRequestMiddleware())
     return Bot(
         token=BOT_TOKEN,
@@ -85,7 +88,7 @@ async def _create_bot() -> Bot:
         for attempt in range(1, 3):
             bot = _build_bot(server)
             try:
-                me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
+                me = await asyncio.wait_for(bot.get_me(), timeout=25.0)
                 logger.info("✅ Успешно подключено к Telegram API! Бот: @%s", me.username)
                 return bot
             except Exception as e:
