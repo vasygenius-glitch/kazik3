@@ -63,8 +63,8 @@ class RetryRequestMiddleware(BaseRequestMiddleware):
 
 
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
-    connector = aiohttp.TCPConnector(family=socket.AF_INET)
-    session = AiohttpSession(api=api_server, timeout=30, connector=connector)
+    session = AiohttpSession(api=api_server, timeout=30)
+    session._connector_init["family"] = socket.AF_INET
     session.middleware(RetryRequestMiddleware())
     return Bot(
         token=BOT_TOKEN,
