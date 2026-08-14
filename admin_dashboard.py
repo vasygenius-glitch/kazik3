@@ -1999,7 +1999,7 @@ async def cb_pdis_inf(callback: types.CallbackQuery, state: FSMContext):
 @creator_only
 async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
+    chat_id, target_id = cb_int(parts, 2, 0), cb_int(parts, 3, 0)
     data = await get_user_data(chat_id, target_id)
     inventory = data.get("inventory", {}) or {}
     from shop import ITEMS
@@ -2012,11 +2012,11 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
         f"<b>Текущие вещи:</b>\n{inv_text}\n\nВыберите категорию:"
     )
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏢 Бизнесы", callback_data=f"db_pic_{chat_id}_{target_id}_biz")
-    builder.button(text="🚗 Машины", callback_data=f"db_pic_{chat_id}_{target_id}_cars")
-    builder.button(text="🎒 Прочее", callback_data=f"db_pic_{chat_id}_{target_id}_other")
-    builder.button(text="🐰 Дикторы", callback_data=f"db_pic_{chat_id}_{target_id}_tayniy_baniy")
-    builder.button(text="🌟 Престиж", callback_data=f"db_pic_{chat_id}_{target_id}_prestige")
+    builder.button(text="🏢 Бизнесы", callback_data=f"db_pic_{chat_id}:{target_id}:0:biz")
+    builder.button(text="🚗 Машины", callback_data=f"db_pic_{chat_id}:{target_id}:0:cars")
+    builder.button(text="🎒 Прочее", callback_data=f"db_pic_{chat_id}:{target_id}:0:other")
+    builder.button(text="🐰 Дикторы", callback_data=f"db_pic_{chat_id}:{target_id}:0:tayniy_baniy")
+    builder.button(text="🌟 Престиж", callback_data=f"db_pic_{chat_id}:{target_id}:0:prestige")
     builder.button(text="🧹 Очистить инвентарь", callback_data=f"db_pia_{chat_id}_{target_id}_clear")
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
     builder.adjust(3, 2, 1, 1)
@@ -2027,10 +2027,23 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("db_pic_"))
 @creator_only
 async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
-    parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
-    cat = parts[4] if len(parts) > 4 else "other"
-    page = cb_int(parts, 5) if len(parts) > 5 else 0
+    payload = callback.data.removeprefix("db_pic_")
+    if ":" in payload:
+        p_chat_id, p_target_id, p_page, cat = payload.split(":", 3)
+        chat_id = int(p_chat_id)
+        target_id = int(p_target_id)
+        page = int(p_page) if p_page.isdigit() else 0
+    else:
+        parts = split_cb(callback.data)
+        chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
+        if len(parts) >= 6 and parts[4] == "tayniy" and parts[5] == "baniy":
+            cat = "tayniy_baniy"
+            p_val = cb_int(parts, 6, 0)
+            page = p_val if p_val is not None else 0
+        else:
+            cat = parts[4] if len(parts) > 4 else "other"
+            p_val = cb_int(parts, 5, 0)
+            page = p_val if p_val is not None else 0
 
     data = await get_user_data(chat_id, target_id)
     inventory = data.get("inventory", {}) or {}
@@ -2060,18 +2073,18 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     for item_id, item_cfg in page_items:
         qty = inventory.get(item_id, 0)
         item_name = item_cfg.get("name", item_id)
-        builder.button(text="➖", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_m_{cat}_{page}")
-        builder.button(text=f"{item_name} ({qty})", callback_data=f"db_piq_{chat_id}_{target_id}_{item_id}_{cat}")
-        builder.button(text="➕", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_p_{cat}_{page}")
+        builder.button(text="➖", callback_data=f"db_pich_{chat_id}:{target_id}:m:{page}:{cat}:{item_id}")
+        builder.button(text=f"{item_name} ({qty})", callback_data=f"db_piq_{chat_id}:{target_id}:{cat}:{item_id}")
+        builder.button(text="➕", callback_data=f"db_pich_{chat_id}:{target_id}:p:{page}:{cat}:{item_id}")
         rows += 1
 
     # Пагинация
     if total_pages > 1:
         prev_p = max(0, page - 1)
         next_p = min(total_pages - 1, page + 1)
-        builder.button(text="◀️ Назад", callback_data=f"db_pic_{chat_id}_{target_id}_{cat}_{prev_p}")
+        builder.button(text="◀️ Назад", callback_data=f"db_pic_{chat_id}:{target_id}:{prev_p}:{cat}")
         builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
-        builder.button(text="Вперед ▶️", callback_data=f"db_pic_{chat_id}_{target_id}_{cat}_{next_p}")
+        builder.button(text="Вперед ▶️", callback_data=f"db_pic_{chat_id}:{target_id}:{next_p}:{cat}")
 
     builder.button(text="⬅️ Назад к категориям", callback_data=f"db_pim_{chat_id}_{target_id}")
 
@@ -2087,16 +2100,22 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("db_pich_"))
 @creator_only
 async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
-    parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
-    item_id = parts[4]
-    action = parts[5]
-    cat = parts[6]
-    page = parts[7] if len(parts) > 7 else "0"
+    payload = callback.data.removeprefix("db_pich_")
+    if ":" in payload:
+        p_chat_id, p_target_id, action, p_page, cat, item_id = payload.split(":", 5)
+        chat_id, target_id = int(p_chat_id), int(p_target_id)
+        page = int(p_page) if p_page.isdigit() else 0
+    else:
+        parts = split_cb(callback.data)
+        chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
+        item_id = parts[4]
+        action = parts[5]
+        cat = parts[6] if len(parts) > 6 else "other"
+        page = cb_int(parts, 7, 0) or 0
 
     data = await get_user_data(chat_id, target_id)
     inventory = dict(data.get("inventory", {}) or {})
-    current_qty = inventory.get(item_id, 0)
+    current_qty = int(inventory.get(item_id, 0) or 0)
 
     if action == "p":
         inventory[item_id] = current_qty + 1
@@ -2105,7 +2124,7 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
         if current_qty <= 0:
             return await safe_answer(callback, "❌ Предмета уже 0 в инвентаре!", show_alert=True)
         if current_qty == 1:
-            del inventory[item_id]
+            inventory.pop(item_id, None)
         else:
             inventory[item_id] = current_qty - 1
         await safe_answer(callback, "➖ Количество уменьшено!")
@@ -2114,7 +2133,7 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
     asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
 
     # Перерисовка категории на той же странице
-    callback.data = f"db_pic_{chat_id}_{target_id}_{cat}_{page}"
+    callback.data = f"db_pic_{chat_id}:{target_id}:{page}:{cat}"
     await cb_pinv_cat(callback, state)
 
 
@@ -2164,28 +2183,60 @@ async def cb_pprestige_set(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("db_pcards_menu_"))
 @creator_only
 async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
-    parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    payload = callback.data.removeprefix("db_pcards_menu_")
+    if ":" in payload:
+        p_chat_id, p_target_id, p_page = payload.split(":", 2)
+        chat_id = int(p_chat_id)
+        target_id = int(p_target_id)
+        page = int(p_page) if p_page.isdigit() else 0
+    else:
+        parts = split_cb(callback.data)
+        chat_id, target_id = cb_int(parts, 3, 0) or 0, cb_int(parts, 4, 0) or 0
+        page = 0
+
     data = await get_user_data(chat_id, target_id)
     cards = data.get("meme_cards") or {}
 
     from cards_system import CARDS
+    cards_list = list(CARDS.items())
+    page_size = 8
+    total_pages = max(1, (len(cards_list) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    page_cards = cards_list[start_idx:start_idx + page_size]
+
     text = (
         f"🃏 <b>Коллекция карточек свинок</b>\n"
-        f"👤 Игрок ID: <code>{target_id}</code>\n\n"
+        f"👤 Игрок ID: <code>{target_id}</code> | Страница: <b>{page + 1}/{total_pages}</b>\n\n"
         f"Всего карточек в коллекции: <b>{sum(cards.values())} шт.</b>\n"
-        f"Нажимайте на карточки для выдачи/изъятия:"
+        f"Нажимайте на карточки для изменения количества:"
     )
     builder = InlineKeyboardBuilder()
-    for cid, cinfo in CARDS.items():
+    rows = 0
+    for cid, cinfo in page_cards:
         qty = cards.get(cid, 0)
         cname = cinfo.get("name", cid)
-        builder.button(text="➖", callback_data=f"db_pcard_ch_{chat_id}_{target_id}_{cid}_m")
+        builder.button(text="➖", callback_data=f"db_pcard_ch_{chat_id}:{target_id}:m:{page}:{cid}")
         builder.button(text=f"{cname} ({qty})", callback_data="noop")
-        builder.button(text="➕", callback_data=f"db_pcard_ch_{chat_id}_{target_id}_{cid}_p")
+        builder.button(text="➕", callback_data=f"db_pcard_ch_{chat_id}:{target_id}:p:{page}:{cid}")
+        rows += 1
+
+    # Пагинация
+    if total_pages > 1:
+        prev_p = max(0, page - 1)
+        next_p = min(total_pages - 1, page + 1)
+        builder.button(text="◀️ Назад", callback_data=f"db_pcards_menu_{chat_id}:{target_id}:{prev_p}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text="Вперед ▶️", callback_data=f"db_pcards_menu_{chat_id}:{target_id}:{next_p}")
+
     builder.button(text="🎁 Выдать все карты x1", callback_data=f"db_pcard_all_{chat_id}_{target_id}")
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
-    builder.adjust(*([3] * len(CARDS) + [1, 1]))
+
+    if total_pages > 1:
+        builder.adjust(*([3] * rows + [3, 1, 1]))
+    else:
+        builder.adjust(*([3] * rows + [1, 1]))
+
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -2193,10 +2244,17 @@ async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("db_pcard_ch_"))
 @creator_only
 async def cb_pcard_change(callback: types.CallbackQuery, state: FSMContext):
-    parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
-    cid = parts[5]
-    action = parts[6]
+    payload = callback.data.removeprefix("db_pcard_ch_")
+    if ":" in payload:
+        p_chat_id, p_target_id, action, p_page, cid = payload.split(":", 4)
+        chat_id, target_id = int(p_chat_id), int(p_target_id)
+        page = int(p_page) if p_page.isdigit() else 0
+    else:
+        parts = split_cb(callback.data)
+        chat_id, target_id = cb_int(parts, 3, 0) or 0, cb_int(parts, 4, 0) or 0
+        action = parts[-1]
+        cid = "_".join(parts[5:-1])
+        page = 0
 
     data = await get_user_data(chat_id, target_id)
     cards = dict(data.get("meme_cards") or {})
@@ -2211,7 +2269,7 @@ async def cb_pcard_change(callback: types.CallbackQuery, state: FSMContext):
 
     await update_user_field(chat_id, target_id, "meme_cards", cards)
     asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
-    callback.data = f"db_pcards_menu_{chat_id}_{target_id}"
+    callback.data = f"db_pcards_menu_{chat_id}:{target_id}:{page}"
     await cb_pcards_menu(callback, state)
 
 
@@ -2219,13 +2277,13 @@ async def cb_pcard_change(callback: types.CallbackQuery, state: FSMContext):
 @creator_only
 async def cb_pcard_all(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    chat_id, target_id = cb_int(parts, 3, 0) or 0, cb_int(parts, 4, 0) or 0
     from cards_system import CARDS
     cards = {cid: 1 for cid in CARDS.keys()}
     await update_user_field(chat_id, target_id, "meme_cards", cards)
     asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
     await safe_answer(callback, "✅ Выданы все карточки по 1 шт.!", show_alert=True)
-    callback.data = f"db_pcards_menu_{chat_id}_{target_id}"
+    callback.data = f"db_pcards_menu_{chat_id}:{target_id}:0"
     await cb_pcards_menu(callback, state)
 
 
@@ -2288,12 +2346,18 @@ async def cb_pinv_act(callback: types.CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("db_piq_"))
 @creator_only
 async def cb_player_inv_qty_prompt(callback: types.CallbackQuery, state: FSMContext):
-    parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
-    item_id = parts[4]
-    cat = parts[5]
+    payload = callback.data.removeprefix("db_piq_")
+    if ":" in payload:
+        p_chat_id, p_target_id, cat, item_id = payload.split(":", 3)
+        chat_id, target_id = int(p_chat_id), int(p_target_id)
+    else:
+        parts = split_cb(callback.data)
+        chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
+        item_id = parts[4]
+        cat = parts[5] if len(parts) > 5 else "other"
+
     data = await get_user_data(chat_id, target_id)
-    current_qty = (data.get("inventory", {}) or {}).get(item_id, 0)
+    current_qty = int((data.get("inventory", {}) or {}).get(item_id, 0) or 0)
     from shop import ITEMS
     item_name = ITEMS.get(item_id, {}).get("name", item_id)
 
@@ -2301,7 +2365,7 @@ async def cb_player_inv_qty_prompt(callback: types.CallbackQuery, state: FSMCont
     await state.update_data(chat_id=chat_id, target_user_id=target_id, item_id=item_id,
                             cat=cat, menu_message_id=callback.message.message_id)
     builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data=f"db_pic_{chat_id}_{target_id}_{cat}")
+    builder.button(text="❌ Отмена", callback_data=f"db_pic_{chat_id}:{target_id}:0:{cat}")
     await safe_edit(
         callback.message,
         f"🎒 <b>Изменение количества</b>\n\n"
@@ -2334,7 +2398,7 @@ async def process_player_inv_qty_input(message: types.Message, state: FSMContext
     await message.answer(f"✅ Количество установлено в {val}.")
     await state.clear()
     await cb_pinv_cat(
-        MockCallback(message, data["menu_message_id"], f"db_pic_{chat_id}_{target_id}_{cat}"), state
+        MockCallback(message, data["menu_message_id"], f"db_pic_{chat_id}:{target_id}:0:{cat}"), state
     )
     await safe_delete(message)
 
