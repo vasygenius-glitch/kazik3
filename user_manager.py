@@ -748,6 +748,19 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         elif lobby_type == 'tax':
             tax_percent = max(0, tax_percent // 2)
 
+        # Престиж бонус к доходу и скидка на налог
+        prestige_level = int(data.get('prestige_level', 0) or 0)
+        prestige_mult = 1.0
+        if prestige_level > 0:
+            try:
+                from prestige import get_prestige_perks
+                pperks = get_prestige_perks(data)
+                prestige_mult = pperks.get('income_multiplier', 1.0)
+                tax_discount = pperks.get('tax_discount', 0)
+                tax_percent = max(0, tax_percent - tax_discount)
+            except Exception:
+                pass
+
         extra_income = biz_income + car_income + bank_income
         tax_amt = int(extra_income * (tax_percent / 100.0))
 
@@ -765,18 +778,25 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             except Exception as e:
                 logger.error("Tax redirect to bank error: %s", e)
 
-        # Meme bonuses (multiplier applies to base daily bonus, not business trillions)
+        # Meme bonuses (multiplier applies to base daily bonus, not business income)
         meme_bonuses = get_user_meme_bonuses(data)
         meme_mult = meme_bonuses['multiplier']
         meme_flat = meme_bonuses['flat']
         card_boost = int(base_bonus * meme_mult) + meme_flat
 
+        # Налог на залежавшийся сверхкапитал (стимул к Престижу и обороту)
+        luxury_tax = 0
+        if is_daily:
+            total_wealth = int(data.get('balance', 0) or 0) + bank_deposit
+            if total_wealth > 50_000_000 and prestige_level < 6:
+                excess = total_wealth - 50_000_000
+                luxury_tax = int(excess * 0.015)
 
         total = base_bonus + extra_income - tax_amt + card_boost
-        if inventory.get('kovcheg', 0) > 0:
+        total = int(total * prestige_mult)
+        if inventory.get('kovcheg', 0) > 0 or inventory.get('prestige_ark', 0) > 0:
             total = int(total * 1.2)
-        if total <= 0:
-            total = 0
+        total = max(0, total - luxury_tax)
 
         data['balance'] = int(data.get('balance', 0) or 0) + total
         data['last_bonus_time'] = current_time

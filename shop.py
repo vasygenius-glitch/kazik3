@@ -33,7 +33,7 @@ router = Router()
 #  КАТАЛОГ ТОВАРОВ
 # ─────────────────────────────────────────────────────────────
 ITEMS: dict[str, dict] = {
-    # БИЗНЕСЫ (Окупаемость — 10 сборов)
+    # БИЗНЕСЫ
     "семечки":   {"name": "🌻 Продажа семечек", "price": 500,            "cat": "biz",   "action": "business", "income": 50},
     "газеты":    {"name": "📰 Газетный киоск",  "price": 1_200,          "cat": "biz",   "action": "business", "income": 120},
     "свип":      {"name": "🧹 Услуги дворника", "price": 2_500,          "cat": "biz",   "action": "business", "income": 250},
@@ -47,31 +47,25 @@ ITEMS: dict[str, dict] = {
     "ресторан":  {"name": "🍽 Ресторан",        "price": 750_000,       "cat": "biz",   "action": "business", "income": 75_000},
     "отель":     {"name": "🏨 Отель",           "price": 1_750_000,     "cat": "biz",   "action": "business", "income": 175_000},
     "ферма":     {"name": "🌽 Ферма",           "price": 3_000_000,     "cat": "biz",   "action": "business", "income": 300_000},
-    "кинотеатр": {"name": "🎬 Кинотеатр",       "price": 5_000_000,     "cat": "biz",   "action": "business", "income": 500_000},
-    "завод":     {"name": "🏭 Завод",           "price": 6_250_000,     "cat": "biz",   "action": "business", "income": 625_000},
-    "салон":     {"name": "🚙 Автосалон",       "price": 12_500_000,    "cat": "biz",   "action": "business", "income": 1_250_000},
-    "нефть":     {"name": "🛢 Вышка",           "price": 25_000_000,    "cat": "biz",   "action": "business", "income": 2_500_000},
-    "банк":      {"name": "🏦 Банк",            "price": 62_500_000,    "cat": "biz",   "action": "business", "income": 6_250_000},
-    "айти":      {"name": "💻 IT-компания",     "price": 125_000_000,   "cat": "biz",   "action": "business", "income": 12_500_000},
-    "казино":    {"name": "🎰 Казино",          "price": 250_000_000,   "cat": "biz",   "action": "business", "income": 25_000_000},
-    "стадион":   {"name": "🏟 Стадион",         "price": 500_000_000,   "cat": "biz",   "action": "business", "income": 50_000_000},
-    "космодром": {"name": "🚀 Космодром",       "price": 1_250_000_000, "cat": "biz",   "action": "business", "income": 125_000_000},
-    "планета":   {"name": "🪐 Колония",         "price": 2_500_000_000, "cat": "biz",   "action": "business", "income": 250_000_000},
-    "нейросеть": {"name": "🤖 Сервер ИИ",       "price": 5_000_000_000, "cat": "biz",   "action": "business", "income": 500_000_000},
-    "sec_bunker": {"name": "🛡 Подземный Бункер", "price": 10_000_000_000, "cat": "biz", "action": "business", "income": 100_000_000, "desc": "Полностью защищает от краж /steal!"},
-    "империя":   {"name": "🌌 Межзвездная Империя", "price": 25_000_000_000, "cat": "biz", "action": "business", "income": 2_500_000_000},
-    "мегакорп":  {"name": "🏢 Мегакорпорация",   "price": 50_000_000_000, "cat": "biz", "action": "business", "income": 5_000_000_000},
-    "звездные_врата": {"name": "🌌 Звёздные Врата", "price": 150_000_000_000, "cat": "biz", "action": "business", "income": 15_000_000_000},
-    "сфера_дайсона": {"name": "☀️ Сфера Дайсона", "price": 500_000_000_000, "cat": "biz", "action": "business", "income": 50_000_000_000},
-    "сингулярность": {"name": "🌀 Генератор Сингулярности", "price": 1_500_000_000_000, "cat": "biz", "action": "business", "income": 150_000_000_000},
-    "мультивселенная": {"name": "🔮 Мультивселенский Хаб", "price": 5_000_000_000_000, "cat": "biz", "action": "business", "income": 500_000_000_000},
-    "квантовый_компьютер": {"name": "⚛️ Квантовый Вычислитель", "price": 10_000_000_000_000, "cat": "biz", "action": "business", "income": 1_000_000_000_000, "desc": "Генерирует профит на уровне квантовых вероятностей."},
-    "варп_станция": {"name": "🌌 Варп-Станция", "price": 25_000_000_000_000, "cat": "biz", "action": "business", "income": 2_500_000_000_000, "desc": "Межпространственная торговля ресурсами."},
-    "матрица_времени": {"name": "⏳ Хроно-Матрица", "price": 50_000_000_000_000, "cat": "biz", "action": "business", "income": 5_000_000_000_000, "desc": "Извлекает богатства из временных парадоксов."},
-    "космо_лифт": {"name": "🏗 Орбитальный Лифт", "price": 100_000_000_000_000, "cat": "biz", "action": "business", "income": 10_000_000_000_000, "desc": "Транспортировка руды с астероидных поясов."},
-    "фабрика_темной_материи": {"name": "🌌 Фабрика Тёмной Материи", "price": 250_000_000_000_000, "cat": "biz", "action": "business", "income": 25_000_000_000_000, "desc": "Производит самое дорогое вещество во вселенной."},
-    "галактический_банк": {"name": "🏦 Галактический Централ", "price": 500_000_000_000_000, "cat": "biz", "action": "business", "income": 50_000_000_000_000, "desc": "Управляет денежными потоками галактических цивилизаций."},
-    "абсолютный_абсолют": {"name": "👑 Абсолютный Финансовый Центр", "price": 1_000_000_000_000_000, "cat": "biz", "action": "business", "income": 100_000_000_000_000, "desc": "Вершина финансового могущества во Вселенной."},
+    "кинотеатр": {"name": "🎬 Кинотеатр",       "price": 5_000_000,     "cat": "biz",   "action": "business", "income": 450_000},
+    "завод":     {"name": "🏭 Завод",           "price": 6_250_000,     "cat": "biz",   "action": "business", "income": 550_000},
+    "салон":     {"name": "🚙 Автосалон",       "price": 12_500_000,    "cat": "biz",   "action": "business", "income": 1_000_000},
+    "нефть":     {"name": "🛢 Вышка",           "price": 20_000_000,    "cat": "biz",   "action": "business", "income": 1_500_000},
+    "банк":      {"name": "🏦 Банк",            "price": 35_000_000,    "cat": "biz",   "action": "business", "income": 2_200_000},
+    "айти":      {"name": "💻 IT-компания",     "price": 50_000_000,    "cat": "biz",   "action": "business", "income": 3_000_000},
+    "казино":    {"name": "🎰 Казино",          "price": 70_000_000,    "cat": "biz",   "action": "business", "income": 3_800_000},
+    "стадион":   {"name": "🏟 Стадион",         "price": 85_000_000,    "cat": "biz",   "action": "business", "income": 4_500_000},
+    "мегакорп":  {"name": "🏢 Мегакорпорация",   "price": 100_000_000,   "cat": "biz",   "action": "business", "income": 5_000_000},
+    "sec_bunker": {"name": "🛡 Подземный Бункер", "price": 150_000_000, "cat": "biz", "action": "business", "income": 6_000_000, "desc": "Полностью защищает от краж /steal!"},
+    "звездные_врата": {"name": "🌌 Звёздные Врата", "price": 160_000_000, "cat": "biz", "action": "business", "income": 6_500_000},
+    "сфера_дайсона": {"name": "☀️ Сфера Дайсона", "price": 175_000_000, "cat": "biz", "action": "business", "income": 7_000_000},
+    "квантовый_компьютер": {"name": "⚛️ Квантовый Вычислитель", "price": 190_000_000, "cat": "biz", "action": "business", "income": 7_500_000, "desc": "Генерирует профит на уровне квантовых вероятностей."},
+    "варп_станция": {"name": "🌌 Варп-Станция", "price": 205_000_000, "cat": "biz", "action": "business", "income": 8_000_000, "desc": "Межпространственная торговля ресурсами."},
+    "матрица_времени": {"name": "⏳ Хроно-Матрица", "price": 220_000_000, "cat": "biz", "action": "business", "income": 8_500_000, "desc": "Извлекает богатства из временных парадоксов."},
+    "космо_лифт": {"name": "🏗 Орбитальный Лифт", "price": 230_000_000, "cat": "biz", "action": "business", "income": 9_000_000, "desc": "Транспортировка руды с астероидных поясов."},
+    "фабрика_темной_материи": {"name": "🌌 Фабрика Тёмной Материи", "price": 240_000_000, "cat": "biz", "action": "business", "income": 9_500_000, "desc": "Производит самое дорогое вещество во вселенной."},
+    "галактический_банк": {"name": "🏦 Галактический Централ", "price": 245_000_000, "cat": "biz", "action": "business", "income": 10_000_000, "desc": "Центр галактических финансов."},
+    "абсолютный_абсолют": {"name": "👑 Финансовая Корпорация", "price": 250_000_000, "cat": "biz", "action": "business", "income": 12_000_000, "desc": "Вершина бизнеса до Престижа."},
 
     # МАШИНЫ
     "самокат":   {"name": "🛴 Электросамокат",  "price": 1_500,      "cat": "cars",  "action": "car", "income": 50},
@@ -84,20 +78,32 @@ ITEMS: dict[str, dict] = {
     "бмв":       {"name": "🚕 BMW M5",          "price": 125_000,    "cat": "cars",  "action": "car", "income": 5_000},
     "гелик":     {"name": "⬛️ Geländewagen",    "price": 300_000,    "cat": "cars",  "action": "car", "income": 12_500},
     "бугатти":   {"name": "🏎 Bugatti Chiron",  "price": 1_250_000,  "cat": "cars",  "action": "car", "income": 50_000},
-    "самолет":   {"name": "🛩 Частный Jet",     "price": 12_500_000, "cat": "cars",  "action": "car", "income": 625_000},
-    "яхта":      {"name": "🚢 Суперъяхта",       "price": 35_000_000, "cat": "cars",  "action": "car", "income": 1_800_000},
-    "круизер":   {"name": "🛳 Лайнер",           "price": 100_000_000,"cat": "cars",  "action": "car", "income": 5_500_000},
-    "ракета":    {"name": "🚀 Ракета Falcon 9",  "price": 300_000_000,"cat": "cars",  "action": "car", "income": 18_000_000},
-    "звезда":    {"name": "🛸 Звезда Смерти",    "price": 1_000_000_000,"cat": "cars","action": "car", "income": 65_000_000},
-    "галактика": {"name": "🌌 Крейсер",         "price": 5_000_000_000,"cat": "cars","action": "car", "income": 350_000_000},
-    "kovcheg":   {"name": "🌌 Ковчег",          "price": 15_000_000_000,"cat": "cars","action": "car","income": 1_000_000_000, "desc": "Дает +20% к ежедневному бонусу!"},
-    "гиперкар_аполлон": {"name": "🏎 Hypercar Apollo Intensa", "price": 25_000_000_000, "cat": "cars", "action": "car", "income": 1_500_000_000, "desc": "Ультра-редкий болид из углеволокна."},
-    "грави_яхта": {"name": "🛸 Антигравитационная Яхта", "price": 50_000_000_000, "cat": "cars", "action": "car", "income": 3_000_000_000, "desc": "Парит над планетами на квантовой подушке."},
-    "планетарный_дредноут": {"name": "⚛️ Планетарный Дредноут", "price": 100_000_000_000, "cat": "cars", "action": "car", "income": 6_000_000_000, "desc": "Пробивает астероидные поля и космический мусор."},
-    "титан_крейсер": {"name": "🛸 Звёздный Дредноут «Титан»", "price": 250_000_000_000, "cat": "cars", "action": "car", "income": 15_000_000_000, "desc": "Флагманский корабль космического флота."},
-    "гипер_гиперион": {"name": "🌌 Флагман «Гиперион»", "price": 500_000_000_000, "cat": "cars", "action": "car", "income": 30_000_000_000, "desc": "Колоссальный флагман с варп-двигателем."},
-    "орбитальная_цитадель": {"name": "🏰 Орбитальная Цитадель", "price": 1_500_000_000_000, "cat": "cars", "action": "car", "income": 100_000_000_000, "desc": "Мобильная космическая крепость высшего класса."},
-    "ковчег_миров": {"name": "🛸 Ковчег Вселенных", "price": 5_000_000_000_000, "cat": "cars", "action": "car", "income": 350_000_000_000, "desc": "Переносит целый мир между измерениями."},
+    "самолет":   {"name": "🛩 Частный Jet",     "price": 12_500_000, "cat": "cars",  "action": "car", "income": 350_000},
+    "яхта":      {"name": "🚢 Суперъяхта",       "price": 30_000_000, "cat": "cars",  "action": "car", "income": 800_000},
+    "круизер":   {"name": "🛳 Лайнер",           "price": 50_000_000, "cat": "cars",  "action": "car", "income": 1_300_000},
+    "ракета":    {"name": "🚀 Ракета Falcon 9",  "price": 75_000_000, "cat": "cars",  "action": "car", "income": 1_800_000},
+    "kovcheg":   {"name": "🌌 Ковчег",          "price": 100_000_000,"cat": "cars",  "action": "car", "income": 2_500_000, "desc": "Дает +20% к ежедневному бонусу!"},
+    "гиперкар_аполлон": {"name": "🏎 Hypercar Apollo Intensa", "price": 120_000_000, "cat": "cars", "action": "car", "income": 3_000_000, "desc": "Ультра-редкий болид из углеволокна."},
+    "грави_яхта": {"name": "🛸 Антигравитационная Яхта", "price": 140_000_000, "cat": "cars", "action": "car", "income": 3_500_000, "desc": "Парит над планетами на квантовой подушке."},
+    "планетарный_дредноут": {"name": "⚛️ Планетарный Дредноут", "price": 160_000_000, "cat": "cars", "action": "car", "income": 4_000_000, "desc": "Пробивает астероидные поля и космический мусор."},
+    "титан_крейсер": {"name": "🛸 Звёздный Дредноут «Титан»", "price": 180_000_000, "cat": "cars", "action": "car", "income": 4_500_000, "desc": "Флагманский корабль космического флота."},
+    "гипер_гиперион": {"name": "🌌 Флагман «Гиперион»", "price": 200_000_000, "cat": "cars", "action": "car", "income": 5_000_000, "desc": "Колоссальный флагман с варп-двигателем."},
+    "орбитальная_цитадель": {"name": "🏰 Орбитальная Цитадель", "price": 220_000_000, "cat": "cars", "action": "car", "income": 5_500_000, "desc": "Мобильная космическая крепость высшего класса."},
+    "ковчег_миров": {"name": "🛸 Ковчег Вселенных", "price": 250_000_000, "cat": "cars", "action": "car", "income": 6_000_000, "desc": "Переносит целый мир между измерениями."},
+
+    # 🌟 ТОВАРЫ МАГАЗИНА ПРЕСТИЖА
+    "prestige_mine":        {"name": "⚡️ Квантовый Майнер", "price": 5_000_000, "cat": "prestige", "action": "business", "income": 150_000, "req_prestige": 1, "desc": "Бизнес Престижа I. Автоматический криптомайнинг."},
+    "prestige_kopter":      {"name": "🚁 Дрон-Глайдер Престижа", "price": 2_500_000, "cat": "prestige", "action": "car", "income": 60_000, "req_prestige": 1, "desc": "Транспорт Престижа I. Скоростной глайдер."},
+    "prestige_factory":     {"name": "🤖 Завод Нанороботов", "price": 25_000_000, "cat": "prestige", "action": "business", "income": 500_000, "req_prestige": 2, "desc": "Бизнес Престижа II. Автоматизированное нанопроизводство."},
+    "prestige_hypercar":    {"name": "🏎 Плазменный Гиперкар", "price": 15_000_000, "cat": "prestige", "action": "car", "income": 250_000, "req_prestige": 2, "desc": "Транспорт Престижа II. Разгон до околосветовой скорости."},
+    "prestige_tower":       {"name": "🏙 Башня Синдиката", "price": 100_000_000, "cat": "prestige", "action": "business", "income": 1_500_000, "req_prestige": 3, "desc": "Бизнес Престижа III. Международный финансовый хаб."},
+    "prestige_yacht":       {"name": "🛥 Квантовая Суперъяхта", "price": 50_000_000, "cat": "prestige", "action": "car", "income": 700_000, "req_prestige": 3, "desc": "Транспорт Престижа III. Роскошный корабль с силовым полем."},
+    "prestige_station":     {"name": "🪐 Орбитальная База", "price": 500_000_000, "cat": "prestige", "action": "business", "income": 5_000_000, "req_prestige": 4, "desc": "Бизнес Престижа IV. Добыча редких минералов."},
+    "prestige_shuttle":     {"name": "🚀 Варп-Шаттл Hyperion", "price": 250_000_000, "cat": "prestige", "action": "car", "income": 2_500_000, "req_prestige": 4, "desc": "Транспорт Престижа IV. Межпланетный флагман."},
+    "prestige_reactor":     {"name": "🌌 Звёздный Реактор", "price": 2_500_000_000, "cat": "prestige", "action": "business", "income": 18_000_000, "req_prestige": 5, "desc": "Бизнес Престижа V. Питается энергией сверхновых."},
+    "prestige_dreadnought": {"name": "🛸 Гравитационный Дредноут", "price": 1_200_000_000, "cat": "prestige", "action": "car", "income": 9_000_000, "req_prestige": 5, "desc": "Транспорт Престижа V. Неуязвимый крейсер флота."},
+    "prestige_monolith":    {"name": "👑 Вселенский Монолит", "price": 10_000_000_000, "cat": "prestige", "action": "business", "income": 50_000_000, "req_prestige": 6, "desc": "Вершина могущества Престижа VI. 50M сыр./ч."},
+    "prestige_ark":         {"name": "🌌 Ковчег Вечности", "price": 5_000_000_000, "cat": "prestige", "action": "car", "income": 25_000_000, "req_prestige": 6, "desc": "Флагман Абсолюта Престижа VI. Межпространственный корабль."},
 
     # ПРОЧЕЕ
     "вип":       {"name": "💎 Статус VIP",      "price": 1_000_000, "cat": "other", "action": "other"},
@@ -179,7 +185,7 @@ ITEMS: dict[str, dict] = {
     "dictor_antigravity":        {"name": "антигравитационный диктор тайний баний", "price": 0, "cat": "tayniy_baniy", "action": "other", "desc": "Антигравитационный диктор тайний баний (черный кролик 🖤🐇)."},
 }
 
-CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное"}
+CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное", "prestige": "🌟 Престиж"}
 CONFIRM_THRESHOLD = 1_000_000  # цена, выше которой требуется подтверждение
 SELL_RATIO = 0.75
 CACHE_TTL = 60
@@ -287,14 +293,16 @@ async def _safe_edit(message: types.Message, text: str, reply_markup=None):
 # ─────────────────────────────────────────────────────────────
 #  КЛАВИАТУРЫ
 # ─────────────────────────────────────────────────────────────
-async def get_main_shop_kb():
+async def get_main_shop_kb(prestige_level: int = 0):
     await _shop_kb_cache.refresh_if_needed()
     builder = InlineKeyboardBuilder()
     builder.button(text=_shop_kb_cache.biz, callback_data="shop_cat_biz")
     builder.button(text=_shop_kb_cache.cars, callback_data="shop_cat_cars")
     builder.button(text="💎 Прочее", callback_data="shop_cat_other")
+    if prestige_level >= 1:
+        builder.button(text="🌟 Магазин Престижа", callback_data="shop_cat_prestige")
     builder.button(text="🎒 Мой инвентарь", callback_data="shop_to_inv")
-    builder.adjust(2, 2)
+    builder.adjust(2, 2 if prestige_level < 1 else 3)
     return builder.as_markup()
 
 
@@ -420,7 +428,8 @@ async def _render_main_shop(message: types.Message, data: dict, *, as_new: bool 
         f"📈 Твоя наценка (Налог на роскошь): <b>{tax_rate}%</b>{debts_warning}\n"
         "Выберите категорию товаров:"
     )
-    kb = await get_main_shop_kb()
+    prestige_level = int(data.get("prestige_level", 0) or 0)
+    kb = await get_main_shop_kb(prestige_level=prestige_level)
     if as_new:
         await message.answer(text, reply_markup=kb)
     else:
@@ -559,6 +568,14 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, page: int, c
             "❌ У вас просроченный долг! Покупки запрещены.", show_alert=True
         )
 
+    req_prestige = item.get("req_prestige", 0)
+    user_prestige = int(data.get("prestige_level", 0) or 0)
+    if req_prestige > user_prestige:
+        return await callback.answer(
+            f"❌ Этот товар доступен только с Престижа {req_prestige}!",
+            show_alert=True,
+        )
+
     base_tax = await get_global_tax()
     tax_rate = _calc_user_tax(data, base_tax)
     balance = data.get("balance", 0)
@@ -569,9 +586,9 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, page: int, c
             f"Недостаточно денег! Твоя цена: {final_price} сыр.", show_alert=True
         )
 
-    # Лимит и дубликаты для бизнесов/машин — предварительная проверка (финальная — в транзакции)
+    # Лимит и дубликаты для бизнесов/машин/престижа — предварительная проверка (финальная — в транзакции)
     inv = data.get("inventory") or {}
-    if item.get("cat") in ("biz", "cars"):
+    if item.get("cat") in ("biz", "cars", "prestige"):
         if inv.get(item_id, 0) >= 5:
             return await callback.answer("Ты не можешь иметь больше 5 штук одного товара!", show_alert=True)
 

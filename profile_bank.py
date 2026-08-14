@@ -219,10 +219,17 @@ async def cmd_profile(message: types.Message):
     bio = escape_html(data.get('bio', 'Нет описания.'))
     bio = await get_glitch_text(bio)
 
+    from prestige import get_prestige_perks
+    pperks = get_prestige_perks(data)
+    prestige_str = ""
+    if pperks["level"] > 0:
+        prestige_str = f"🎖 Престиж: <b>[{pperks['level']}/6] {pperks['badge']} {pperks['name']}</b> (+{int((pperks['income_multiplier']-1)*100)}% доход)\n"
+
     text = (
         f"👤 <b>{profile_header}: {target_name}</b>\n"
         f"<i>{bio}</i>\n\n"
         f"Статус: {vip_status}{role_text}\n"
+        f"{prestige_str}"
         f"Репутация: {rep} 📈\n"
         f"Предупреждения: {warns}/3 ⚠️{escort_text}\n"
         f"{debt_display}\n"
