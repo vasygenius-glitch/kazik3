@@ -1115,10 +1115,18 @@ async def show_player_details_screen(callback_or_message, state: FSMContext,
     except Exception as exc:  # noqa: BLE001
         logger.debug("inventory render failed: %s", exc)
 
+    # Престиж и карантин
+    from prestige import get_user_prestige, get_prestige_perks, get_unsettled_transfers_24h
+    curr_prestige = get_user_prestige(data)
+    prestige_info = get_prestige_perks(data)
+    unsettled_quarantine = get_unsettled_transfers_24h(data)
+
     text = (
         f"👤 <b>Управление игроком: {full_name}</b>\n"
         f"📱 ID: <code>{target_id}</code> | 🏷 @{username}\n\n"
         f"💰 Баланс: <b>{fmt_money(balance)}</b> сыр.\n"
+        f"🎖 Престиж: <b>[{curr_prestige}/6] {prestige_info['badge']} {prestige_info['name']}</b>\n"
+        f"🛡 Карантин (Anti-Boost): <b>{fmt_money(unsettled_quarantine)}</b> сыр.\n"
         f"📈 Репутация: <b>{reputation}</b>\n"
         f"🎭 Роль: <b>{custom_role}</b>\n"
         f"🔞 Выебан(а): <b>{escort_count}</b> раз\n"
@@ -1137,6 +1145,10 @@ async def show_player_details_screen(callback_or_message, state: FSMContext,
     builder = InlineKeyboardBuilder()
     builder.button(text="💵 Выдать сыр", callback_data=f"db_pma_{chat_id}_{target_id}")
     builder.button(text="💰 Уст. баланс", callback_data=f"db_pms_{chat_id}_{target_id}")
+    builder.button(text="🎖 Престиж", callback_data=f"db_pprestige_menu_{chat_id}_{target_id}")
+    builder.button(text="🃏 Карточки", callback_data=f"db_pcards_menu_{chat_id}_{target_id}")
+    builder.button(text="🛡 Карантин", callback_data=f"db_pquarantine_menu_{chat_id}_{target_id}")
+    builder.button(text="🎒 Вещи", callback_data=f"db_pim_{chat_id}_{target_id}")
     builder.button(text="👑 VIP +/-", callback_data=f"db_ptv_{chat_id}_{target_id}")
     builder.button(text="💼 Банкир +/-", callback_data=f"db_ptb_{chat_id}_{target_id}")
     builder.button(text="🚫 Бан +/-", callback_data=f"db_ptban_{chat_id}_{target_id}")
@@ -1144,7 +1156,6 @@ async def show_player_details_screen(callback_or_message, state: FSMContext,
     builder.button(text="⚠️ Варн +", callback_data=f"db_pwa_{chat_id}_{target_id}")
     builder.button(text="🧼 Варн -", callback_data=f"db_pwr_{chat_id}_{target_id}")
     builder.button(text="🩺 ЗППП", callback_data=f"db_pdiseases_menu_{chat_id}_{target_id}")
-    builder.button(text="🎒 Вещи", callback_data=f"db_pim_{chat_id}_{target_id}")
     builder.button(text="🔇 Мут", callback_data=f"db_pmute_menu_{chat_id}_{target_id}")
     builder.button(text="🐾 Питомцы", callback_data=f"db_ppet_menu_{chat_id}_{target_id}")
     builder.button(text="🎯 Навыки", callback_data=f"db_pskills_menu_{chat_id}_{target_id}")
@@ -1156,7 +1167,7 @@ async def show_player_details_screen(callback_or_message, state: FSMContext,
     builder.button(text="⚡️ Казнить!", callback_data=f"db_pexecute_ask_{chat_id}_{target_id}")
     builder.button(text="🧹 Полный сброс", callback_data=f"db_pwi_{chat_id}_{target_id}")
     builder.button(text="⬅️ Назад", callback_data=f"db_m_{chat_id}")
-    builder.adjust(2, 2, 2, 2, 3, 3, 3, 2, 2)
+    builder.adjust(2, 3, 3, 2, 2, 2, 3, 3, 2, 2)
     markup = builder.as_markup()
 
     bot = extract_bot(callback_or_message)
@@ -2019,6 +2030,8 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
     cat = parts[4] if len(parts) > 4 else "other"
+    page = cb_int(parts, 5) if len(parts) > 5 else 0
+
     data = await get_user_data(chat_id, target_id)
     inventory = data.get("inventory", {}) or {}
     from shop import ITEMS
@@ -2030,24 +2043,43 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
         "prestige": "🌟 Предметы Престижа",
     }
 
+    items_list = [(item_id, item_cfg) for item_id, item_cfg in ITEMS.items() if item_cfg.get("cat") == cat]
+    page_size = 8
+    total_pages = max(1, (len(items_list) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    page_items = items_list[start_idx:start_idx + page_size]
+
     text = (
         f"🎒 <b>Категория: {cat_names.get(cat, cat)}</b>\n"
-        f"👤 Игрок ID: <code>{target_id}</code>\n\n"
+        f"👤 Игрок ID: <code>{target_id}</code> | Страница: <b>{page + 1}/{total_pages}</b>\n\n"
         f"Нажимайте ➖ или ➕ для изменения количества:"
     )
     builder = InlineKeyboardBuilder()
     rows = 0
-    for item_id, item_cfg in ITEMS.items():
-        if item_cfg.get("cat") != cat:
-            continue
+    for item_id, item_cfg in page_items:
         qty = inventory.get(item_id, 0)
         item_name = item_cfg.get("name", item_id)
-        builder.button(text="➖", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_m_{cat}")
+        builder.button(text="➖", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_m_{cat}_{page}")
         builder.button(text=f"{item_name} ({qty})", callback_data=f"db_piq_{chat_id}_{target_id}_{item_id}_{cat}")
-        builder.button(text="➕", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_p_{cat}")
+        builder.button(text="➕", callback_data=f"db_pich_{chat_id}_{target_id}_{item_id}_p_{cat}_{page}")
         rows += 1
+
+    # Пагинация
+    if total_pages > 1:
+        prev_p = max(0, page - 1)
+        next_p = min(total_pages - 1, page + 1)
+        builder.button(text="◀️ Назад", callback_data=f"db_pic_{chat_id}_{target_id}_{cat}_{prev_p}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text="Вперед ▶️", callback_data=f"db_pic_{chat_id}_{target_id}_{cat}_{next_p}")
+
     builder.button(text="⬅️ Назад к категориям", callback_data=f"db_pim_{chat_id}_{target_id}")
-    builder.adjust(*([3] * rows + [1]))
+
+    if total_pages > 1:
+        builder.adjust(*([3] * rows + [3, 1]))
+    else:
+        builder.adjust(*([3] * rows + [1]))
+
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -2060,6 +2092,7 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
     item_id = parts[4]
     action = parts[5]
     cat = parts[6]
+    page = parts[7] if len(parts) > 7 else "0"
 
     data = await get_user_data(chat_id, target_id)
     inventory = dict(data.get("inventory", {}) or {})
@@ -2080,9 +2113,155 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
     await update_user_field(chat_id, target_id, "inventory", inventory)
     asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
 
-    # Перерисовка категории без вложенного класса (исправлен баг)
-    callback.data = f"db_pic_{chat_id}_{target_id}_{cat}"
+    # Перерисовка категории на той же странице
+    callback.data = f"db_pic_{chat_id}_{target_id}_{cat}_{page}"
     await cb_pinv_cat(callback, state)
+
+
+# ==============================================================================
+#  УПРАВЛЕНИЕ ПРЕСТИЖЕМ, КАРТАМИ И КАРАНТИНОМ
+# ==============================================================================
+@router.callback_query(F.data.startswith("db_pprestige_menu_"))
+@creator_only
+async def cb_pprestige_menu(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    data = await get_user_data(chat_id, target_id)
+    curr_lvl = int(data.get("prestige_level", 0) or 0)
+
+    from prestige import PRESTIGE_TIERS
+    text = (
+        f"🎖 <b>Управление Престижем игрока</b>\n\n"
+        f"👤 Игрок ID: <code>{target_id}</code>\n"
+        f"🌟 Текущий ранг: <b>[{curr_lvl}/6] {PRESTIGE_TIERS.get(curr_lvl, {}).get('badge', '▫️')} {PRESTIGE_TIERS.get(curr_lvl, {}).get('name', 'Обыватель')}</b>\n\n"
+        f"Выберите новый ранг для мгновенной установки:"
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="▫️ Ранг 0 (Сброс)", callback_data=f"db_pprestige_set_{chat_id}_{target_id}_0")
+    for t in range(1, 7):
+        p_info = PRESTIGE_TIERS[t]
+        builder.button(text=f"{p_info['badge']} Престиж {p_info['roman']}", callback_data=f"db_pprestige_set_{chat_id}_{target_id}_{t}")
+    builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
+    builder.adjust(1, 2, 2, 2, 1)
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_pprestige_set_"))
+@creator_only
+async def cb_pprestige_set(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    target_tier = cb_int(parts, 5)
+
+    await update_user_field(chat_id, target_id, "prestige_level", target_tier)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+    await safe_answer(callback, f"✅ Установлен Престиж {target_tier}!", show_alert=True)
+    callback.data = f"db_pprestige_menu_{chat_id}_{target_id}"
+    await cb_pprestige_menu(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pcards_menu_"))
+@creator_only
+async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    data = await get_user_data(chat_id, target_id)
+    cards = data.get("meme_cards") or {}
+
+    from cards_system import CARDS
+    text = (
+        f"🃏 <b>Коллекция карточек свинок</b>\n"
+        f"👤 Игрок ID: <code>{target_id}</code>\n\n"
+        f"Всего карточек в коллекции: <b>{sum(cards.values())} шт.</b>\n"
+        f"Нажимайте на карточки для выдачи/изъятия:"
+    )
+    builder = InlineKeyboardBuilder()
+    for cid, cinfo in CARDS.items():
+        qty = cards.get(cid, 0)
+        cname = cinfo.get("name", cid)
+        builder.button(text="➖", callback_data=f"db_pcard_ch_{chat_id}_{target_id}_{cid}_m")
+        builder.button(text=f"{cname} ({qty})", callback_data="noop")
+        builder.button(text="➕", callback_data=f"db_pcard_ch_{chat_id}_{target_id}_{cid}_p")
+    builder.button(text="🎁 Выдать все карты x1", callback_data=f"db_pcard_all_{chat_id}_{target_id}")
+    builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
+    builder.adjust(*([3] * len(CARDS) + [1, 1]))
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_pcard_ch_"))
+@creator_only
+async def cb_pcard_change(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    cid = parts[5]
+    action = parts[6]
+
+    data = await get_user_data(chat_id, target_id)
+    cards = dict(data.get("meme_cards") or {})
+    curr = cards.get(cid, 0)
+    if action == "p":
+        cards[cid] = curr + 1
+    elif action == "m":
+        if curr <= 1:
+            cards.pop(cid, None)
+        else:
+            cards[cid] = curr - 1
+
+    await update_user_field(chat_id, target_id, "meme_cards", cards)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+    callback.data = f"db_pcards_menu_{chat_id}_{target_id}"
+    await cb_pcards_menu(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pcard_all_"))
+@creator_only
+async def cb_pcard_all(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    from cards_system import CARDS
+    cards = {cid: 1 for cid in CARDS.keys()}
+    await update_user_field(chat_id, target_id, "meme_cards", cards)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+    await safe_answer(callback, "✅ Выданы все карточки по 1 шт.!", show_alert=True)
+    callback.data = f"db_pcards_menu_{chat_id}_{target_id}"
+    await cb_pcards_menu(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pquarantine_menu_"))
+@creator_only
+async def cb_pquarantine_menu(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    data = await get_user_data(chat_id, target_id)
+    from prestige import get_unsettled_transfers_24h
+    unsettled = get_unsettled_transfers_24h(data)
+
+    text = (
+        f"🛡 <b>Управление карантином переводов (Anti-Boost)</b>\n\n"
+        f"👤 Игрок ID: <code>{target_id}</code>\n"
+        f"⏳ На карантине: <b>{unsettled:,}</b> сыр.\n\n"
+        f"Карантин задерживает переводные средства на 24 часа для защиты от быстрого Престижа."
+    )
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🧹 Снять карантин (разрешить Престиж)", callback_data=f"db_pquarantine_clear_{chat_id}_{target_id}")
+    builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
+    builder.adjust(1, 1)
+    await safe_edit(callback.message, text, builder.as_markup())
+    await safe_answer(callback)
+
+
+@router.callback_query(F.data.startswith("db_pquarantine_clear_"))
+@creator_only
+async def cb_pquarantine_clear(callback: types.CallbackQuery, state: FSMContext):
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    await update_user_field(chat_id, target_id, "unsettled_transfers", [])
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+    await safe_answer(callback, "✅ Карантин полностью снят!", show_alert=True)
+    callback.data = f"db_pquarantine_menu_{chat_id}_{target_id}"
+    await cb_pquarantine_menu(callback, state)
 
 
 @router.callback_query(F.data == "db_noop")

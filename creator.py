@@ -213,6 +213,175 @@ async def cmd_find_user(message: types.Message):
     await message.answer(text)
 
 
+DICTORS_LIST = [
+    ("dictor_common", "1. Обычный диктор"),
+    ("dictor_simple", "2. Простой диктор"),
+    ("dictor_basic", "3. Базовый диктор"),
+    ("dictor_uncommon", "4. Необычный диктор"),
+    ("dictor_rare", "5. Редкий диктор"),
+    ("dictor_epic", "6. Эпический диктор"),
+    ("dictor_legendary", "7. Легендарный диктор"),
+    ("dictor_mythic", "8. Мифический диктор"),
+    ("dictor_cosmic", "9. Космический диктор"),
+    ("dictor_divine", "10. Божественный диктор"),
+    ("dictor_shadow", "11. Теневой диктор"),
+    ("dictor_abyss", "12. Диктор бездны"),
+    ("dictor_elder", "13. Древний диктор"),
+    ("dictor_chaos", "14. Диктор хаоса"),
+    ("dictor_void", "15. Диктор пустоты"),
+    ("dictor_infinity", "16. Бесконечный диктор"),
+    ("dictor_secret", "17. Секретный диктор"),
+    ("dictor_emperor", "18. Императорский диктор"),
+    ("dictor_ghost", "19. Призрачный диктор"),
+    ("dictor_immortal", "20. Бессмертный диктор"),
+    ("dictor_celestial", "21. Небесный диктор"),
+    ("dictor_astral", "22. Астральный диктор"),
+    ("dictor_quantum", "23. Квантовый диктор"),
+    ("dictor_singularity", "24. Сингулярный диктор"),
+    ("dictor_supernova", "25. Сверхновый диктор"),
+    ("dictor_nebula", "26. Туманный диктор"),
+    ("dictor_hyperion", "27. Гиперионский диктор"),
+    ("dictor_chronos", "28. Хронос-диктор"),
+    ("dictor_aether", "29. Эфирный диктор"),
+    ("dictor_primordial", "30. Первозданный диктор"),
+    ("dictor_supreme", "31. Верховный диктор"),
+    ("dictor_archon", "32. Архонтский диктор"),
+    ("dictor_seraph", "33. Серафимский диктор"),
+    ("dictor_leviathan", "34. Левиафанский диктор"),
+    ("dictor_phoenix", "35. Феникс-диктор"),
+    ("dictor_titan", "36. Титанический диктор"),
+    ("dictor_valkyrie", "37. Валькирийский диктор"),
+    ("dictor_overlord", "38. Владыка-диктор"),
+    ("dictor_omega", "39. Омега-диктор"),
+    ("dictor_alpha", "40. Альфа-диктор"),
+    ("dictor_multiverse", "41. Мультивселенский диктор"),
+    ("dictor_transcendent", "42. Трансцендентный диктор"),
+    ("dictor_omnipotent", "43. Всемогущий диктор"),
+    ("dictor_absolute", "44. Абсолютный диктор"),
+    ("dictor_infinity_plus", "45. Сверхбесконечный диктор"),
+    ("dictor_dark_matter", "46. Тёмноматериальный диктор"),
+    ("dictor_dark_energy", "47. Тёмноэнергетический диктор"),
+    ("dictor_antimatter", "48. Антиматериальный диктор"),
+    ("dictor_hyperdimensional", "49. Гиперпространственный диктор"),
+    ("dictor_zenith", "50. Зенитный диктор"),
+    ("dictor_apex", "51. Апекс-диктор"),
+    ("dictor_genesis", "52. Генезис-диктор"),
+    ("dictor_apocalypse", "53. Апокалиптический диктор"),
+    ("dictor_ragnarok", "54. Рагнарёк-диктор"),
+    ("dictor_valhalla", "55. Вальхалла-диктор"),
+    ("dictor_olympus", "56. Олимпский диктор"),
+    ("dictor_asgard", "57. Асгардский диктор"),
+    ("dictor_eldritch", "58. Иномировой диктор"),
+    ("dictor_cthulhu", "59. Ктулхический диктор"),
+    ("dictor_solaris", "60. Солярис-диктор"),
+    ("dictor_lunar", "61. Лунный диктор"),
+    ("dictor_eclipse", "62. Затменный диктор"),
+    ("dictor_supernatural", "63. Сверхестественный диктор"),
+    ("dictor_boundless", "64. Безграничный диктор"),
+    ("dictor_eternity", "65. Вечность-диктор"),
+    ("dictor_creation", "66. Созидательный диктор"),
+    ("dictor_destruction", "67. Разрушительный диктор"),
+    ("dictor_sovereign", "68. Суверенный диктор"),
+    ("dictor_godlike", "69. Богоподобный диктор"),
+    ("dictor_antigravity", "70. Антигравитационный диктор"),
+]
+
+
+def resolve_dictor_id(query: str) -> str:
+    """Умное сопоставление строки с ID Диктора (по номеру 1..70 или имени)."""
+    q = query.strip().lower()
+    if q.isdigit():
+        num = int(q)
+        if 1 <= num <= len(DICTORS_LIST):
+            return DICTORS_LIST[num - 1][0]
+
+    # Прямое совпадение
+    for item_id, title in DICTORS_LIST:
+        if q == item_id or q == item_id.removeprefix("dictor_"):
+            return item_id
+
+    # Поиск по подстроке
+    for item_id, title in DICTORS_LIST:
+        if q in item_id or q in title.lower():
+            return item_id
+
+    return query
+
+
+@router.message(Command("dictors", "дикторы", "список_дикторов"))
+async def cmd_dictors_catalog(message: types.Message):
+    """Интерактивный просмотр всех 70 Дикторов с номерами и ID."""
+    args = message.text.split()
+    page = int(args[1]) - 1 if len(args) > 1 and args[1].isdigit() else 0
+
+    page_size = 10
+    total_pages = (len(DICTORS_LIST) + page_size - 1) // page_size
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    slice_items = DICTORS_LIST[start_idx:start_idx + page_size]
+
+    lines = []
+    for item_id, title in slice_items:
+        lines.append(f"• <b>{title}</b> — <code>{item_id}</code>")
+
+    text = (
+        f"🐰 <b>КАТАЛОГ ДИКТОРОВ ТАЙНИЙ БАНИЙ</b> (Всего 70 рангов)\n"
+        f"Страница: <b>{page + 1}/{total_pages}</b>\n\n"
+        + "\n".join(lines) +
+        f"\n\n💡 <i>Чтобы выдать:</i> <code>/givedictor @username &lt;номер_или_id&gt;</code>\n"
+        f"<i>Пример:</i> <code>/givedictor @Dictor_mladshu 70</code>"
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    if total_pages > 1:
+        prev_p = max(0, page - 1) + 1
+        next_p = min(total_pages - 1, page + 1) + 1
+        builder.button(text="◀️ Назад", callback_data=f"cr_dictors_p_{prev_p}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text="Вперед ▶️", callback_data=f"cr_dictors_p_{next_p}")
+    builder.adjust(3)
+
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("cr_dictors_p_"))
+async def cb_dictors_page(callback: types.CallbackQuery):
+    p_str = callback.data.removeprefix("cr_dictors_p_")
+    page = int(p_str) - 1 if p_str.isdigit() else 0
+
+    page_size = 10
+    total_pages = (len(DICTORS_LIST) + page_size - 1) // page_size
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    slice_items = DICTORS_LIST[start_idx:start_idx + page_size]
+
+    lines = []
+    for item_id, title in slice_items:
+        lines.append(f"• <b>{title}</b> — <code>{item_id}</code>")
+
+    text = (
+        f"🐰 <b>КАТАЛОГ ДИКТОРОВ ТАЙНИЙ БАНИЙ</b> (Всего 70 рангов)\n"
+        f"Страница: <b>{page + 1}/{total_pages}</b>\n\n"
+        + "\n".join(lines) +
+        f"\n\n💡 <i>Чтобы выдать:</i> <code>/givedictor @username &lt;номер_или_id&gt;</code>\n"
+        f"<i>Пример:</i> <code>/givedictor @Dictor_mladshu 70</code>"
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    if total_pages > 1:
+        prev_p = max(0, page - 1) + 1
+        next_p = min(total_pages - 1, page + 1) + 1
+        builder.button(text="◀️ Назад", callback_data=f"cr_dictors_p_{prev_p}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text="Вперед ▶️", callback_data=f"cr_dictors_p_{next_p}")
+    builder.adjust(3)
+
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    await callback.answer()
+
+
 @router.message(Command("giveitem", "givedictor", "выдать_предмет", "выдать_диктора"))
 async def cmd_give_item(message: types.Message):
     if not is_creator(message):
@@ -224,10 +393,14 @@ async def cmd_give_item(message: types.Message):
     args = message.text.split()
     if len(args) < 2:
         return await message.answer(
-            "<b>Использование:</b>\n"
-            "• В ответ на сообщение: <code>/giveitem &lt;item_id&gt; [кол-во]</code>\n"
-            "• По нику/ID: <code>/giveitem @username &lt;item_id&gt; [кол-во]</code>\n\n"
-            "<i>Пример для Диктора:</i> <code>/givedictor @Dictor_mladshu dictor_legendary 1</code>"
+            "<b>Использование команды выдачи:</b>\n\n"
+            "• По нику/ID: <code>/givedictor @username &lt;номер_1..70_или_id&gt; [кол-во]</code>\n"
+            "• Выдать ВСЕХ 70 дикторов сразу: <code>/givedictor @username all</code>\n"
+            "• В ответ на сообщение: <code>/givedictor &lt;номер_или_id&gt; [кол-во]</code>\n\n"
+            "<i>Примеры:</i>\n"
+            " • <code>/givedictor @Dictor_mladshu 70</code> (выдаст Антигравити-диктора)\n"
+            " • <code>/givedictor @Dictor_mladshu all</code> (выдаст по 1 шт каждого из 70 дикторов)\n"
+            " • <code>/givedictor @Dictor_mladshu 1 5</code> (выдаст 5 шт Обычных дикторов)"
         )
 
     from user_manager import add_item_to_inventory, invalidate_user_cache
@@ -235,33 +408,86 @@ async def cmd_give_item(message: types.Message):
 
     if message.reply_to_message:
         target_str = ""
-        item_id = args[1].lower()
+        raw_item = args[1].lower()
         count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
     else:
         target_str = args[1]
-        item_id = args[2].lower() if len(args) > 2 else ""
+        raw_item = args[2].lower() if len(args) > 2 else ""
         count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
 
-    if not item_id:
-        return await message.answer("❌ Укажите ID предмета (например <code>dictor_legendary</code> или <code>бугатти</code>).")
+    if not raw_item:
+        return await message.answer("❌ Укажите номер диктора (1..70), его ID или 'all'.")
 
     t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
     if not t_uid:
         return await message.answer("❌ Пользователь не найден. Проверьте правильность @username или ID.")
 
+    # Выдача ВСЕХ дикторов
+    if raw_item in ("all", "все", "всё"):
+        given_count = 0
+        for d_id, _ in DICTORS_LIST:
+            if await add_item_to_inventory(t_chat_id, t_uid, d_id, count=count):
+                given_count += 1
+        invalidate_user_cache(t_chat_id, t_uid)
+        from log_system import log_action
+        log_action(f"👑 <b>Выдача ВСЕХ дикторов:</b> {message.from_user.full_name} выдал полный комплект из 70 дикторов x{count} для {t_name} ({t_uid})")
+        return await message.answer(
+            f"👑 <b>ПОЛНЫЙ КОМПЛЕКТ ДИКТОРОВ ВЫДАН!</b>\n\n"
+            f"👤 Получатель: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
+            f"🐰 Выдано: <b>все 70 рангов Дикторов</b> по <b>{count} шт.</b>!"
+        )
+
+    item_id = resolve_dictor_id(raw_item)
     success = await add_item_to_inventory(t_chat_id, t_uid, item_id, count=count)
     if success:
         invalidate_user_cache(t_chat_id, t_uid)
         item_name = ITEMS.get(item_id, {}).get("name", item_id)
         await message.answer(
             f"✅ <b>Предмет успешно выдан!</b>\n"
-            f"👤 Получатель: <b>{escape_html(t_name)}</b> (ID: <code>{t_uid}</code>)\n"
+            f"👤 Получатель: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
             f"🎁 Выдано: <b>{item_name}</b> (<code>{item_id}</code>) x{count} шт."
         )
         from log_system import log_action
         log_action(f"🎁 <b>Выдача предмета Создателем:</b> {message.from_user.full_name} выдал {item_name} x{count} для {t_name} ({t_uid})")
     else:
-        await message.answer(f"❌ Ошибка выдачи предмета <code>{item_id}</code>.")
+        await message.answer(f"❌ Ошибка: предмет <code>{item_id}</code> не найден в каталоге.")
+
+
+@router.message(Command("setprestige", "установить_престиж", "престиж_сет"))
+async def cmd_set_prestige(message: types.Message):
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("<b>Использование:</b> <code>/setprestige @username &lt;0-6&gt;</code>")
+
+    if message.reply_to_message:
+        target_str = ""
+        lvl_str = args[1]
+    else:
+        target_str = args[1]
+        lvl_str = args[2] if len(args) > 2 else "0"
+
+    if not lvl_str.isdigit() or not (0 <= int(lvl_str) <= 6):
+        return await message.answer("❌ Укажите ранг престижа от 0 до 6.")
+
+    tier = int(lvl_str)
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from user_manager import update_user_field, invalidate_user_cache
+    from prestige import PRESTIGE_TIERS
+    await update_user_field(t_chat_id, t_uid, "prestige_level", tier)
+    invalidate_user_cache(t_chat_id, t_uid)
+
+    p_info = PRESTIGE_TIERS.get(tier, {"name": "Обыватель", "badge": "▫️", "roman": "0"})
+    await message.answer(
+        f"🎖 <b>Престиж установлен!</b>\n"
+        f"👤 Игрок: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
+        f"🌟 Новый ранг: <b>[{tier}/6] {p_info['badge']} {p_info['name']}</b>"
+    )
 
 
 @router.message(Command("delitem", "забрать_предмет"))

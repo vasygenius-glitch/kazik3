@@ -1,5 +1,6 @@
 import pytest
 from shop import ITEMS, CATEGORY_NAMES, SELL_RATIO
+from creator import DICTORS_LIST, resolve_dictor_id
 
 def test_shop_items_integrity():
     """Проверка структуры и цен всех товаров в каталоге магазина."""
@@ -36,3 +37,20 @@ def test_sell_ratio():
     price = 100_000
     payout = int(price * SELL_RATIO)
     assert payout == 75_000
+
+def test_all_70_dictors_present_and_resolvable():
+    """Проверка полного каталога всех 70 рангов Дикторов и их умного поиска."""
+    assert len(DICTORS_LIST) == 70
+
+    # Проверка первого и последнего
+    assert resolve_dictor_id("1") == "dictor_common"
+    assert resolve_dictor_id("70") == "dictor_antigravity"
+
+    # Проверка текстового поиска
+    assert resolve_dictor_id("legendary") == "dictor_legendary"
+    assert resolve_dictor_id("богоподобный") == "dictor_godlike"
+
+    # Все 70 дикторов должны существовать в ITEMS
+    for d_id, _ in DICTORS_LIST:
+        assert d_id in ITEMS
+        assert ITEMS[d_id]["cat"] == "tayniy_baniy"
