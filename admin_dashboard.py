@@ -2004,9 +2004,11 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="🏢 Бизнесы", callback_data=f"db_pic_{chat_id}_{target_id}_biz")
     builder.button(text="🚗 Машины", callback_data=f"db_pic_{chat_id}_{target_id}_cars")
     builder.button(text="🎒 Прочее", callback_data=f"db_pic_{chat_id}_{target_id}_other")
+    builder.button(text="🐰 Дикторы", callback_data=f"db_pic_{chat_id}_{target_id}_tayniy_baniy")
+    builder.button(text="🌟 Престиж", callback_data=f"db_pic_{chat_id}_{target_id}_prestige")
     builder.button(text="🧹 Очистить инвентарь", callback_data=f"db_pia_{chat_id}_{target_id}_clear")
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
-    builder.adjust(3, 1, 1)
+    builder.adjust(3, 2, 1, 1)
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -2020,7 +2022,13 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     data = await get_user_data(chat_id, target_id)
     inventory = data.get("inventory", {}) or {}
     from shop import ITEMS
-    cat_names = {"biz": "🏢 Бизнесы", "cars": "🚗 Машины", "other": "🎒 Разное"}
+    cat_names = {
+        "biz": "🏢 Бизнесы",
+        "cars": "🚗 Машины",
+        "other": "🎒 Разное",
+        "tayniy_baniy": "🐰 Дикторы Тайний Баний",
+        "prestige": "🌟 Предметы Престижа",
+    }
 
     text = (
         f"🎒 <b>Категория: {cat_names.get(cat, cat)}</b>\n"

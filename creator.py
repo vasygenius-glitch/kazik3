@@ -141,6 +141,163 @@ async def cmd_addmoney(message: types.Message):
     except ValueError:
         pass
 
+
+async def _resolve_user_target(chat_id, target_str: str, message: types.Message = None):
+    """Находит chat_id и target_id по реплаю, ID или @username."""
+    if message and message.reply_to_message:
+        u = message.reply_to_message.from_user
+        return chat_id, u.id, u.full_name, u.username or ""
+
+    if not target_str:
+        return None, None, None, None
+
+    clean = target_str.strip().lstrip("@")
+    if clean.isdigit():
+        uid = int(clean)
+        data = await get_user_data(chat_id, uid)
+        return chat_id, uid, data.get("full_name", f"User {uid}"), data.get("username", "")
+
+    # Поиск по username в текущем чате
+    db = get_db()
+    uname = clean.lower()
+    try:
+        docs = await db.collection("chats").document(str(chat_id)).collection("users").get()
+        for doc in docs:
+            d = doc.to_dict() or {}
+            if str(d.get("username", "")).lower() == uname:
+                return chat_id, int(doc.id), d.get("full_name", uname), d.get("username", uname)
+    except Exception:
+        pass
+
+    # Поиск по username по всем вайтлист-чатам
+    try:
+        from whitelist import get_whitelist
+        wl = await get_whitelist()
+        for cid in wl.keys():
+            docs = await db.collection("chats").document(str(cid)).collection("users").get()
+            for doc in docs:
+                d = doc.to_dict() or {}
+                if str(d.get("username", "")).lower() == uname:
+                    return int(cid), int(doc.id), d.get("full_name", uname), d.get("username", uname)
+    except Exception:
+        pass
+
+    return None, None, None, None
+
+
+@router.message(Command("finduser", "найти_игрока", "найти_юзера"))
+async def cmd_find_user(message: types.Message):
+    if not is_creator(message):
+        return
+
+    args = message.text.split(maxsplit=1)
+    target_str = args[1] if len(args) > 1 else ""
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден. Укажите @username, ID или ответьте на сообщение.")
+
+    u_data = await get_user_data(t_chat_id, t_uid)
+    inv = u_data.get("inventory") or {}
+    from shop import ITEMS
+    inv_str = "\n".join([f" • {ITEMS.get(k, {}).get('name', k)}: <b>{v} шт.</b>" for k, v in inv.items()]) or "<i>пусто</i>"
+
+    text = (
+        f"🔍 <b>Информация об игроке</b>\n"
+        f"👤 Имя: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
+        f"🆔 ID: <code>{t_uid}</code> | Чат: <code>{t_chat_id}</code>\n"
+        f"💰 Баланс: <b>{u_data.get('balance', 0):,}</b> сыр.\n"
+        f"🏦 Банк: <b>{u_data.get('bank_deposit', 0):,}</b> сыр.\n"
+        f"🎖 Престиж: <b>{u_data.get('prestige_level', 0)}</b>\n\n"
+        f"🎒 <b>Инвентарь:</b>\n{inv_str}"
+    )
+    await message.answer(text)
+
+
+@router.message(Command("giveitem", "givedictor", "выдать_предмет", "выдать_диктора"))
+async def cmd_give_item(message: types.Message):
+    if not is_creator(message):
+        return
+
+    # Форматы:
+    # 1. Реплай: /giveitem <item_id> [count]
+    # 2. По юзеру: /giveitem @username <item_id> [count]
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer(
+            "<b>Использование:</b>\n"
+            "• В ответ на сообщение: <code>/giveitem &lt;item_id&gt; [кол-во]</code>\n"
+            "• По нику/ID: <code>/giveitem @username &lt;item_id&gt; [кол-во]</code>\n\n"
+            "<i>Пример для Диктора:</i> <code>/givedictor @Dictor_mladshu dictor_legendary 1</code>"
+        )
+
+    from user_manager import add_item_to_inventory, invalidate_user_cache
+    from shop import ITEMS
+
+    if message.reply_to_message:
+        target_str = ""
+        item_id = args[1].lower()
+        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+    else:
+        target_str = args[1]
+        item_id = args[2].lower() if len(args) > 2 else ""
+        count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
+
+    if not item_id:
+        return await message.answer("❌ Укажите ID предмета (например <code>dictor_legendary</code> или <code>бугатти</code>).")
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден. Проверьте правильность @username или ID.")
+
+    success = await add_item_to_inventory(t_chat_id, t_uid, item_id, count=count)
+    if success:
+        invalidate_user_cache(t_chat_id, t_uid)
+        item_name = ITEMS.get(item_id, {}).get("name", item_id)
+        await message.answer(
+            f"✅ <b>Предмет успешно выдан!</b>\n"
+            f"👤 Получатель: <b>{escape_html(t_name)}</b> (ID: <code>{t_uid}</code>)\n"
+            f"🎁 Выдано: <b>{item_name}</b> (<code>{item_id}</code>) x{count} шт."
+        )
+        from log_system import log_action
+        log_action(f"🎁 <b>Выдача предмета Создателем:</b> {message.from_user.full_name} выдал {item_name} x{count} для {t_name} ({t_uid})")
+    else:
+        await message.answer(f"❌ Ошибка выдачи предмета <code>{item_id}</code>.")
+
+
+@router.message(Command("delitem", "забрать_предмет"))
+async def cmd_del_item(message: types.Message):
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/delitem @username &lt;item_id&gt; [кол-во]</code>")
+
+    from user_manager import remove_item_from_inventory, invalidate_user_cache
+    from shop import ITEMS
+
+    if message.reply_to_message:
+        target_str = ""
+        item_id = args[1].lower()
+        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+    else:
+        target_str = args[1]
+        item_id = args[2].lower() if len(args) > 2 else ""
+        count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    success = await remove_item_from_inventory(t_chat_id, t_uid, item_id, count=count)
+    if success:
+        invalidate_user_cache(t_chat_id, t_uid)
+        item_name = ITEMS.get(item_id, {}).get("name", item_id)
+        await message.answer(f"✅ Изъято {count}x {item_name} у {escape_html(t_name)}.")
+    else:
+        await message.answer("❌ У пользователя нет указанного предмета или количества.")
+
+
 @router.message(Command("setmoney"))
 async def cmd_setmoney(message: types.Message):
     if not is_creator(message):
