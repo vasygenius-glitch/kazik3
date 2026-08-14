@@ -163,7 +163,7 @@ async def _resolve_user_target(chat_id, target_str: str, message: types.Message 
         except Exception:
             pass
 
-        # Поиск по username по всем вайтлист-чатам
+        # Поиск по username по всем вайтлист-чатам (но всегда возвращаем текущий chat_id!)
         try:
             from whitelist import get_whitelist
             wl = await get_whitelist()
@@ -172,7 +172,8 @@ async def _resolve_user_target(chat_id, target_str: str, message: types.Message 
                 for doc in docs:
                     d = doc.to_dict() or {}
                     if str(d.get("username", "")).lower() == uname:
-                        return int(cid), int(doc.id), d.get("full_name", uname), d.get("username", uname)
+                        t_data = await get_user_data(chat_id, int(doc.id))
+                        return chat_id, int(doc.id), t_data.get("full_name", d.get("full_name", uname)), d.get("username", uname)
         except Exception:
             pass
 
@@ -441,7 +442,8 @@ async def cmd_give_item(message: types.Message):
         for d_id, _ in DICTORS_LIST:
             if await add_item_to_inventory(t_chat_id, t_uid, d_id, count=count):
                 given_count += 1
-        invalidate_user_cache(t_chat_id, t_uid)
+        from user_manager import flush_user_cache_immediately
+        await flush_user_cache_immediately(t_chat_id, t_uid)
         from log_system import log_action
         log_action(f"👑 <b>Выдача ВСЕХ дикторов:</b> {message.from_user.full_name} выдал полный комплект из 70 дикторов x{count} для {t_name} ({t_uid})")
         return await message.answer(
@@ -453,7 +455,8 @@ async def cmd_give_item(message: types.Message):
     item_id = resolve_dictor_id(raw_item)
     success = await add_item_to_inventory(t_chat_id, t_uid, item_id, count=count)
     if success:
-        invalidate_user_cache(t_chat_id, t_uid)
+        from user_manager import flush_user_cache_immediately
+        await flush_user_cache_immediately(t_chat_id, t_uid)
         item_name = ITEMS.get(item_id, {}).get("name", item_id)
         await message.answer(
             f"✅ <b>Предмет успешно выдан!</b>\n"
@@ -472,7 +475,7 @@ async def cmd_give_top_dictor(message: types.Message):
     if not is_creator(message):
         return
 
-    from user_manager import add_item_to_inventory, invalidate_user_cache
+    from user_manager import add_item_to_inventory, flush_user_cache_immediately
     from shop import ITEMS
 
     args = message.text.split()
@@ -498,7 +501,7 @@ async def cmd_give_top_dictor(message: types.Message):
     top_dictor_id = "dictor_antigravity"
     success = await add_item_to_inventory(t_chat_id, t_uid, top_dictor_id, count=count)
     if success:
-        invalidate_user_cache(t_chat_id, t_uid)
+        await flush_user_cache_immediately(t_chat_id, t_uid)
         top_name = ITEMS.get(top_dictor_id, {}).get("name", "🌌 Антигравитационный диктор")
         from log_system import log_action
         log_action(f"👑 <b>Выдача САМОГО КРУТОГО ДИКТОРА:</b> {message.from_user.full_name} выдал {top_name} x{count} для {t_name} ({t_uid})")
@@ -521,7 +524,7 @@ async def cmd_give_top5_dictors(message: types.Message):
     if not is_creator(message):
         return
 
-    from user_manager import add_item_to_inventory, invalidate_user_cache
+    from user_manager import add_item_to_inventory, flush_user_cache_immediately
     from shop import ITEMS
 
     args = message.text.split()
@@ -553,7 +556,7 @@ async def cmd_give_top5_dictors(message: types.Message):
 
     for d_id in top5_ids:
         await add_item_to_inventory(t_chat_id, t_uid, d_id, count=count)
-    invalidate_user_cache(t_chat_id, t_uid)
+    await flush_user_cache_immediately(t_chat_id, t_uid)
 
     from log_system import log_action
     log_action(f"👑 <b>Выдача ТОП-5 ДИКТОРОВ:</b> {message.from_user.full_name} выдал ТОП-5 дикторов x{count} для {t_name} ({t_uid})")

@@ -877,7 +877,7 @@ async def add_item_to_inventory(chat_id, user_id, item_name: str, count: int = 1
         full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
-
+        await flush_user_cache_immediately(chat_id, user_id)
 
     item_info = ITEMS.get(item_name) or {}
     total_price = int(item_info.get('price', 0) or 0) * count
@@ -910,6 +910,7 @@ async def remove_item_from_inventory(chat_id, user_id, item_name: str, count: in
         full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
+        await flush_user_cache_immediately(chat_id, user_id)
 
     item_info = ITEMS.get(item_name) or {}
     total_price = int(item_info.get('price', 0) or 0) * count
