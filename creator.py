@@ -406,17 +406,32 @@ async def cmd_give_item(message: types.Message):
     from user_manager import add_item_to_inventory, invalidate_user_cache
     from shop import ITEMS
 
-    if message.reply_to_message:
-        target_str = ""
-        raw_item = args[1].lower()
-        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
-    else:
+    target_str = ""
+    raw_item = ""
+    count = 1
+
+    # Умный разбор аргументов:
+    # 1. Если args[1] начинается с @ или len(args) >= 3 и args[1] не число:
+    if len(args) > 1 and args[1].startswith("@"):
         target_str = args[1]
-        raw_item = args[2].lower() if len(args) > 2 else ""
+        raw_item = args[2].lower() if len(args) > 2 else "70"
         count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
+    elif message.reply_to_message:
+        target_str = ""
+        raw_item = args[1].lower() if len(args) > 1 else "70"
+        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+    elif len(args) >= 3:
+        target_str = args[1]
+        raw_item = args[2].lower()
+        count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
+    else:
+        # Без реплая и без явного @user: если это номер/ID предмета, выдаём самому Создателю
+        target_str = str(message.from_user.id)
+        raw_item = args[1].lower() if len(args) > 1 else "70"
+        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
 
     if not raw_item:
-        return await message.answer("❌ Укажите номер диктора (1..70), его ID или 'all'.")
+        raw_item = "70"
 
     t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
     if not t_uid:
@@ -451,6 +466,108 @@ async def cmd_give_item(message: types.Message):
         log_action(f"🎁 <b>Выдача предмета Создателем:</b> {message.from_user.full_name} выдал {item_name} x{count} для {t_name} ({t_uid})")
     else:
         await message.answer(f"❌ Ошибка: предмет <code>{item_id}</code> не найден в каталоге.")
+
+
+@router.message(Command("givetopdictor", "топдиктор", "выдать_топ_диктора", "лучший_диктор", "антигравити", "antigravity", "topdictor"))
+async def cmd_give_top_dictor(message: types.Message):
+    """Мгновенная выдача самого крутого Диктора (#70 Антигравитационный диктор)."""
+    if not is_creator(message):
+        return
+
+    from user_manager import add_item_to_inventory, invalidate_user_cache
+    from shop import ITEMS
+
+    args = message.text.split()
+    count = 1
+    target_str = ""
+
+    if message.reply_to_message:
+        if len(args) > 1 and args[1].isdigit():
+            count = int(args[1])
+    else:
+        if len(args) > 1:
+            target_str = args[1]
+            if len(args) > 2 and args[2].isdigit():
+                count = int(args[2])
+        else:
+            # Если без аргументов и без реплая — выдаём самому Создателю!
+            target_str = str(message.from_user.id)
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден. Укажите @username, ID или ответьте на сообщение игрока.")
+
+    top_dictor_id = "dictor_antigravity"
+    success = await add_item_to_inventory(t_chat_id, t_uid, top_dictor_id, count=count)
+    if success:
+        invalidate_user_cache(t_chat_id, t_uid)
+        top_name = ITEMS.get(top_dictor_id, {}).get("name", "🌌 Антигравитационный диктор")
+        from log_system import log_action
+        log_action(f"👑 <b>Выдача САМОГО КРУТОГО ДИКТОРА:</b> {message.from_user.full_name} выдал {top_name} x{count} для {t_name} ({t_uid})")
+        await message.answer(
+            f"👑 <b>САМЫЙ КРУТОЙ ДИКТОР ВО ВСЕЛЕННОЙ ВЫДАН!</b>\n\n"
+            f"👤 Получатель: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
+            f"🆔 ID: <code>{t_uid}</code>\n\n"
+            f"🐰 Диктор: <b>{top_name}</b> (<code>{top_dictor_id}</code>)\n"
+            f"🌟 Ранг: <b>#70 / 70 (Максимальный Тир)</b>\n"
+            f"🔢 Количество: <b>{count} шт.</b>\n"
+            f"🛡 <i>Полная 100% защита от всех сбросов, вайпов и престижей!</i>"
+        )
+    else:
+        await message.answer("❌ Ошибка при выдаче диктора.")
+
+
+@router.message(Command("givetop5dictors", "топ5дикторов", "топ5"))
+async def cmd_give_top5_dictors(message: types.Message):
+    """Выдача комплекта из ТОП-5 сильнейших Дикторов (ранги 66-70)."""
+    if not is_creator(message):
+        return
+
+    from user_manager import add_item_to_inventory, invalidate_user_cache
+    from shop import ITEMS
+
+    args = message.text.split()
+    count = 1
+    target_str = ""
+
+    if message.reply_to_message:
+        if len(args) > 1 and args[1].isdigit():
+            count = int(args[1])
+    else:
+        if len(args) > 1:
+            target_str = args[1]
+            if len(args) > 2 and args[2].isdigit():
+                count = int(args[2])
+        else:
+            target_str = str(message.from_user.id)
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден. Укажите @username, ID или ответьте на сообщение игрока.")
+
+    top5_ids = [
+        "dictor_creation",       # 66
+        "dictor_destruction",    # 67
+        "dictor_sovereign",      # 68
+        "dictor_godlike",        # 69
+        "dictor_antigravity",    # 70
+    ]
+
+    for d_id in top5_ids:
+        await add_item_to_inventory(t_chat_id, t_uid, d_id, count=count)
+    invalidate_user_cache(t_chat_id, t_uid)
+
+    from log_system import log_action
+    log_action(f"👑 <b>Выдача ТОП-5 ДИКТОРОВ:</b> {message.from_user.full_name} выдал ТОП-5 дикторов x{count} для {t_name} ({t_uid})")
+
+    lines = [f" • {ITEMS.get(d_id, {}).get('name', d_id)} x{count}" for d_id in top5_ids]
+    await message.answer(
+        f"🌌 <b>ТОП-5 БОЖЕСТВЕННЫХ ДИКТОРОВ ВЫДАНЫ!</b>\n\n"
+        f"👤 Получатель: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
+        f"🆔 ID: <code>{t_uid}</code>\n\n"
+        f"<b>Выданные ранги (66-70):</b>\n" + "\n".join(lines) +
+        f"\n\n🛡 <i>Полная 100% защита от всех сбросов, вайпов и престижей!</i>"
+    )
 
 
 @router.message(Command("setprestige", "установить_престиж", "престиж_сет"))
