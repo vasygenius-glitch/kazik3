@@ -410,14 +410,10 @@ async def process_prestige_confirm(callback: types.CallbackQuery):
             if eligible_net_worth < tier_info["cost"]:
                 return False, f"Недостаточно органического капитала ({eligible_net_worth:,} из {tier_info['cost']:,} сыр.)."
 
-            # Сохраняем только престиж-предметы и карточки
-            from shop import ITEMS
+            # Сохраняем престиж-предметы, ДИКТОРОВ и карточки свинок
+            from user_manager import preserve_protected_inventory
             old_inv = data.get("inventory") or {}
-            new_inv = {}
-            for item_id, count in old_inv.items():
-                item = ITEMS.get(item_id)
-                if item and item.get("cat") == "prestige":
-                    new_inv[item_id] = count
+            new_inv = preserve_protected_inventory(old_inv, preserve_prestige=True)
 
             updates = {
                 "prestige_level": target_tier,

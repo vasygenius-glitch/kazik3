@@ -1187,6 +1187,36 @@ async def get_user_by_username_or_id(chat_id, identifier):
 
 
 # ============================================================
+def is_dictor_item(item_id: str) -> bool:
+    """Проверяет, является ли предмет коллекционным диктором (полная защита от любых вайпов/ресетов)."""
+    if not isinstance(item_id, str):
+        return False
+    if item_id.startswith("dictor_"):
+        return True
+    from shop import ITEMS
+    item = ITEMS.get(item_id)
+    if item and item.get("cat") == "tayniy_baniy":
+        return True
+    return False
+
+
+def preserve_protected_inventory(inventory: dict, preserve_prestige: bool = False) -> dict:
+    """Извлекает из инвентаря защищенные от сброса предметы (Дикторы + опционально Престиж)."""
+    if not isinstance(inventory, dict):
+        return {}
+    from shop import ITEMS
+    res = {}
+    for k, v in inventory.items():
+        if is_dictor_item(k):
+            res[k] = v
+        elif preserve_prestige:
+            item = ITEMS.get(k)
+            if item and item.get("cat") == "prestige":
+                res[k] = v
+    return res
+
+
+# ============================================================
 # СБРОС
 # ============================================================
 async def wipe_user_data(chat_id, user_id, preserve_dictors: bool = True) -> bool:
@@ -1200,8 +1230,7 @@ async def wipe_user_data(chat_id, user_id, preserve_dictors: bool = True) -> boo
         default_data = _default_user_data(full_name)
         if preserve_dictors:
             curr_inv = data.get('inventory') or {}
-            preserved_dictors = {k: v for k, v in curr_inv.items() if k.startswith('dictor_')}
-            default_data['inventory'] = preserved_dictors
+            default_data['inventory'] = preserve_protected_inventory(curr_inv, preserve_prestige=False)
 
         # расширяем дефолт дополнительными полями, нужными при wipe
         default_data.update({

@@ -128,3 +128,42 @@ def test_clan_locking_concurrency():
     lock1 = get_clan_lock(123, "Alpha")
     lock2 = get_clan_lock(123, "alpha ")
     assert lock1 is lock2
+
+def test_dictors_full_immunity_from_any_resets():
+    """Проверка 100% иммунитета Дикторов от любых сбросов: Престижа, вайпов и очистки."""
+    from user_manager import is_dictor_item, preserve_protected_inventory
+    
+    # 1. Проверка идентификации
+    assert is_dictor_item("dictor_common") is True
+    assert is_dictor_item("dictor_antigravity") is True
+    assert is_dictor_item("мойка") is False
+    assert is_dictor_item("бугатти") is False
+
+    # 2. Инвентарь с дикторами, престижем и обычными товарами
+    mixed_inv = {
+        "dictor_legendary": 1,
+        "dictor_antigravity": 2,
+        "prestige_mine": 1,
+        "мойка": 5,
+        "бугатти": 3,
+        "condom": 10
+    }
+
+    # При обычном вайпе/очистке сохраняются дикторы
+    wipe_saved = preserve_protected_inventory(mixed_inv, preserve_prestige=False)
+    assert wipe_saved == {
+        "dictor_legendary": 1,
+        "dictor_antigravity": 2
+    }
+
+    # При Престиже сохраняются и Дикторы, и товары Престижа
+    prestige_saved = preserve_protected_inventory(mixed_inv, preserve_prestige=True)
+    assert prestige_saved == {
+        "dictor_legendary": 1,
+        "dictor_antigravity": 2,
+        "prestige_mine": 1
+    }
+    assert "мойка" not in prestige_saved
+    assert "бугатти" not in prestige_saved
+    assert "condom" not in prestige_saved
+

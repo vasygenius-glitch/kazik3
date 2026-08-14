@@ -782,15 +782,18 @@ async def cmd_wipe_economy(message: types.Message):
             users_ref = db.collection('chats').document(str(chat_id)).collection('users')
             user_docs = await users_ref.get()
             
+            from user_manager import preserve_protected_inventory
             batch = db.batch()
             count = 0
             for doc in user_docs:
                 doc_id = getattr(doc, 'id', None)
                 if doc_id:
+                    u_data = doc.to_dict() if hasattr(doc, 'to_dict') else {}
+                    kept_inv = preserve_protected_inventory(u_data.get('inventory') or {})
                     batch.set(users_ref.document(doc_id), {
                         'balance': 500,
                         'bank_deposit': 0,
-                        'inventory': {},
+                        'inventory': kept_inv,
                         'debts': {},
                         'skills': {},
                         'pet': None
@@ -938,14 +941,17 @@ async def cmd_wipe_mid(message: types.Message):
                     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
                     user_docs = await users_ref.get()
 
+                    from user_manager import preserve_protected_inventory
                     batch = db.batch()
                     count = 0
                     for doc in user_docs:
                         doc_id = getattr(doc, 'id', None)
                         if doc_id:
+                            u_data = doc.to_dict() if hasattr(doc, 'to_dict') else {}
+                            kept_inv = preserve_protected_inventory(u_data.get('inventory') or {})
                             batch.set(users_ref.document(doc_id), {
                                 'balance': 500,
-                                'inventory': {},
+                                'inventory': kept_inv,
                                 'is_vip': False
                             }, merge=True)
                             users_wiped += 1

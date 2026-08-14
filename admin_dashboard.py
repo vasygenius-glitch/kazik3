@@ -2089,9 +2089,12 @@ async def cb_pinv_act(callback: types.CallbackQuery, state: FSMContext):
     chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
     action = parts[4] if len(parts) > 4 else ""
     if action == "clear":
-        await update_user_field(chat_id, target_id, "inventory", {})
+        from user_manager import preserve_protected_inventory
+        p_data = await get_user_data(chat_id, target_id)
+        kept = preserve_protected_inventory(p_data.get("inventory") or {})
+        await update_user_field(chat_id, target_id, "inventory", kept)
         asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
-        await safe_answer(callback, "✅ Инвентарь очищен!", show_alert=True)
+        await safe_answer(callback, "✅ Инвентарь очищен (коллекционные Дикторы сохранены)!", show_alert=True)
         await cb_pinv_menu(callback, state)
 
 
