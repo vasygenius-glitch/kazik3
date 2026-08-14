@@ -144,43 +144,41 @@ async def cmd_addmoney(message: types.Message):
 
 async def _resolve_user_target(chat_id, target_str: str, message: types.Message = None):
     """Находит chat_id и target_id по реплаю, ID или @username."""
-    if message and message.reply_to_message:
-        u = message.reply_to_message.from_user
-        return chat_id, u.id, u.full_name, u.username or ""
+    if target_str:
+        clean = target_str.strip().lstrip("@")
+        if clean.isdigit():
+            uid = int(clean)
+            data = await get_user_data(chat_id, uid)
+            return chat_id, uid, data.get("full_name", f"User {uid}"), data.get("username", "")
 
-    if not target_str:
-        return None, None, None, None
-
-    clean = target_str.strip().lstrip("@")
-    if clean.isdigit():
-        uid = int(clean)
-        data = await get_user_data(chat_id, uid)
-        return chat_id, uid, data.get("full_name", f"User {uid}"), data.get("username", "")
-
-    # Поиск по username в текущем чате
-    db = get_db()
-    uname = clean.lower()
-    try:
-        docs = await db.collection("chats").document(str(chat_id)).collection("users").get()
-        for doc in docs:
-            d = doc.to_dict() or {}
-            if str(d.get("username", "")).lower() == uname:
-                return chat_id, int(doc.id), d.get("full_name", uname), d.get("username", uname)
-    except Exception:
-        pass
-
-    # Поиск по username по всем вайтлист-чатам
-    try:
-        from whitelist import get_whitelist
-        wl = await get_whitelist()
-        for cid in wl.keys():
-            docs = await db.collection("chats").document(str(cid)).collection("users").get()
+        # Поиск по username в текущем чате
+        db = get_db()
+        uname = clean.lower()
+        try:
+            docs = await db.collection("chats").document(str(chat_id)).collection("users").get()
             for doc in docs:
                 d = doc.to_dict() or {}
                 if str(d.get("username", "")).lower() == uname:
-                    return int(cid), int(doc.id), d.get("full_name", uname), d.get("username", uname)
-    except Exception:
-        pass
+                    return chat_id, int(doc.id), d.get("full_name", uname), d.get("username", uname)
+        except Exception:
+            pass
+
+        # Поиск по username по всем вайтлист-чатам
+        try:
+            from whitelist import get_whitelist
+            wl = await get_whitelist()
+            for cid in wl.keys():
+                docs = await db.collection("chats").document(str(cid)).collection("users").get()
+                for doc in docs:
+                    d = doc.to_dict() or {}
+                    if str(d.get("username", "")).lower() == uname:
+                        return int(cid), int(doc.id), d.get("full_name", uname), d.get("username", uname)
+        except Exception:
+            pass
+
+    if message and message.reply_to_message:
+        u = message.reply_to_message.from_user
+        return chat_id, u.id, u.full_name, u.username or ""
 
     return None, None, None, None
 
