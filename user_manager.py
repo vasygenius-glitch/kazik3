@@ -471,7 +471,44 @@ def _default_user_data(full_name: str) -> dict:
         'meme_cards': {},
         'opened_cases_count': 0,
         'ai_memory': default_ai_memory(),
+        'prestige_level': 0,
+        'last_prestige_time': 0.0,
+        'unsettled_transfers': [],
     }
+
+
+def record_unsettled_transfer(user_data: dict, amount: int) -> None:
+    """Записывает входящий перевод средств с временной меткой (для 24ч карантина в Престиже)."""
+    if amount <= 0:
+        return
+    now = time.time()
+    history = user_data.get("unsettled_transfers") or []
+    if not isinstance(history, list):
+        history = []
+    clean_history = [
+        e for e in history
+        if isinstance(e, dict) and (now - float(e.get("ts", 0) or 0) < 86400)
+    ]
+    clean_history.append({"amount": amount, "ts": now})
+    if len(clean_history) > 50:
+        clean_history = clean_history[-50:]
+    user_data["unsettled_transfers"] = clean_history
+
+
+def get_unsettled_transfers_24h(user_data: dict) -> int:
+    """Суммирует все входящие переводы за последние 24 часа."""
+    history = user_data.get("unsettled_transfers") or []
+    if not isinstance(history, list):
+        return 0
+    now = time.time()
+    total = 0
+    for e in history:
+        if isinstance(e, dict):
+            ts = float(e.get("ts", 0) or 0)
+            amt = int(e.get("amount", 0) or 0)
+            if now - ts < 86400 and amt > 0:
+                total += amt
+    return total
 
 
 async def safe_get_snapshot(transaction, ref):

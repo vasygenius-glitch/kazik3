@@ -1,11 +1,17 @@
+import time
 import pytest
 from prestige import (
     PRESTIGE_TIERS,
     get_user_prestige,
     get_prestige_perks,
     calculate_user_net_worth,
+    get_unsettled_transfers_24h,
+    get_required_business_count,
+    count_user_businesses,
 )
+from user_manager import record_unsettled_transfer
 from shop import ITEMS
+from rp_clans import get_clan_lock
 
 def test_prestige_tiers_data():
     """Проверка целостности таблицы рангов престижа."""
@@ -83,3 +89,42 @@ def test_prestige_reset_inventory_filtering():
     assert "бугатти" not in new_inv
     assert new_inv["prestige_mine"] == 1
     assert new_inv["prestige_kopter"] == 1
+
+def test_unsettled_transfers_quarantine():
+    """Проверка 24-часового карантина на входящие переводы для защиты от перелива."""
+    user = {"unsettled_transfers": []}
+    
+    # Записываем перевод 50M
+    record_unsettled_transfer(user, 50_000_000)
+    assert get_unsettled_transfers_24h(user) == 50_000_000
+
+    # Проверяем устаревание через 25 часов
+    old_ts = time.time() - 90000
+    user["unsettled_transfers"] = [{"amount": 50_000_000, "ts": old_ts}]
+    assert get_unsettled_transfers_24h(user) == 0
+
+def test_prestige_infrastructure_business_requirements():
+    """Проверка требований к реальной инфраструктуре бизнеса перед получением Престижа."""
+    assert get_required_business_count(1) == 3
+    assert get_required_business_count(2) == 5
+    assert get_required_business_count(6) == 15
+
+    user_empty = {"inventory": {}}
+    assert count_user_businesses(user_empty) == 0
+
+    user_rich_with_biz = {
+        "inventory": {
+            "мойка": 2,
+            "бугатти": 1,
+            "prestige_mine": 1,
+            "condom": 50,  # "other" не считается бизнесом/машиной
+        }
+    }
+    # 2 мойки + 1 бугатти + 1 квантовый майнер = 4 предприятия
+    assert count_user_businesses(user_rich_with_biz) == 4
+
+def test_clan_locking_concurrency():
+    """Проверка генерации локов для кланов для защиты от гонок и дюпов."""
+    lock1 = get_clan_lock(123, "Alpha")
+    lock2 = get_clan_lock(123, "alpha ")
+    assert lock1 is lock2

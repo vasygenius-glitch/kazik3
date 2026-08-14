@@ -124,6 +124,52 @@ def get_prestige_perks(user_data: dict) -> dict:
     }
 
 
+def get_unsettled_transfers_24h(user_data: dict) -> int:
+    """Суммирует все входящие переводы за последние 24 часа (карантин от перелива)."""
+    transfers = user_data.get("unsettled_transfers") or []
+    if not isinstance(transfers, list):
+        return 0
+    now = time.time()
+    total = 0
+    for entry in transfers:
+        if isinstance(entry, dict):
+            ts = float(entry.get("ts", 0) or 0)
+            amt = int(entry.get("amount", 0) or 0)
+            if now - ts < 86400 and amt > 0:
+                total += amt
+    return total
+
+
+def get_required_business_count(target_tier: int) -> int:
+    """Минимальное количество бизнесов для каждого ранга Престижа."""
+    reqs = {
+        1: 3,   # Минимум 3 бизнеса для Престижа 1
+        2: 5,   # Минимум 5 бизнесов для Престижа 2
+        3: 7,   # Минимум 7 бизнесов для Престижа 3
+        4: 9,   # Минимум 9 бизнесов для Престижа 4
+        5: 12,  # Минимум 12 бизнесов для Престижа 5
+        6: 15,  # Минимум 15 бизнесов для Престижа 6
+    }
+    return reqs.get(target_tier, 3)
+
+
+def count_user_businesses(user_data: dict) -> int:
+    """Считает общее количество активных предприятий и машин в собственности."""
+    inv = user_data.get("inventory") or {}
+    from shop import ITEMS
+    cnt = 0
+    for item_id, count in inv.items():
+        try:
+            c = int(count)
+        except (ValueError, TypeError):
+            continue
+        if c <= 0 or item_id not in ITEMS:
+            continue
+        if ITEMS[item_id].get("action") in ("business", "car"):
+            cnt += c
+    return cnt
+
+
 def calculate_user_net_worth(user_data: dict) -> int:
     """Суммирует капитал пользователя: баланс, банк, инвентарь, прокачку и крипто/акции."""
     balance = int(user_data.get("balance", 0) or 0)
@@ -194,6 +240,19 @@ async def cmd_prestige(message: types.Message):
     net_worth = calculate_user_net_worth(data)
     perks = get_prestige_perks(data)
 
+    # Карантин переводов от друзей (защита от мгновенного буста)
+    unsettled_transfers = get_unsettled_transfers_24h(data)
+    eligible_net_worth = max(0, net_worth - unsettled_transfers)
+
+    # Инфраструктура (количество активных предприятий)
+    user_biz_count = count_user_businesses(data)
+
+    # Кулдаун 12 часов
+    now = time.time()
+    last_prestige = float(data.get("last_prestige_time", 0) or 0)
+    cooldown_secs = 12 * 3600
+    cooldown_left = max(0.0, cooldown_secs - (now - last_prestige))
+
     next_tier = curr_tier + 1
     next_info = PRESTIGE_TIERS.get(next_tier)
 
@@ -201,8 +260,26 @@ async def cmd_prestige(message: types.Message):
 
     if next_info:
         req_cost = next_info["cost"]
-        bar = render_progress_bar(net_worth, req_cost)
-        can_prestige = net_worth >= req_cost
+        req_biz = get_required_business_count(next_tier)
+        bar = render_progress_bar(eligible_net_worth, req_cost)
+
+        has_enough_worth = eligible_net_worth >= req_cost
+        has_enough_biz = user_biz_count >= req_biz
+        is_cooldown_ok = cooldown_left <= 0
+
+        can_prestige = has_enough_worth and has_enough_biz and is_cooldown_ok
+
+        quarantine_info = ""
+        if unsettled_transfers > 0:
+            quarantine_info = f"\n⚠️ <i>{unsettled_transfers:,} сыр. получено переводами за 24 ч. и находится на карантине.</i>"
+
+        cooldown_info = ""
+        if cooldown_left > 0:
+            rem_h = int(cooldown_left // 3600)
+            rem_m = int((cooldown_left % 3600) // 60)
+            cooldown_info = f"\n⏳ <b>Кулдаун перерождения:</b> {rem_h} ч. {rem_m} мин."
+
+        biz_status = "✅" if has_enough_biz else "❌"
 
         text = (
             f"🌟 <b>СИСТЕМА ПРЕСТИЖА (ПЕРЕРОЖДЕНИЕ)</b> 🌟\n"
@@ -213,14 +290,15 @@ async def cmd_prestige(message: types.Message):
             f" • Доход: <b>+{int((perks['income_multiplier'] - 1.0) * 100)}%</b>\n"
             f" • Скидка на налоги: <b>-{perks['tax_discount']}%</b>\n"
             f" • Бонус удачи: <b>+{perks['luck_bonus']}%</b>\n\n"
-            f"💰 Общий капитал (активы): <b>{net_worth:,}</b> сыр.\n"
-            f"🎯 Цель для Престижа {next_info['roman']} ({next_info['name']}): <b>{req_cost:,}</b> сыр.\n"
-            f"Прогресс: {bar}\n\n"
-            f"🎁 <b>Награды за Престиж {next_info['roman']}:</b>\n"
+            f"💰 Органический капитал: <b>{eligible_net_worth:,}</b> / {req_cost:,} сыр.\n"
+            f"🏢 Инфраструктура: {biz_status} <b>{user_biz_count}/{req_biz}</b> предпр.\n"
+            f"🎯 Прогресс: {bar}{quarantine_info}{cooldown_info}\n\n"
+            f"🎁 <b>Награды за Престиж {next_info['roman']} ({next_info['name']}):</b>\n"
             f" • {next_info['desc']}\n"
             f" • Стартовый капитал: <b>+{next_info['starting_bonus']:,}</b> сыр.\n\n"
-            f"⚠️ <i>При перерождении обычные деньги, банк и базовые бизнесы сбрасываются. "
-            f"Карточки свинок, кланы, браки и предметы Престижа полностью СОХРАНЯЮТСЯ!</i>"
+            f"🛡 <i>Анти-буст защита: средства от переводов выдерживаются 24 часа. "
+            f"При перерождении обычные деньги и базовые бизнесы сбрасываются. "
+            f"Карточки свинок, кланы, браки и предметы Престижа сохраняются!</i>"
         )
 
         if can_prestige:
@@ -229,8 +307,15 @@ async def cmd_prestige(message: types.Message):
                 callback_data=f"prestige_ask_{next_tier}",
             )
         else:
+            reason = "🔒 Условия не выполнены"
+            if cooldown_left > 0:
+                reason = "⏳ Кулдаун 12 ч."
+            elif not has_enough_biz:
+                reason = f"🏢 Нужно еще {req_biz - user_biz_count} предпр."
+            elif not has_enough_worth:
+                reason = f"🔒 Нужно еще {req_cost - eligible_net_worth:,} сыр."
             builder.button(
-                text=f"🔒 Недостаточно капитала ({net_worth:,} / {req_cost:,})",
+                text=reason,
                 callback_data="prestige_locked",
             )
     else:
@@ -304,9 +389,26 @@ async def process_prestige_confirm(callback: types.CallbackQuery):
             if target_tier != curr_tier + 1:
                 return False, "Неверная последовательность рангов престижа."
 
+            # Проверка кулдауна
+            now = time.time()
+            last_prestige = float(data.get("last_prestige_time", 0) or 0)
+            if (now - last_prestige) < 12 * 3600:
+                rem_h = int((12 * 3600 - (now - last_prestige)) // 3600)
+                rem_m = int(((12 * 3600 - (now - last_prestige)) % 3600) // 60)
+                return False, f"Перерождение на кулдауне. Осталось {rem_h} ч. {rem_m} мин."
+
+            # Проверка инфраструктуры
+            req_biz = get_required_business_count(target_tier)
+            user_biz = count_user_businesses(data)
+            if user_biz < req_biz:
+                return False, f"Недостаточно предприятий: у вас {user_biz}, требуется минимум {req_biz} шт."
+
+            # Проверка органического капитала
             net_worth = calculate_user_net_worth(data)
-            if net_worth < tier_info["cost"]:
-                return False, f"Недостаточно капитала ({net_worth:,} из {tier_info['cost']:,} сыр.)."
+            unsettled = get_unsettled_transfers_24h(data)
+            eligible_net_worth = max(0, net_worth - unsettled)
+            if eligible_net_worth < tier_info["cost"]:
+                return False, f"Недостаточно органического капитала ({eligible_net_worth:,} из {tier_info['cost']:,} сыр.)."
 
             # Сохраняем только престиж-предметы и карточки
             from shop import ITEMS
@@ -319,6 +421,8 @@ async def process_prestige_confirm(callback: types.CallbackQuery):
 
             updates = {
                 "prestige_level": target_tier,
+                "last_prestige_time": now,
+                "unsettled_transfers": [],
                 "balance": tier_info["starting_bonus"],
                 "bank_deposit": 0,
                 "inventory": new_inv,
@@ -355,7 +459,7 @@ async def process_prestige_confirm(callback: types.CallbackQuery):
 
 @router.callback_query(F.data == "prestige_locked")
 async def prestige_locked_cb(callback: types.CallbackQuery):
-    await callback.answer("У вас пока недостаточно капитала для следующего Престижа. Копите средства!", show_alert=True)
+    await callback.answer("Условия для следующего Престижа ещё не выполнены. Развивайте империю и копите органический капитал!", show_alert=True)
 
 
 @router.callback_query(F.data.in_(["prestige_close", "prestige_cancel"]))

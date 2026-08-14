@@ -221,6 +221,9 @@ async def cmd_pay(message: types.Message):
     if balance <= 0:
         return await message.answer("💸 У тебя нет денег для перевода.")
 
+    # --- Гарантируем существование получателя ---
+    target_data = await get_user_data(chat_id, target_user.id, target_name, target_user.username)
+
     # Считаем налог ОДИН раз
     tax_percent = await _calc_transfer_tax(chat_id, sender_id, sender_data)
 
@@ -252,8 +255,35 @@ async def cmd_pay(message: types.Message):
             f"Налог: <b>{tax_percent}%</b>."
         )
 
-    # --- Гарантируем существование получателя ---
-    await get_user_data(chat_id, target_user.id, target_name, target_user.username)
+    # 🛡 Защита от перелива: блокировка передачи стартового капитала Престижа на 1 час
+    import time
+    last_prestige = float(sender_data.get("last_prestige_time", 0) or 0)
+    if time.time() - last_prestige < 3600:
+        from prestige import PRESTIGE_TIERS
+        p_lvl = int(sender_data.get("prestige_level", 0) or 0)
+        start_bonus = PRESTIGE_TIERS.get(p_lvl, {}).get("starting_bonus", 0)
+        if (balance - total_cost) < start_bonus:
+            return await message.answer(
+                "🔒 Стартовый капитал Престижа заморожен от передачи другим игрокам "
+                "(действует анти-абуз защита на 1 час после перерождения). "
+                "Инвестируйте его в покупку бизнесов или улучшений!"
+            )
+
+    # 🛡 Защита от перелива: лимиты на разовый перевод в зависимости от ранга получателя
+    target_prestige = int(target_data.get("prestige_level", 0) or 0)
+    max_transfer_caps = {
+        0: 15_000_000,
+        1: 100_000_000,
+        2: 500_000_000,
+        3: 2_000_000_000,
+        4: 10_000_000_000,
+    }
+    max_allowed = max_transfer_caps.get(target_prestige, 50_000_000_000)
+    if amount > max_allowed:
+        return await message.answer(
+            f"🚫 Получатель ранга Престиж {target_prestige} не может принимать разовые переводы "
+            f"свыше <b>{max_allowed:,}</b> сыр. (защита от накрутки и перелива капитала)."
+        )
 
     # --- Получаем список админов для распределения комиссии ---
     try:
@@ -296,6 +326,11 @@ async def cmd_pay(message: types.Message):
             # Fallback (локальный мок)
             await update_user_balance(chat_id, sender_id, -total_cost, min_balance=0)
             await update_user_balance(chat_id, target_user.id, amount)
+            from user_manager import record_unsettled_transfer, set_in_cache, mark_dirty
+            t_user_data = await get_user_data(chat_id, target_user.id)
+            record_unsettled_transfer(t_user_data, amount)
+            set_in_cache(chat_id, target_user.id, t_user_data)
+            mark_dirty(chat_id, target_user.id)
             if commission > 0 and human_admins:
                 per = commission // len(human_admins)
                 if per > 0:
@@ -445,9 +480,19 @@ async def process_transfer_tx(transaction, chat_id, sender_id, target_id,
                         updates[aid] += per
 
     # Выполняем все обновления балансов в транзакции
+    from user_manager import record_unsettled_transfer
+    target_unsettled_data = dict(target_data)
+    record_unsettled_transfer(target_unsettled_data, amount)
+
     for uid, new_bal in updates.items():
         ref = get_user_ref(chat_id, uid)
-        transaction.update(ref, {'balance': new_bal})
+        if uid == target_id:
+            transaction.update(ref, {
+                'balance': new_bal,
+                'unsettled_transfers': target_unsettled_data.get('unsettled_transfers', [])
+            })
+        else:
+            transaction.update(ref, {'balance': new_bal})
 
 
 # ============================================================

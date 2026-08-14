@@ -155,59 +155,65 @@ async def process_all_deals(callback: types.CallbackQuery):
         price = info['price']
         item = info['item']
 
-        # Сначала списываем деньги у покупателя с защитой от ухода в минус
-        res = await update_user_balance(chat_id, buyer_id, -price, min_balance=0)
-        if res is None:
-            return await callback.message.edit_text("❌ У покупателя не хватило денег!")
+        from user_manager import get_user_lock, remove_item_from_inventory, add_item_to_inventory, set_in_cache, mark_dirty
+        first_id, second_id = sorted([buyer_id, seller_id])
+        lock1 = get_user_lock(chat_id, first_id)
+        lock2 = get_user_lock(chat_id, second_id)
 
-        # Передача предмета
-        from user_manager import remove_item_from_inventory, add_item_to_inventory
-        if await remove_item_from_inventory(chat_id, seller_id, item):
-            await update_user_balance(chat_id, seller_id, price)
-            await add_item_to_inventory(chat_id, buyer_id, item)
+        async with lock1:
+            async with lock2:
+                # Сначала списываем деньги у покупателя с защитой от ухода в минус
+                res = await update_user_balance(chat_id, buyer_id, -price, min_balance=0)
+                if res is None:
+                    return await callback.message.edit_text("❌ У покупателя не хватило денег!")
 
-            # --- Логирование сделки ---
-            try:
-                seller_data_after = await get_user_data(chat_id, seller_id)
-                buyer_data_after = await get_user_data(chat_id, buyer_id)
-                seller_name = seller_data_after.get('full_name', 'Unknown')
-                seller_username = seller_data_after.get('username', '')
-                buyer_name = buyer_data_after.get('full_name', 'Unknown')
-                buyer_username = buyer_data_after.get('username', '')
-                try:
-                    message_link = callback.message.link or ""
-                except Exception:
-                    message_link = ""
-                
-                from log_system import log_trade
-                log_trade(
-                    chat_id=chat_id,
-                    chat_title=callback.message.chat.title or "Unknown",
-                    seller_id=seller_id,
-                    seller_name=seller_name,
-                    seller_username=seller_username,
-                    buyer_id=buyer_id,
-                    buyer_name=buyer_name,
-                    buyer_username=buyer_username,
-                    item_name=item,
-                    price=price,
-                    message_link=message_link
-                )
-            except Exception as log_e:
-                print(f"Error logging trade: {log_e}")
+                # Передача предмета
+                if await remove_item_from_inventory(chat_id, seller_id, item):
+                    await update_user_balance(chat_id, seller_id, price)
+                    await add_item_to_inventory(chat_id, buyer_id, item)
 
-            await callback.message.edit_text(f"✅ <b>Сделка завершена!</b>\nПредмет <b>{item}</b> перешел к новому владельцу за <b>{price}</b> сыр.")
-        else:
-            # Возвращаем деньги покупателю
-            await update_user_balance(chat_id, buyer_id, price)
-            await callback.message.edit_text("❌ Произошла ошибка: предмета больше нет у продавца.")
+                    # --- Логирование сделки ---
+                    try:
+                        seller_data_after = await get_user_data(chat_id, seller_id)
+                        buyer_data_after = await get_user_data(chat_id, buyer_id)
+                        seller_name = seller_data_after.get('full_name', 'Unknown')
+                        seller_username = seller_data_after.get('username', '')
+                        buyer_name = buyer_data_after.get('full_name', 'Unknown')
+                        buyer_username = buyer_data_after.get('username', '')
+                        try:
+                            message_link = callback.message.link or ""
+                        except Exception:
+                            message_link = ""
+                        
+                        from log_system import log_trade
+                        log_trade(
+                            chat_id=chat_id,
+                            chat_title=callback.message.chat.title or "Unknown",
+                            seller_id=seller_id,
+                            seller_name=seller_name,
+                            seller_username=seller_username,
+                            buyer_id=buyer_id,
+                            buyer_name=buyer_name,
+                            buyer_username=buyer_username,
+                            item_name=item,
+                            price=price,
+                            message_link=message_link
+                        )
+                    except Exception as log_e:
+                        print(f"Error logging trade: {log_e}")
+
+                    await callback.message.edit_text(f"✅ <b>Сделка завершена!</b>\nПредмет <b>{item}</b> перешел к новому владельцу за <b>{price}</b> сыр.")
+                else:
+                    # Возвращаем деньги покупателю
+                    await update_user_balance(chat_id, buyer_id, price)
+                    await callback.message.edit_text("❌ Произошла ошибка: предмета больше нет у продавца.")
 
     elif info['type'] == 'inheritance':
         sender_id = info['from_id']
         target_id = info['to_id']
 
         # Избегаем дедлоков, блокируя пользователей в строго упорядоченном виде по ID
-        from user_manager import get_user_lock, set_in_cache, mark_dirty
+        from user_manager import get_user_lock, set_in_cache, mark_dirty, record_unsettled_transfer
         first_id, second_id = sorted([sender_id, target_id])
         lock_first = get_user_lock(chat_id, first_id)
         lock_second = get_user_lock(chat_id, second_id)
@@ -228,6 +234,10 @@ async def process_all_deals(callback: types.CallbackQuery):
                 t_data['balance'] = t_data.get('balance', 0) + total_cash
                 t_data['bank_deposit'] = t_data.get('bank_deposit', 0) + total_bank
                 
+                # Карантин переданных средств для защиты от мгновенного буста Престижа
+                if (total_cash + total_bank) > 0:
+                    record_unsettled_transfer(t_data, total_cash + total_bank)
+
                 # Перенос инвентаря получателю
                 inv = s_data.get('inventory', {})
                 target_inv = dict(t_data.get('inventory', {}))

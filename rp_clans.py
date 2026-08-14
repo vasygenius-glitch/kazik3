@@ -7,7 +7,16 @@ from db import get_db
 from escape import escape_html
 from user_manager import get_user_data, update_user_balance, update_user_field
 
+import asyncio
 router = Router()
+
+_clan_locks: dict[tuple[int, str], asyncio.Lock] = {}
+
+def get_clan_lock(chat_id: int, clan_name: str) -> asyncio.Lock:
+    key = (int(chat_id), str(clan_name).strip().lower())
+    if key not in _clan_locks:
+        _clan_locks[key] = asyncio.Lock()
+    return _clan_locks[key]
 
 # ================= БРАКИ =================
 active_marriages = {}
@@ -859,54 +868,66 @@ async def cmd_clan(message: types.Message):
 
         if amount <= 0: return
 
-        res = await update_user_balance(chat_id, user_id, -amount, min_balance=0)
-        if res is None:
-            return await message.answer("Недостаточно средств.")
+        clan_lock = get_clan_lock(chat_id, clan_name)
+        async with clan_lock:
+            res = await update_user_balance(chat_id, user_id, -amount, min_balance=0)
+            if res is None:
+                return await message.answer("Недостаточно средств.")
 
-        clan_ref = await get_clan_ref(chat_id, clan_name)
-        doc = await clan_ref.get()
-        new_treasury = doc.to_dict().get('treasury', 0) + amount
-        await clan_ref.update({'treasury': new_treasury})
-        await message.answer(f"💰 Вы пожертвовали <b>{amount}</b> в казну клана. Баланс казны: {new_treasury}.")
+            clan_ref = await get_clan_ref(chat_id, clan_name)
+            doc = await clan_ref.get()
+            new_treasury = int(doc.to_dict().get('treasury', 0) or 0) + amount
+            await clan_ref.update({'treasury': new_treasury})
+            await message.answer(f"💰 Вы пожертвовали <b>{amount}</b> в казну клана. Баланс казны: {new_treasury}.")
 
     elif action == "withdraw":
         if not clan_name: return
-        clan_ref = await get_clan_ref(chat_id, clan_name)
-        doc = await clan_ref.get()
-        clan_data = doc.to_dict()
+        clan_lock = get_clan_lock(chat_id, clan_name)
+        async with clan_lock:
+            clan_ref = await get_clan_ref(chat_id, clan_name)
+            doc = await clan_ref.get()
+            clan_data = doc.to_dict() or {}
 
-        if user_id != clan_data['leader_id']: return await message.answer("Снимать может только Лидер.")
+            if user_id != clan_data.get('leader_id'): return await message.answer("Снимать может только Лидер.")
 
-        if len(args) < 3: return await message.answer("Укажите сумму или 'all'.")
+            if len(args) < 3: return await message.answer("Укажите сумму или 'all'.")
 
-        treasury = clan_data.get('treasury', 0)
+            treasury = int(clan_data.get('treasury', 0) or 0)
 
-        amount_str = args[2].lower()
-        if amount_str in ["all", "всё", "все"]:
-            amount = treasury
-        else:
-            try: amount = int(amount_str)
-            except ValueError: return await message.answer("Сумма должна быть числом или 'all'.")
+            amount_str = args[2].lower()
+            if amount_str in ["all", "всё", "все"]:
+                amount = treasury
+            else:
+                try: amount = int(amount_str)
+                except ValueError: return await message.answer("Сумма должна быть числом или 'all'.")
 
-        if amount <= 0: return
-        if treasury < amount: return await message.answer(f"В казне недостаточно средств (Доступно: {treasury}).")
+            if amount <= 0: return
+            if treasury < amount: return await message.answer(f"В казне недостаточно средств (Доступно: {treasury}).")
 
-        from economy_utils import get_global_tax, calculate_progressive_tax
-        base_tax = await get_global_tax()
-        neg_lvl = data.get('skills', {}).get('negotiation', 0)
-        tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl)
+            from economy_utils import get_global_tax, calculate_progressive_tax
+            base_tax = await get_global_tax()
+            neg_lvl = data.get('skills', {}).get('negotiation', 0)
+            tax_percent = calculate_progressive_tax(data.get('balance', 0), base_tax, neg_lvl)
 
-        from diseases import get_active_diseases
-        active_diseases = await get_active_diseases(chat_id, user_id)
-        if 'cytomegalovirus' in active_diseases:
-            tax_percent = min(90, tax_percent * 2)
+            from diseases import get_active_diseases
+            active_diseases = await get_active_diseases(chat_id, user_id)
+            if 'cytomegalovirus' in active_diseases:
+                tax_percent = min(90, tax_percent * 2)
 
-        tax_amount = int(amount * (tax_percent / 100.0))
-        net_amount = amount - tax_amount
+            tax_amount = int(amount * (tax_percent / 100.0))
+            net_amount = amount - tax_amount
 
-        await update_user_balance(chat_id, user_id, net_amount)
-        await clan_ref.update({'treasury': treasury - amount})
-        await message.answer(f"💸 Вы сняли <b>{amount}</b> из казны. Удержан налог {tax_amount}. На руки получено: {net_amount}.")
+            await clan_ref.update({'treasury': treasury - amount})
+            await update_user_balance(chat_id, user_id, net_amount)
+
+            # Карантин средств при выводе из казны
+            from user_manager import record_unsettled_transfer, set_in_cache, mark_dirty
+            u_data = await get_user_data(chat_id, user_id)
+            record_unsettled_transfer(u_data, net_amount)
+            set_in_cache(chat_id, user_id, u_data)
+            mark_dirty(chat_id, user_id)
+
+            await message.answer(f"💸 Вы сняли <b>{amount}</b> из казны. Удержан налог {tax_amount}. На руки получено: {net_amount}.")
 
     elif action in ["raid", "attack"]:
         if not clan_name:
