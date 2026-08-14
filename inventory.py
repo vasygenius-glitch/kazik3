@@ -296,18 +296,16 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
             return False, 0, 0
 
         biz_levels = data.get('biz_levels', {})
-        sell_unit_price = 0
+        base_unit_price = int(item_info['price'] * 0.75)
+        upgrade_refund = 0
         if item_info.get('action') == 'business':
             level = biz_levels.get(item_id, 1)
-            total_invested = item_info['price']
-            for l in range(1, level):
-                total_invested += int(item_info['price'] * 0.5 * l)
-            sell_unit_price = int(total_invested * 0.75)
-        else:
-            sell_unit_price = int(item_info['price'] * 0.75)
-            
-        success = await sell_item_tr(transaction, chat_id, user_id, item_id, item_info.get('cat', ''), sell_unit_price, count=sell_count)
-        total_payout = sell_unit_price * sell_count
+            upgrade_invested = sum(int(item_info['price'] * 0.5 * l) for l in range(1, level))
+            if sell_count >= owned_qty:
+                upgrade_refund = int(upgrade_invested * 0.75)
+
+        total_payout = (base_unit_price * sell_count) + upgrade_refund
+        success = await sell_item_tr(transaction, chat_id, user_id, item_id, item_info.get('cat', ''), base_unit_price, count=sell_count, total_payout=total_payout)
         return success, total_payout, sell_count
 
     try:
@@ -348,36 +346,40 @@ async def ask_inv_sell(callback: types.CallbackQuery):
     if owned_qty <= 0:
         return await callback.answer("У вас нет этого предмета!", show_alert=True)
 
+    base_unit_price = int(info['price'] * 0.75)
+    upgrade_refund = 0
     if info.get('action') == 'business':
         biz_levels = u_data.get('biz_levels', {})
         level = biz_levels.get(item_id, 1)
-        total_invested = info['price']
-        for l in range(1, level):
-            total_invested += int(info['price'] * 0.5 * l)
-        sell_unit_price = int(total_invested * 0.75)
-    else:
-        sell_unit_price = int(info['price'] * 0.75)
+        upgrade_invested = sum(int(info['price'] * 0.5 * l) for l in range(1, level))
+        upgrade_refund = int(upgrade_invested * 0.75)
 
     builder = InlineKeyboardBuilder()
     if owned_qty == 1:
-        builder.button(text=f"✅ Продать 1 шт. ({sell_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
+        total_payout_1 = base_unit_price + upgrade_refund
+        builder.button(text=f"✅ Продать 1 шт. ({total_payout_1} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
     else:
-        builder.button(text=f"1 шт. ({sell_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
+        builder.button(text=f"1 шт. ({base_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
         if owned_qty >= 5:
-            builder.button(text=f"5 шт. ({sell_unit_price * 5} сыр.)", callback_data=f"inv_sellcf_{item_id}_5")
+            payout_5 = (base_unit_price * 5) + (upgrade_refund if owned_qty == 5 else 0)
+            builder.button(text=f"5 шт. ({payout_5} сыр.)", callback_data=f"inv_sellcf_{item_id}_5")
         if owned_qty >= 10:
-            builder.button(text=f"10 шт. ({sell_unit_price * 10} сыр.)", callback_data=f"inv_sellcf_{item_id}_10")
+            payout_10 = (base_unit_price * 10) + (upgrade_refund if owned_qty == 10 else 0)
+            builder.button(text=f"10 шт. ({payout_10} сыр.)", callback_data=f"inv_sellcf_{item_id}_10")
         if owned_qty >= 50:
-            builder.button(text=f"50 шт. ({sell_unit_price * 50} сыр.)", callback_data=f"inv_sellcf_{item_id}_50")
-        builder.button(text=f"Все ({owned_qty} шт. = {sell_unit_price * owned_qty} сыр.)", callback_data=f"inv_sellcf_{item_id}_all")
+            payout_50 = (base_unit_price * 50) + (upgrade_refund if owned_qty == 50 else 0)
+            builder.button(text=f"50 шт. ({payout_50} сыр.)", callback_data=f"inv_sellcf_{item_id}_50")
+        payout_all = (base_unit_price * owned_qty) + upgrade_refund
+        builder.button(text=f"Все ({owned_qty} шт. = {payout_all} сыр.)", callback_data=f"inv_sellcf_{item_id}_all")
 
     builder.button(text="❌ Отмена", callback_data=f"inv_item_{item_id}")
     builder.adjust(1) if owned_qty == 1 else builder.adjust(2)
     
+    upgrade_note = f"\n<i>Включает возврат за улучшения при продаже всех шт.: {upgrade_refund} сыр.</i>" if upgrade_refund > 0 else ""
     await callback.message.edit_text(
         f"💰 <b>Продажа предмета:</b> <code>{info['name']}</code>\n"
         f"У вас в наличии: <b>{owned_qty} шт.</b>\n"
-        f"Цена продажи: <b>{sell_unit_price}</b> сыр./шт.\n\n"
+        f"Базовая цена продажи: <b>{base_unit_price}</b> сыр./шт.{upgrade_note}\n\n"
         f"Выберите количество для продажи:", 
         reply_markup=builder.as_markup()
     )

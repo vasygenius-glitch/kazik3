@@ -494,7 +494,7 @@ async def cmd_clan(message: types.Message):
         return await message.answer(
             "🛡 <b>Управление кланом:</b>\n"
             "<code>/clan create [Название]</code> — создать клан (50к сыроежек)\n"
-            "<code>/clan rename [Новое Название]</code> — переименовать клан (лидер)\n"
+            "<code>/clan rename [Новое Название]</code> — переименовать клан (лидер) (также <code>клан сменить название</code>)\n"
             "<code>/clan invite [reply]</code> — пригласить в клан\n"
             "<code>/clan kick [reply]</code> — выгнать из клана (лидер/заместитель)\n"
             "<code>/clan leave</code> — выйти из клана\n"
@@ -784,17 +784,29 @@ async def cmd_clan(message: types.Message):
         target_name = escape_html(message.reply_to_message.from_user.full_name)
         await message.answer(f"👑 Лидерство клана <b>{escape_html(clan_name)}</b> успешно передано ковбою <b>{target_name}</b>!")
 
-    elif action in ["rename", "name", "переименовать"]:
+    elif action in ["rename", "name", "переименовать", "название", "имя", "сменить", "изменить", "ренейм", "rename_clan"]:
         if not clan_name:
             return await message.answer("Вы не состоите в клане.")
 
         if len(args) < 3 or not args[2].strip():
             return await message.answer(
                 "Укажите новое название клана:\n"
-                "<code>/clan rename [Новое Название]</code>"
+                "<code>/clan rename [Новое Название]</code> или <code>клан сменить название [Новое Название]</code>"
             )
 
-        new_clan_name = args[2].strip()
+        raw_new_name = args[2].strip()
+        for prefix in ["название ", "имя ", "name "]:
+            if raw_new_name.lower().startswith(prefix):
+                raw_new_name = raw_new_name[len(prefix):].strip()
+                break
+
+        new_clan_name = raw_new_name
+        if not new_clan_name:
+            return await message.answer(
+                "Укажите новое название клана:\n"
+                "<code>/clan rename [Новое Название]</code> или <code>клан сменить название [Новое Название]</code>"
+            )
+
         if len(new_clan_name) < 2 or len(new_clan_name) > 30:
             return await message.answer("Длина названия клана должна быть от 2 до 30 символов.")
 
@@ -823,6 +835,11 @@ async def cmd_clan(message: types.Message):
             await update_user_field(chat_id, m_id, 'clan', new_clan_name)
 
         await old_clan_ref.delete()
+
+        # Обновляем активные инвайты этого клана, если они есть
+        for inv_info in active_clan_invites.values():
+            if inv_info.get('clan_name') == clan_name:
+                inv_info['clan_name'] = new_clan_name
 
         await message.answer(
             f"✏️ Клан <b>{escape_html(clan_name)}</b> успешно переименован в <b>{escape_html(new_clan_name)}</b>!"

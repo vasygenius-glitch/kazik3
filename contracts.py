@@ -236,11 +236,43 @@ async def process_all_deals(callback: types.CallbackQuery):
                     target_inv[item_name] = target_inv.get(item_name, 0) + count
                     items_transferred.append(f"{item_name} (x{count})")
                 t_data['inventory'] = target_inv
+
+                # Перенос уровней бизнесов
+                s_biz = s_data.get('biz_levels', {}) or {}
+                t_biz = dict(t_data.get('biz_levels', {}) or {})
+                for bk, bv in s_biz.items():
+                    t_biz[bk] = max(t_biz.get(bk, 1), bv)
+                t_data['biz_levels'] = t_biz
+
+                # Перенос криптопортфеля
+                s_crypto = s_data.get('crypto_portfolio', {}) or {}
+                t_crypto = dict(t_data.get('crypto_portfolio', {}) or {})
+                for ck, cq in s_crypto.items():
+                    t_crypto[ck] = t_crypto.get(ck, 0) + cq
+                t_data['crypto_portfolio'] = t_crypto
+
+                # Перенос портфеля акций
+                s_stocks = s_data.get('stocks_portfolio', {}) or {}
+                t_stocks = dict(t_data.get('stocks_portfolio', {}) or {})
+                for sk, sq in s_stocks.items():
+                    t_stocks[sk] = t_stocks.get(sk, 0) + sq
+                t_data['stocks_portfolio'] = t_stocks
+
+                # Перенос карточек свинок
+                s_cards = s_data.get('meme_cards', {}) or {}
+                t_cards = dict(t_data.get('meme_cards', {}) or {})
+                for mk, mq in s_cards.items():
+                    t_cards[mk] = t_cards.get(mk, 0) + mq
+                t_data['meme_cards'] = t_cards
                 
-                # Обнуление отправителя
+                # Обнуление отправителя (полное банкротство при передаче наследства)
                 s_data['balance'] = 0
                 s_data['bank_deposit'] = 0
                 s_data['inventory'] = {}
+                s_data['biz_levels'] = {}
+                s_data['crypto_portfolio'] = {}
+                s_data['stocks_portfolio'] = {}
+                s_data['meme_cards'] = {}
                 
                 # Сохраняем в кэш и помечаем грязными для фоновой записи
                 set_in_cache(chat_id, target_id, t_data)

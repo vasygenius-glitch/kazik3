@@ -534,8 +534,9 @@ async def process_withdraw_in_memory(chat_id: int, user_id: int, current_banker_
     current_balance = int(user_data.get('balance', 0) or 0)
 
     deposit_start_time = user_data.get('deposit_start_time', 0)
-    if deposit_start_time > 0 and current_deposit > 0:
+    if deposit_start_time > 1700000000 and current_deposit > 0:
         days_held = int((time.time() - deposit_start_time) // 86400)
+        days_held = min(max(0, days_held), 30)
         if days_held > 0:
             rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
             loyalty_bonus = min(5.0, days_held * 0.5)
@@ -664,8 +665,9 @@ async def cmd_bank(message: types.Message):
             last_daily = data.get('last_daily_time', 0)
             dep_start = data.get('deposit_start_time', 0)
             start_time = last_daily if last_daily > 0 else dep_start
-            if start_time > 0 and current_deposit > 0:
+            if start_time > 1700000000 and current_deposit > 0:
                 days_held = int((time.time() - start_time) // 86400)
+                days_held = min(max(0, days_held), 30)
                 if days_held > 0:
                     temp_dep = current_deposit
                     for _ in range(days_held):

@@ -316,7 +316,7 @@ def get_sell_menu_kb(inventory: dict, is_vip: bool):
 
         info = ITEMS[item_id]
         sell_price = int(info["price"] * SELL_RATIO)
-        qty_str = "" if info.get("cat") == "biz" else f" ({cnt} шт)"
+        qty_str = f" ({cnt} шт)" if cnt > 1 else ""
         builder.button(
             text=f"Продать: {info['name']}{qty_str} — {sell_price} сыр.",
             callback_data=f"sell_ask_{item_id}",
@@ -337,11 +337,21 @@ def get_sell_menu_kb(inventory: dict, is_vip: bool):
     return builder.as_markup(), has_items
 
 
-def get_sell_confirm_kb(item_id: str):
+def get_sell_confirm_kb(item_id: str, owned_qty: int = 1, base_price: int = 0, upgrade_refund: int = 0):
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Да, продать", callback_data=f"sell_confirm_{item_id}")
+    if item_id == "вип" or owned_qty <= 1:
+        total_payout = base_price + upgrade_refund
+        builder.button(text=f"✅ Да, продать ({total_payout} сыр.)", callback_data=f"sell_confirm_{item_id}_1")
+    else:
+        builder.button(text=f"1 шт. ({base_price} сыр.)", callback_data=f"sell_confirm_{item_id}_1")
+        if owned_qty >= 5:
+            payout_5 = (base_price * 5) + (upgrade_refund if owned_qty == 5 else 0)
+            builder.button(text=f"5 шт. ({payout_5} сыр.)", callback_data=f"sell_confirm_{item_id}_5")
+        payout_all = (base_price * owned_qty) + upgrade_refund
+        builder.button(text=f"Все ({owned_qty} шт. = {payout_all} сыр.)", callback_data=f"sell_confirm_{item_id}_all")
+
     builder.button(text="❌ Отмена", callback_data="shop_sell_menu")
-    builder.adjust(2)
+    builder.adjust(1) if owned_qty <= 1 else builder.adjust(2)
     return builder.as_markup()
 
 
@@ -648,35 +658,70 @@ async def ask_sell_confirm(callback: types.CallbackQuery):
     if item_id == "вип":
         if not data.get("is_vip"):
             return await callback.answer("У вас нет VIP-статуса.", show_alert=True)
+        owned_qty = 1
+        base_sell_price = int(item["price"] * SELL_RATIO)
+        upgrade_refund = 0
     else:
         inv = data.get("inventory") or {}
-        if int(inv.get(item_id, 0) or 0) <= 0:
+        owned_qty = int(inv.get(item_id, 0) or 0)
+        if owned_qty <= 0:
             return await callback.answer("У вас нет этого предмета.", show_alert=True)
 
-    sell_price = int(item["price"] * SELL_RATIO)
-    text = (
-        f"❓ Вы уверены, что хотите продать <b>{item['name']}</b> "
-        f"за <b>{sell_price}</b> сыр.?"
+        base_sell_price = int(item["price"] * SELL_RATIO)
+        upgrade_refund = 0
+        if item.get("action") == "business":
+            biz_levels = data.get("biz_levels", {})
+            level = biz_levels.get(item_id, 1)
+            upgrade_invested = sum(int(item["price"] * 0.5 * l) for l in range(1, level))
+            upgrade_refund = int(upgrade_invested * SELL_RATIO)
+
+    upgrade_note = f"\n<i>(Включает возврат за улучшения при продаже всех шт.: {upgrade_refund} сыр.)</i>" if upgrade_refund > 0 else ""
+    if owned_qty <= 1:
+        text = (
+            f"❓ Вы уверены, что хотите продать <b>{item['name']}</b> "
+            f"за <b>{base_sell_price + upgrade_refund}</b> сыр.?{upgrade_note}"
+        )
+    else:
+        text = (
+            f"💰 <b>Продажа имущества:</b> {item['name']}\n"
+            f"У вас в наличии: <b>{owned_qty} шт.</b>\n"
+            f"Базовая цена продажи: <b>{base_sell_price}</b> сыр./шт.{upgrade_note}\n\n"
+            f"Выберите количество для продажи:"
+        )
+
+    await _safe_edit(
+        callback.message,
+        text,
+        reply_markup=get_sell_confirm_kb(
+            item_id, owned_qty=owned_qty, base_price=base_sell_price, upgrade_refund=upgrade_refund
+        )
     )
-    await _safe_edit(callback.message, text, reply_markup=get_sell_confirm_kb(item_id))
 
 
 @router.callback_query(F.data.startswith("sell_confirm_"))
 async def process_sell_confirm(callback: types.CallbackQuery):
-    item_id = callback.data.removeprefix("sell_confirm_")
+    raw_data = callback.data.removeprefix("sell_confirm_")
+    parts = raw_data.rsplit("_", 1)
+    if len(parts) == 2 and (parts[1].isdigit() or parts[1] == "all"):
+        item_id = parts[0]
+        req_count_str = parts[1]
+    else:
+        item_id = raw_data
+        req_count_str = "1"
+
     item = ITEMS.get(item_id)
     if not item:
         return await callback.answer("Товар не найден.", show_alert=True)
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    sell_price = int(item["price"] * SELL_RATIO)
     db = get_db()
 
     from user_manager import get_user_lock, invalidate_user_cache
     lock = get_user_lock(chat_id, user_id)
     async with lock:
         if item_id == "вип":
+            sell_price = int(item["price"] * SELL_RATIO)
             @firestore_async.async_transactional
             async def _sell_vip_txn(transaction):
                 return await sell_vip_tr(transaction, chat_id, user_id, sell_price)
@@ -691,22 +736,44 @@ async def process_sell_confirm(callback: types.CallbackQuery):
 
             if not success:
                 return await callback.answer("У вас больше нет VIP статуса!", show_alert=True)
+            sold_count = 1
+            total_payout = sell_price
 
         else:
             item_cat = item.get("cat", "")
             u_data = await get_user_data(chat_id, user_id)
+            inv = u_data.get("inventory") or {}
+            owned_qty = int(inv.get(item_id, 0) or 0)
+            if owned_qty <= 0:
+                return await callback.answer("Предмет не найден в вашем инвентаре!", show_alert=True)
+
+            if req_count_str == "all":
+                sell_count = owned_qty
+            else:
+                try:
+                    sell_count = int(req_count_str)
+                except ValueError:
+                    sell_count = 1
+            sell_count = min(sell_count, owned_qty)
+            if sell_count <= 0:
+                return await callback.answer("Некорректное количество для продажи.", show_alert=True)
+
+            base_unit_price = int(item["price"] * SELL_RATIO)
+            upgrade_refund = 0
             if item.get("action") == "business":
                 biz_levels = u_data.get("biz_levels", {})
                 level = biz_levels.get(item_id, 1)
-                total_invested = item["price"]
-                for l in range(1, level):
-                    total_invested += int(item["price"] * 0.5 * l)
-                sell_price = int(total_invested * SELL_RATIO)
+                upgrade_invested = sum(int(item["price"] * 0.5 * l) for l in range(1, level))
+                if sell_count >= owned_qty:
+                    upgrade_refund = int(upgrade_invested * SELL_RATIO)
+
+            total_payout = (base_unit_price * sell_count) + upgrade_refund
+            sold_count = sell_count
 
             @firestore_async.async_transactional
             async def _sell_txn(transaction):
                 return await sell_item_tr(
-                    transaction, chat_id, user_id, item_id, item_cat, sell_price
+                    transaction, chat_id, user_id, item_id, item_cat, base_unit_price, count=sell_count, total_payout=total_payout
                 )
 
             try:
@@ -725,7 +792,7 @@ async def process_sell_confirm(callback: types.CallbackQuery):
 
         invalidate_user_cache(chat_id, user_id)
 
-    await callback.answer(f"✅ Успешно продано за {sell_price} сыр.!", show_alert=True)
+    await callback.answer(f"✅ Успешно продано {sold_count} шт. за {total_payout} сыр.!", show_alert=True)
 
     # Обновляем меню продажи свежими данными
     fresh = await get_user_data(chat_id, user_id)

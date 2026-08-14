@@ -884,7 +884,7 @@ async def remove_item_from_inventory(chat_id, user_id, item_name: str, count: in
 #         if ok:
 #             invalidate_user_cache(chat_id, user_id)   # <-- здесь
 # ============================================================
-async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price: int, count: int = 1) -> bool:
+async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_price: int, count: int = 1, total_payout: Optional[int] = None) -> bool:
     try:
         count = int(count)
     except (ValueError, TypeError):
@@ -902,14 +902,17 @@ async def sell_item_tr(transaction, chat_id, user_id, item_id, item_cat, sell_pr
     if curr_qty < count or count <= 0:
         return False
 
-
     inv[item_id] -= count
     if inv[item_id] <= 0:
         inv.pop(item_id, None)
         if item_cat == 'biz':
             biz_levels.pop(item_id, None)
 
-    total_payout = int(sell_price) * count
+    if total_payout is None:
+        total_payout = int(sell_price) * count
+    else:
+        total_payout = int(total_payout)
+
     updates = {
         'inventory': inv,
         'biz_levels': biz_levels,
