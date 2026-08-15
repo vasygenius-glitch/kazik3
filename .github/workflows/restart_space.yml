@@ -1,0 +1,23 @@
+name: Daily Space Restart
+
+on:
+  schedule:
+    # 02:00 UTC corresponds to 05:00 MSK (UTC+3)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  restart:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Space Restart
+        run: |
+          response=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST https://huggingface.co/api/spaces/dICTORTAniBani/dicasdf/restart \
+               -H "Authorization: Bearer ${{ secrets.HF_TOKEN }}")
+          echo "$response"
+          status=$(echo "$response" | grep "HTTP_STATUS:" | cut -d':' -f2)
+          if [ "$status" -ne 200 ]; then
+            echo "Failed to restart space. HTTP status: $status"
+            exit 1
+          fi
+          echo "Space restart triggered successfully!"
