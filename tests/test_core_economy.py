@@ -40,3 +40,34 @@ def test_prestige_bonus_application():
     base_income = 100_000
     boosted_income = int(base_income * perks["income_multiplier"])
     assert boosted_income == 150_000
+
+
+@pytest.mark.asyncio
+async def test_game_win_chance_fair_random():
+    """Проверка, что честный рандом (-1) в покере и рулетке не превращается в 0% проигрыш."""
+    from chances import get_user_win_chance
+    from user_manager import set_in_cache
+
+    chat_id = -100555666
+    user_id = 888999
+
+    # Обычный игрок без питомцев
+    set_in_cache(chat_id, user_id, {"balance": 1000})
+    chance_poker = await get_user_win_chance(chat_id, user_id, "poker", -1)
+    assert chance_poker == -1, f"Ожидался -1 (честный рандом), получено {chance_poker}"
+
+    chance_roulette = await get_user_win_chance(chat_id, user_id, "roulette", -1)
+    assert chance_roulette == -1, f"Ожидался -1 (честный рандом), получено {chance_roulette}"
+
+    # Игра с базовым шансом 35%
+    chance_slots = await get_user_win_chance(chat_id, user_id, "slots", 35)
+    assert chance_slots == 35
+
+    # Игрок с питомцем единорогом (+10%)
+    set_in_cache(chat_id, user_id, {"balance": 1000, "pet": {"id": "unicorn"}})
+    chance_unicorn_poker = await get_user_win_chance(chat_id, user_id, "poker", -1)
+    assert chance_unicorn_poker == 55, f"Ожидался 55% с единорогом, получено {chance_unicorn_poker}"
+
+    chance_unicorn_slots = await get_user_win_chance(chat_id, user_id, "slots", 35)
+    assert chance_unicorn_slots == 45, f"Ожидался 45% с единорогом, получено {chance_unicorn_slots}"
+
