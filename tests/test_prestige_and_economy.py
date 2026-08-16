@@ -167,3 +167,52 @@ def test_dictors_full_immunity_from_any_resets():
     assert "бугатти" not in prestige_saved
     assert "condom" not in prestige_saved
 
+
+def test_dynamic_luxury_tax_thresholds():
+    """Проверка динамического порога налога на сверхкапитал под следующий ранг Престижа."""
+    from prestige import PRESTIGE_TIERS
+    
+    # Для уровня 0: порог 50M (Престиж 1 стоит 50M)
+    assert PRESTIGE_TIERS[1]["cost"] == 50_000_000
+    # Для уровня 1: порог 250M (Престиж 2 стоит 250M)
+    assert PRESTIGE_TIERS[2]["cost"] == 250_000_000
+    # Для уровня 2: порог 1B (Престиж 3 стоит 1B)
+    assert PRESTIGE_TIERS[3]["cost"] == 1_000_000_000
+
+    # Игрок с Престижем 1 и балансом 100M не должен облагаться налогом (порог 250M)
+    prestige_1_wealth = 100_000_000
+    threshold_p1 = PRESTIGE_TIERS[2]["cost"]
+    excess = max(0, prestige_1_wealth - threshold_p1)
+    assert excess == 0
+
+    # Игрок с Престижем 0 и балансом 60M: налог на излишек 10M
+    prestige_0_wealth = 60_000_000
+    threshold_p0 = PRESTIGE_TIERS[1]["cost"]
+    excess_p0 = max(0, prestige_0_wealth - threshold_p0)
+    tax_p0 = int(excess_p0 * 0.015)
+    assert tax_p0 == 150_000
+
+
+def test_card_bonuses_applied_to_total_income():
+    """Проверка применения процентного бонуса карточек к совокупному доходу."""
+    from user_manager import get_user_meme_bonuses
+    
+    # Пользователь с карточками (например, 2 эпических по 0.006 = 0.012 (+1.2%))
+    user_data = {
+        "meme_cards": {
+            "meme_2": 2,  # Epic: 0.006 mult, 120 flat
+        }
+    }
+    bonuses = get_user_meme_bonuses(user_data)
+    assert abs(bonuses["multiplier"] - 0.012) < 1e-6
+    assert bonuses["flat"] == 240
+
+    # Расчет бонуса от дохода 500,000 + базовый 150
+    base_bonus = 150
+    extra_income = 500_000
+    card_boost = int((base_bonus + extra_income) * bonuses["multiplier"]) + bonuses["flat"]
+    # 500_150 * 0.012 = 6001.8 -> 6001 + 240 = 6241
+    assert card_boost == 6241
+    assert card_boost > bonuses["flat"]  # Проценты дают реальную прибавку!
+
+

@@ -49,11 +49,12 @@ def test_each_of_70_dictors(index, item_tuple):
 @pytest.mark.asyncio
 async def test_antigravity_dictor_grant_and_inventory():
     """Тест добавления #70 Антигравитационного диктора и отображения в инвентаре."""
+    from user_manager import set_in_cache
     chat_id = -100999888
     user_id = 777123
     
-    # Очищаем инвентарь
-    await update_user_field(chat_id, user_id, "inventory", {})
+    # Инициализируем в кэше
+    set_in_cache(chat_id, user_id, {"inventory": {}, "balance": 1000, "full_name": "Тестер"})
     
     # Добавляем 70-го диктора
     top_id = "dictor_antigravity"

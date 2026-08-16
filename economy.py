@@ -557,8 +557,15 @@ async def process_claim_bonus(callback: types.CallbackQuery):
         )
         if receipt.get('meme_bonus', 0) > 0:
             text += f"🃏 Бонус от карточек: <b>+{receipt['meme_bonus']}</b>\n"
+        if receipt.get('prestige_bonus', 0) > 0:
+            p_pct = int(round((receipt.get('prestige_mult', 1.0) - 1.0) * 100))
+            p_badge = receipt.get('prestige_badge', '')
+            p_lvl = receipt.get('prestige_level', 0)
+            text += f"🎖 Престиж [{p_lvl}/6] {p_badge} (+{p_pct}%): <b>+{receipt['prestige_bonus']}</b>\n"
+        text += f"➖ Налог ({receipt['tax_percent']}%): <b>-{receipt['tax_amount']}</b>\n"
+        if receipt.get('luxury_tax', 0) > 0:
+            text += f"🏛 Налог на сверхкапитал: <b>-{receipt['luxury_tax']}</b>\n"
         text += (
-            f"➖ Налог ({receipt['tax_percent']}%): <b>-{receipt['tax_amount']}</b>\n"
             f"-----------------------\n"
             f"💰 Итого на руки: <b>{receipt['total']}</b> сыроежек"
         )

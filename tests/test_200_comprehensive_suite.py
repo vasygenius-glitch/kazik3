@@ -120,9 +120,10 @@ def test_quarantine_amounts(amt):
 ])
 @pytest.mark.asyncio
 async def test_dictor_persistence_and_grant(dictor_id):
+    from user_manager import set_in_cache
     chat_id = -100111222
     user_id = 999333
-    await update_user_field(chat_id, user_id, "inventory", {})
+    set_in_cache(chat_id, user_id, {"inventory": {}, "balance": 1000, "full_name": "Тестер"})
     
     # Добавление
     ok = await add_item_to_inventory(chat_id, user_id, dictor_id, count=2)
