@@ -414,6 +414,8 @@ async def process_prestige_confirm(callback: types.CallbackQuery):
             from user_manager import preserve_protected_inventory
             old_inv = data.get("inventory") or {}
             new_inv = preserve_protected_inventory(old_inv, preserve_prestige=True)
+            old_biz = data.get("biz_levels") or {}
+            new_biz = {k: v for k, v in old_biz.items() if k in new_inv}
 
             updates = {
                 "prestige_level": target_tier,
@@ -422,7 +424,7 @@ async def process_prestige_confirm(callback: types.CallbackQuery):
                 "balance": tier_info["starting_bonus"],
                 "bank_deposit": 0,
                 "inventory": new_inv,
-                "biz_levels": {},
+                "biz_levels": new_biz,
                 "crypto_portfolio": {},
                 "stocks_portfolio": {},
             }

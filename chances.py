@@ -63,16 +63,22 @@ async def get_user_win_chance(chat_id: int, user_id: int, game_name: str, base_c
         try:
             from user_manager import get_user_data
             from diseases import get_active_diseases
+            from prestige import get_prestige_perks
             
             data = await get_user_data(chat_id, user_id)
             if data:
+                luck_bonus = get_prestige_perks(data).get("luck_bonus", 0)
                 pet = data.get('pet') or {}
                 pet_id = pet.get('id') if isinstance(pet, dict) else None
+                has_unicorn = False
                 if pet_id == 'unicorn':
                     active_diseases = await get_active_diseases(chat_id, user_id, data)
                     if 'hpv' not in active_diseases:
-                        # Единорог дает +10% шанс победы (базовый 45% + 10% = 55%)
-                        return 55
+                        has_unicorn = True
+                
+                if has_unicorn or luck_bonus > 0:
+                    base_rate = 55 if has_unicorn else 45
+                    return min(100, base_rate + luck_bonus)
         except Exception:
             pass
         return -1
@@ -80,6 +86,7 @@ async def get_user_win_chance(chat_id: int, user_id: int, game_name: str, base_c
     try:
         from user_manager import get_user_data
         from diseases import get_active_diseases
+        from prestige import get_prestige_perks
         
         data = await get_user_data(chat_id, user_id)
         if data:
@@ -89,6 +96,10 @@ async def get_user_win_chance(chat_id: int, user_id: int, game_name: str, base_c
                 active_diseases = await get_active_diseases(chat_id, user_id, data)
                 if 'hpv' not in active_diseases:
                     target_chance += 10
+            
+            luck_bonus = get_prestige_perks(data).get("luck_bonus", 0)
+            if luck_bonus > 0:
+                target_chance += luck_bonus
     except Exception:
         pass
     

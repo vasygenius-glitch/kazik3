@@ -155,7 +155,7 @@ async def cmd_help(message: types.Message):
         "🛡 <b>КЛАНЫ:</b> <code>/clan</code>, "
         "<code>Брак</code>, <code>Развод</code>, <code>Подарок</code>.\n\n"
 
-        "🎰 <b>ИГРЫ:</b> <code>/rps</code>, <code>/poker</code>, <code>/crash</code>, <code>/bj</code>, <code>/slots</code>, "
+        "🎰 <b>ИГРЫ:</b> <code>/jackpot</code>, <code>/rps</code>, <code>/poker</code>, <code>/crash</code>, <code>/bj</code>, <code>/slots</code>, "
         "<code>/roulette</code>, <code>Вызвать на дуэль</code>, <code>/lottery</code>.\n\n"
 
         "👮 <b>АДМИНКА:</b> <code>мут</code>, <code>бан</code>, "

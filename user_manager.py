@@ -839,6 +839,10 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
             if total_wealth > threshold:
                 excess = total_wealth - threshold
                 luxury_tax = int(excess * 0.015)
+                # Применяем скидку на налоги от Престижа
+                tax_disc = pperks.get('tax_discount', 0) if prestige_level > 0 else 0
+                if tax_disc > 0:
+                    luxury_tax = int(luxury_tax * (1.0 - (tax_disc / 100.0)))
 
         subtotal = base_bonus + extra_income - tax_amt + card_boost
         prestige_boosted = int(subtotal * prestige_mult)
@@ -848,8 +852,8 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         if inventory.get('kovcheg', 0) > 0 or inventory.get('prestige_ark', 0) > 0:
             total = int(total * 1.2)
 
-        # Гарантируем, что налог на сверхкапитал не обнуляет базовый бонус
-        max_tax = max(0, total - base_bonus)
+        # Гарантируем, что налог на сверхкапитал не съедает весь заработок (максимум 25% от дохода и не обнуляет базовый бонус)
+        max_tax = min(max(0, total - base_bonus), int(total * 0.25))
         applied_luxury_tax = min(luxury_tax, max_tax)
         total = total - applied_luxury_tax
 
