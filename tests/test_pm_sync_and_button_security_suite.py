@@ -126,3 +126,50 @@ def test_casino_confirmation_checker():
     assert is_confirmation_callback("cas_conf_dice_250_7553529465")
     assert is_confirmation_callback("cas_cancel_7553529465")
     assert not is_confirmation_callback("some_other_callback")
+
+
+@pytest.mark.asyncio
+async def test_whitelist_middleware_execution():
+    """Проверяет, что WhitelistMiddleware корректно обрабатывает ЛС, группы и CallbackQuery без исключений."""
+    from whitelist_middleware import WhitelistMiddleware
+
+    mw = WhitelistMiddleware()
+    handler = AsyncMock(return_value="OK")
+
+    # 1. ЛС сообщение
+    pm_event = MagicMock()
+    pm_event.from_user = MagicMock(id=7553529465, full_name="User", username="user")
+    pm_event.chat = MagicMock(id=7553529465, type="private", title=None)
+    res_pm = await mw(handler, pm_event, {})
+    assert res_pm == "OK"
+
+    # 2. Групповое сообщение
+    group_event = MagicMock()
+    group_event.from_user = MagicMock(id=7553529465, full_name="User", username="user")
+    group_event.chat = MagicMock(id=-1002321279920, type="supergroup", title="Puxxzz chat")
+    group_event.text = "/balance"
+    group_event.caption = None
+    group_event.reply_to_message = None
+    group_event.forward_origin = None
+
+    with patch("whitelist_middleware.get_whitelist", AsyncMock(return_value=[-1002321279920])), \
+         patch("whitelist_middleware.get_spy_chats", AsyncMock(return_value=[])), \
+         patch("whitelist_middleware.is_spy_all_enabled", AsyncMock(return_value=False)), \
+         patch("whitelist_middleware.get_locked_chats", AsyncMock(return_value=[])):
+        res_group = await mw(handler, group_event, {})
+        assert res_group == "OK"
+
+    # 3. CallbackQuery в группе
+    cb_event = MagicMock()
+    cb_event.from_user = MagicMock(id=7553529465, full_name="User", username="user")
+    cb_event.chat = None
+    cb_event.message = MagicMock()
+    cb_event.message.chat = MagicMock(id=-1002321279920, type="supergroup", title="Puxxzz chat")
+
+    with patch("whitelist_middleware.get_whitelist", AsyncMock(return_value=[-1002321279920])), \
+         patch("whitelist_middleware.get_spy_chats", AsyncMock(return_value=[])), \
+         patch("whitelist_middleware.is_spy_all_enabled", AsyncMock(return_value=False)), \
+         patch("whitelist_middleware.get_locked_chats", AsyncMock(return_value=[])):
+        res_cb = await mw(handler, cb_event, {})
+        assert res_cb == "OK"
+

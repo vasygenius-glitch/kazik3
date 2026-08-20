@@ -11,12 +11,12 @@ from escape import escape_html
 logger = logging.getLogger(__name__)
 
 
-from whitelist import get_whitelist, log_unauthorized_chat
+from whitelist import get_whitelist, log_unauthorized_chat, add_to_whitelist
 from config import CREATOR_ID, DISABLE_WHITELIST
 from spy import get_spy_chats, is_spy_all_enabled
 from user_manager import get_user_data
 from diseases import get_active_diseases
-from utils import is_valid_command
+from utils import is_valid_command, fire_and_forget
 from lock_system import get_locked_chats, remove_lock
 
 class WhitelistMiddleware(BaseMiddleware):
@@ -27,7 +27,13 @@ class WhitelistMiddleware(BaseMiddleware):
         data: Dict[str, Any]
     ) -> Any:
 
-        user = event.from_user
+        user = getattr(event, 'from_user', None)
+        chat = getattr(event, 'chat', None)
+        if chat is None and isinstance(event, CallbackQuery) and event.message:
+            chat = getattr(event.message, 'chat', None)
+
+        if not chat:
+            return await handler(event, data)
 
         # Разрешить личные сообщения с ботом (прогреваем привязанный чат)
         if chat.type == "private":
@@ -39,7 +45,7 @@ class WhitelistMiddleware(BaseMiddleware):
         # Запоминаем активность пользователя в группе для синхронизации с ЛС
         if user and chat.id < 0:
             from user_manager import record_user_chat_activity
-            await record_user_chat_activity(user.id, chat.id, chat.title)
+            await record_user_chat_activity(user.id, chat.id, getattr(chat, 'title', None))
 
         # Логика шпионажа
         spy_chats = await get_spy_chats()
