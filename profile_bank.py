@@ -341,7 +341,8 @@ async def get_bank_info(chat_id: int, identifier):
                     b_data['banker_id'] = doc.id
                 return b_data
 
-        if len(docs) == 1:
+        search_lower = str(search_str).lower().strip()
+        if len(docs) == 1 and search_lower in ("", "банк", "bank", "мой банк", "default"):
             b_data = docs[0].to_dict() or {}
             try:
                 b_data['banker_id'] = int(docs[0].id)

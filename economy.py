@@ -719,13 +719,12 @@ async def cmd_work(message: types.Message):
 
     rand = secrets.SystemRandom()
     is_banker = data.get('is_banker', False)
-    base_earnings = (rand.randint(50, 350) if is_banker
-                     else rand.randint(100, 700))
+    base_earnings = int(rand.randint(100, 700) * 0.8) if is_banker else rand.randint(100, 700)
 
     # --- Бонус банкира ---
     bank_profit_msg = ""
     if is_banker:
-        contribution = rand.randint(1000, 5000)
+        contribution = rand.randint(500, 2000)
         try:
             from profile_bank import get_bank_info, create_or_update_bank
             bank_data = await get_bank_info(chat_id, user_id)
@@ -734,8 +733,8 @@ async def cmd_work(message: types.Message):
                     chat_id, user_id,
                     {'capital': bank_data.get('capital', 0) + contribution}
                 )
-                bank_profit_msg = (f"\n🏢 Ваша работа принесла банку "
-                                   f"<b>{contribution}</b> сыр.!")
+                bank_profit_msg = (f"\n🏢 Ваша деятельность принесла банку "
+                                   f"<b>+{contribution}</b> сыр. в капитал!")
         except Exception as e:
             logger.warning(f"Bank profit error: {e}")
 
@@ -904,10 +903,6 @@ async def cmd_crime(message: types.Message):
     data = await get_user_data(chat_id, user_id, full_name)
     if data.get('is_banned', False):
         return await message.answer("Ты в бане и не можешь совершать преступления.")
-    if data.get('is_banker', False):
-        return await message.answer(
-            "🏦 Вы — уважаемый Банкир. Воровать не по статусу."
-        )
 
     active_diseases = await get_active_diseases(chat_id, user_id)
 
@@ -966,7 +961,25 @@ async def cmd_crime(message: types.Message):
         return await message.answer(msg)
 
     # УСПЕХ
-    base_earnings = rand.randint(200, 500)
+    is_banker = data.get('is_banker', False)
+    base_earnings = int(rand.randint(200, 500) * 0.8) if is_banker else rand.randint(200, 500)
+
+    # Бонус банку от криминальных схем банкира
+    bank_profit_msg = ""
+    if is_banker:
+        contribution = rand.randint(500, 1500)
+        try:
+            from profile_bank import get_bank_info, create_or_update_bank
+            bank_data = await get_bank_info(chat_id, user_id)
+            if bank_data:
+                await create_or_update_bank(
+                    chat_id, user_id,
+                    {'capital': bank_data.get('capital', 0) + contribution}
+                )
+                bank_profit_msg = (f"\n🏢 Часть теневой добычи (<b>+{contribution}</b> сыр.) "
+                                   f"отмыта и зачислена в капитал вашего банка!")
+        except Exception as e:
+            logger.warning(f"Bank crime profit error: {e}")
 
     # Коллекторы
     final_earnings, collector_msg, dragon_blocked = await _process_collectors(
@@ -996,7 +1009,7 @@ async def cmd_crime(message: types.Message):
     afk_text = (
         f"🥷 <b>Успешное проникновение!</b> Ты нашёл "
         f"<b>{final_earnings}</b> сыр.{pet_msg}{lobby_msg}"
-        f"{collector_msg}{season_msg}"
+        f"{collector_msg}{bank_profit_msg}{season_msg}"
     )
     afk_text = await get_glitch_text(afk_text)
 
