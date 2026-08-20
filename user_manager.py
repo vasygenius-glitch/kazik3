@@ -762,7 +762,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
                 mult = 1.0 + BIZ_LEVEL_BONUS * (level - 1)
                 biz_income += int(item.get('income', 0) * mult) * min(count, BIZ_COUNT_CAP)
             elif atype == 'car':
-                car_income += int(item.get('income', 0)) * count
+                car_income += int(item.get('income', 0)) * min(count, BIZ_COUNT_CAP)
 
         # Банкиры платят 10% от пассивного дохода
         if data.get('is_banker', False):
@@ -849,7 +849,7 @@ async def check_and_give_bonus(chat_id, user_id, full_name=None):
         prestige_bonus_amount = max(0, prestige_boosted - subtotal)
         total = prestige_boosted
 
-        if inventory.get('kovcheg', 0) > 0 or inventory.get('prestige_ark', 0) > 0:
+        if is_daily and (inventory.get('kovcheg', 0) > 0 or inventory.get('prestige_ark', 0) > 0):
             total = int(total * 1.2)
 
         # Гарантируем, что налог на сверхкапитал не съедает весь заработок (максимум 25% от дохода и не обнуляет базовый бонус)

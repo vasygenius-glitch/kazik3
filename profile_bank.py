@@ -107,7 +107,13 @@ def set_bank_in_cache(chat_id, identifier, data):
 
 def invalidate_bank_cache(chat_id, banker_id=None, name=None):
     if banker_id is not None:
-        _bank_cache.pop((chat_id, str(banker_id).lower()), None)
+        target_bid = str(banker_id).lower()
+        _bank_cache.pop((chat_id, target_bid), None)
+        for (c_id, key), entry in list(_bank_cache.items()):
+            if c_id == chat_id:
+                b_id = str(entry.get("data", {}).get("banker_id", "")).lower()
+                if b_id == target_bid:
+                    _bank_cache.pop((c_id, key), None)
     if name:
         _bank_cache.pop((chat_id, str(name).lower()), None)
 
@@ -889,6 +895,8 @@ async def cmd_bank(message: types.Message):
         except Exception as e:
             print(f"Error in /bank withdraw block: {e}\n{traceback.format_exc()}")
             await message.answer(f"❌ Непредвиденная ошибка при снятии вклада:\n<code>{escape_html(str(e))}</code>")
+    elif action in ("upgrade", "upgrades", "улучшить", "улучшения"):
+        return await cmd_bank_stats(message)
     else:
         await message.answer("Неизвестное действие. Используйте /bank без аргументов для справки.")
 
