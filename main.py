@@ -155,6 +155,7 @@ async def on_startup(bot: Bot):
     from log_system import flush_logs
     from stocks import update_stocks_task
     from user_manager import flush_user_data_task
+    from seasons import season_rotator_task
     
     background_tasks.extend([
         asyncio.create_task(flush_logs(bot)),
@@ -164,6 +165,7 @@ async def on_startup(bot: Bot):
         asyncio.create_task(update_stocks_task()),
         asyncio.create_task(admin_alert_worker(bot)),
         asyncio.create_task(backup_database_task()),
+        asyncio.create_task(season_rotator_task(bot)),
     ])
     logger.info("Все фоновые задачи успешно инициализированы.")
 

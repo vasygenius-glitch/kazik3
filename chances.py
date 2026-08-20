@@ -28,14 +28,23 @@ async def get_game_chance(game_name: str) -> int:
             except Exception:
                 chance = _chances_cache.get(game_name, -1)
 
-    # Apply Summer Win Chance Boost
-    from config import SUMMER_COURAGE_ENABLED, SUMMER_WIN_CHANCE_BOOST
-    if SUMMER_COURAGE_ENABLED:
+    # Apply Season Win Chance Boost (Warhammer +15%, Summer, etc.)
+    try:
         from seasons import get_season_config
         cfg = await get_season_config()
-        if cfg.get("active") and cfg.get("id") == "summer":
-            base_chance = 35 if chance == -1 else chance
-            return base_chance + SUMMER_WIN_CHANCE_BOOST
+        if cfg and cfg.get("active"):
+            boost = cfg.get("game_win_chance_boost", 0)
+            if not boost and cfg.get("id") == "warhammer":
+                boost = 15
+            elif not boost and cfg.get("id") == "summer":
+                from config import SUMMER_COURAGE_ENABLED, SUMMER_WIN_CHANCE_BOOST
+                if SUMMER_COURAGE_ENABLED:
+                    boost = SUMMER_WIN_CHANCE_BOOST
+            if boost > 0:
+                base_chance = 35 if chance == -1 else chance
+                return min(100, base_chance + boost)
+    except Exception:
+        pass
 
     return chance
 

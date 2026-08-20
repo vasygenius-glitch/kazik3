@@ -1,7 +1,7 @@
 import time
 import random
 import asyncio
-from aiogram import Router, F, types
+from aiogram import Router, F, types, Bot
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramRetryAfter
 
@@ -147,8 +147,287 @@ SEASON_TEMPLATES = {
             {"chance": 0.05, "msg": "\n\n🔥 <b>ВЫ ОБОЖГЛИСЬ ПАРОМ!</b> Пришлось купить лед за -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
             {"chance": 0.08, "msg": "\n\n🧼 <b>ВЫ НАШЛИ ЭЛИТНОЕ МЫЛО!</b> Продали его за +{value} сыр.", "range": (2000, 8000)},
         ]
+    },
+    "warhammer": {
+        "id": "warhammer",
+        "name": "СЕЗОН 4: ВАРХАММЕР 40,000 (WARHAMMER)",
+        "emoji": "⚔️🛡️🦅",
+        "description": (
+            "Во тьме далекого будущего есть только война!\n\n"
+            "🦅 <b>БЛАГОСЛОВЕНИЕ ИМПЕРАТОРА:</b> Удача на вашей стороне! "
+            "Шанс выигрыша во всех играх казино увеличен на 15%!\n\n"
+            "📊 <b>ВЛИЯНИЕ НА МИР:</b>\n"
+            "📈 Базовый заработок: Стабильный (100%)\n"
+            "🍀 Благословение Бога-Императора: +15% к шансу выигрыша в играх!\n"
+            "💥 Произошел глобальный вайп экономики: наступила новая эпоха Крестового Похода!"
+        ),
+        "multiplier": 1.0,
+        "game_win_chance_boost": 15,
+        "glitch_chance": 0.0,
+        "strings": {
+            "tax": "🦅 Имперская десятина (Налог)",
+            "balance": "🪙 Имперские кредиты (Баланс)",
+            "shop": "🏛️ Арсенал Адептус Механикус",
+            "shop_biz": "🏭 Заводы Кузницы-Мира",
+            "shop_cars": "🚀 Боевой транспорт Астартес",
+            "work": "⚔️ Служба Империуму Человечества",
+            "crime": "💀 Еретическая контрабанда",
+            "bonus": "📜 Литания верности",
+            "profile": "УЧЕТНАЯ КАРТОЧКА СЛУЖИТЕЛЯ ИМПЕРИУМА",
+            "bank_label": "🛡️ Сейф Инквизиции",
+            "bank_title": "🏛️ БАНК СВЯЩЕННОЙ ТЕРРЫ",
+            "top_winner": "ВЕЛИКИЙ ИНКВИЗИТОР",
+            "bj_start": "🎰 КАЗИНО 'СВЯЩЕННАЯ АКВИЛА'",
+            "bj_win": "🎉 ТРИУМФ ИМПЕРИУМА!",
+            "roulette_start": "🌀 КОЛЕСО ОМНИССИИ...",
+            "job_list": [
+                "освящал священное снаряжение благовониями",
+                "нес вахту на оборонительной стене Кадии",
+                "составлял отчеты для Администратума",
+                "чистил болтер под молитву Богу-Машине"
+            ],
+            "stocks": {
+                "TECH": {"name": "Mechanicus Forges (TECH)", "ticker": "TECH", "desc": "Адептус Механикус: производство археотеха и вооружения."},
+                "NAV": {"name": "Navis Nobilite (NAV)", "ticker": "NAV", "desc": "Гильдия Навигаторов для безопасных варп-перелетов."},
+            }
+        },
+        "seasonal_disease": {"id": "warp_taint", "name": "Варп-мутация", "desc": "Шепот Хаоса в вашей голове..."},
+        "events": [
+            {"chance": 0.15, "msg": "\n\n🦅 <b>БЛАГОСЛОВЕНИЕ ИМПЕРАТОРА:</b> Вы нашли святую реликвию! Получено +{value} сыр.", "range": (5000, 15000)},
+            {"chance": 0.05, "msg": "\n\n💀 <b>ЗАСАДА КСЕНОСОВ:</b> Пришлось отстреливаться болтерами. Расходы на патроны: -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
+            {"chance": 0.08, "msg": "\n\n⚙️ <b>АРХЕОТЕХ МЕХАНИКУС:</b> Вы сдали древнюю деталь техножрецам за +{value} сыр.", "range": (2000, 8000)},
+            {"chance": 0.04, "msg": "\n\n📜 <b>ИНДУЛЬГЕНЦИЯ ЭККЛЕЗИАРХИИ:</b> Премия за ревностную службу +{value} сыр.", "range": (10000, 25000)},
+        ]
     }
 }
+
+import logging
+logger = logging.getLogger("seasons")
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-7s | seasons | %(message)s"))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+
+_season_transition_lock = asyncio.Lock()
+
+def _default_crypto_coins():
+    return {
+        "chsyr": {"name": "Китайская Сыроежка", "ticker": "CH_SYR",
+                  "prices": [random.randint(100, 500)], "creator": 0},
+        "espsyr": {"name": "Испанская Сыроежка", "ticker": "ESP_SYR",
+                   "prices": [random.randint(100, 500)], "creator": 0},
+    }
+
+async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int, int]:
+    """
+    Выполняет полный вайп экономики во всех чатах из whitelist:
+    - Балансы сбрасываются до 500
+    - Банковские вклады обнуляются (0)
+    - Долги, навыки, питомцы сбрасываются
+    - Инвентарь очищается, но сохраняются коллекционные дикторы (dictor_*)
+    - Казна кланов обнуляется
+    - Криптобиржа сбрасывается к начальным ценам
+    """
+    db = get_db()
+    if db is None:
+        return 0, 0
+
+    from whitelist import get_whitelist
+    from user_manager import _user_cache
+    
+    _user_cache.clear()
+    whitelist = await get_whitelist()
+    users_wiped, clans_wiped = 0, 0
+    batch_size = 500
+
+    # Сброс криптобиржи
+    try:
+        await db.collection("bot_settings").document("crypto_coins").set(
+            {"coins": _default_crypto_coins(), "last_update": int(time.time())}
+        )
+    except Exception as e:
+        logger.error("Ошибка сброса криптобиржи при вайпе: %s", e)
+
+    # Вайп пользователей и кланов по всем чатам
+    target_cids = list(whitelist.keys()) if isinstance(whitelist, dict) else list(whitelist)
+    for cid in target_cids:
+        try:
+            users_ref = db.collection("chats").document(str(cid)).collection("users")
+            user_docs = await users_ref.get()
+
+            batch = db.batch()
+            count = 0
+            for doc in user_docs:
+                if not doc.id:
+                    continue
+                doc_fields = {
+                    "balance": 500,
+                    "bank_deposit": 0,
+                    "debts": {},
+                    "skills": {},
+                    "pet": None,
+                }
+                if preserve_dictors:
+                    user_data = doc.to_dict() or {}
+                    curr_inv = user_data.get("inventory") or {}
+                    preserved = {k: v for k, v in curr_inv.items() if str(k).startswith("dictor_")}
+                    doc_fields["inventory"] = preserved
+                else:
+                    doc_fields["inventory"] = {}
+
+                batch.set(users_ref.document(doc.id), doc_fields, merge=True)
+                users_wiped += 1
+                count += 1
+                if count >= batch_size:
+                    await batch.commit()
+                    batch = db.batch()
+                    count = 0
+
+            # Вайп кланов
+            clans_ref = db.collection("chats").document(str(cid)).collection("clans")
+            for cdoc in await clans_ref.get():
+                if not cdoc.id:
+                    continue
+                batch.set(clans_ref.document(cdoc.id), {"treasury": 0}, merge=True)
+                clans_wiped += 1
+                count += 1
+                if count >= batch_size:
+                    await batch.commit()
+                    batch = db.batch()
+                    count = 0
+
+            if count > 0:
+                await batch.commit()
+        except Exception as err:
+            logger.error("Ошибка вайпа чата %s: %s", cid, err)
+
+    _user_cache.clear()
+    logger.info("Глобальный вайп завершен: обнулено игроков: %s, кланов: %s (дикторы сохранены: %s)",
+                users_wiped, clans_wiped, preserve_dictors)
+    return users_wiped, clans_wiped
+
+async def perform_season_transition(bot: Bot = None, new_season_id: str = "warhammer",
+                                    do_wipe: bool = True, duration_days: int = 30) -> dict:
+    """
+    Выполняет атомарный переход на новый сезон:
+    1. Проверяет однократность выполнения вайпа через last_wiped_season
+    2. Устанавливает конфигурацию нового сезона в БД
+    3. Выполняет полный вайп экономики (если do_wipe=True)
+    4. Рассылает торжественный анонс во все чаты белого списка
+    """
+    async with _season_transition_lock:
+        if new_season_id not in SEASON_TEMPLATES:
+            raise ValueError(f"Неизвестный шаблон сезона: {new_season_id}")
+
+        db = get_db()
+        if db is None:
+            return {"status": "error", "message": "БД недоступна"}
+
+        # Проверка персистентного состояния, чтобы вайп был строго одноразовым
+        try:
+            state_doc = await db.collection("bot_settings").document("season").get()
+            current_data = state_doc.to_dict() if state_doc.exists else {}
+            if current_data.get("last_wiped_season") == new_season_id and current_data.get("id") == new_season_id:
+                logger.warning("Сезон %s уже активен и вайп уже был произведен ранее.", new_season_id)
+                return {"status": "already_executed", "season": new_season_id}
+        except Exception as e:
+            logger.warning("Не удалось проверить season_state: %s", e)
+
+        new_cfg = SEASON_TEMPLATES[new_season_id].copy()
+        new_cfg["active"] = True
+        new_cfg["end_time"] = int(time.time()) + 86400 * duration_days
+        new_cfg["last_wiped_season"] = new_season_id
+        new_cfg["wiped_at"] = int(time.time())
+
+        await db.collection("bot_settings").document("season").set(new_cfg)
+        global_cache.delete("current_season")
+
+        users_wiped, clans_wiped = 0, 0
+        if do_wipe:
+            users_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True)
+
+        announce_text = (
+            f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"⚔️ <b>ЭПОХА ВАРХАММЕРА НАСТАЛА!</b> ⚔️\n\n"
+            f"💥 <b>ГЛОБАЛЬНЫЙ ВАЙП ЭКОНОМИКИ ЗАВЕРШЕН:</b>\n"
+            f"• Балансы всех игроков сброшены до <b>500 сыр.</b>\n"
+            f"• Вклады, долги и казна кланов обнулены\n"
+            f"• 🖤🐇 Коллекционные Дикторы из Сезона 3 сохранены в вашем /inventory!\n\n"
+            f"🦅 <b>БОНУС СЕЗОНА:</b>\n"
+            f"🍀 <b>+15% к шансу выигрыша</b> во всех играх казино (Благословение Императора)!\n\n"
+            f"👉 Подробнее: <code>/season</code>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        )
+
+        if bot:
+            from whitelist import get_whitelist
+            whitelist = await get_whitelist()
+            target_chats = list(whitelist.keys()) if isinstance(whitelist, dict) else list(whitelist)
+
+            async def broadcast_new_season():
+                sent = 0
+                for chat_id in target_chats:
+                    try:
+                        await bot.send_message(chat_id=chat_id, text=announce_text)
+                        sent += 1
+                        await asyncio.sleep(0.1)
+                    except Exception:
+                        continue
+                try:
+                    await bot.send_message(
+                        CREATOR_ID,
+                        f"📢 <b>АВТОМАТИЧЕСКАЯ РОТАЦИЯ СЕЗОНА ЗАВЕРШЕНА!</b>\n"
+                        f"🏆 Новый сезон: <b>{new_season_id}</b>\n"
+                        f"🧹 Обнулено игроков: <b>{users_wiped}</b>, кланов: <b>{clans_wiped}</b>\n"
+                        f"📢 Оповещено чатов: <b>{sent}</b>"
+                    )
+                except Exception:
+                    pass
+
+            from utils import fire_and_forget
+            fire_and_forget(broadcast_new_season())
+
+        return {
+            "status": "success",
+            "season": new_season_id,
+            "users_wiped": users_wiped,
+            "clans_wiped": clans_wiped,
+        }
+
+async def season_rotator_task(bot: Bot):
+    """
+    Фоновый воркер автоматической ротации сезонов.
+    Проверяет истечение срока текущего сезона (end_time) и запускает переход на Warhammer с вайпом.
+    """
+    logger.info("🛡️ Фоновый воркер ротации сезонов запущен.")
+    while True:
+        try:
+            await asyncio.sleep(30)
+            cfg = await get_season_config()
+            if not cfg or not cfg.get("active"):
+                continue
+
+            end_time = cfg.get("end_time", 0)
+            now = int(time.time())
+
+            if end_time > 0 and now >= end_time:
+                current_id = cfg.get("id", "")
+                if current_id != "warhammer":
+                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Warhammer...",
+                                current_id, now, end_time)
+                    await perform_season_transition(bot, new_season_id="warhammer", do_wipe=True)
+                else:
+                    if cfg.get("last_wiped_season") != "warhammer":
+                        logger.info("⏳ Сезон warhammer активен, но вайп еще не был зафиксирован. Запуск вайпа...")
+                        await perform_season_transition(bot, new_season_id="warhammer", do_wipe=True)
+        except asyncio.CancelledError:
+            logger.info("Фоновый воркер ротации сезонов остановлен.")
+            break
+        except Exception as e:
+            logger.error("Ошибка в фоновом воркере ротации сезонов: %s", e)
+            await asyncio.sleep(10)
 
 async def get_season_config():
     cached = global_cache.get("current_season")
@@ -159,7 +438,7 @@ async def get_season_config():
         return {"active": False}
         
     # Check if db is a unittest mock
-    if type(db).__name__ in ('MagicMock', 'AsyncMock', 'Mock') or hasattr(db, '_mock_return_value'):
+    if type(db).__name__ in ('MagicMock', 'AsyncMock', 'Mock') or hasattr(doc_db := db, '_mock_return_value'):
         return {"active": False}
         
     try:
@@ -206,6 +485,14 @@ async def cmd_season(message: types.Message):
     )
     await message.answer(text)
 
+@router.message(Command("force_season_rotate"))
+async def cmd_force_season_rotate(message: types.Message):
+    """Принудительная ротация на сезон Warhammer с вайпом (только для создателя)."""
+    if message.from_user.id != CREATOR_ID:
+        return
+    res = await perform_season_transition(message.bot, new_season_id="warhammer", do_wipe=True)
+    await message.answer(f"✅ Принудительная ротация выполнена: {res}")
+
 @router.message(Command("set_season", "start_season_1"))
 async def cmd_set_season(message: types.Message):
     if message.from_user.id != CREATOR_ID: return
@@ -215,7 +502,7 @@ async def cmd_set_season(message: types.Message):
         season_id = "backrooms"
     elif len(args) < 2:
         keys = ", ".join(SEASON_TEMPLATES.keys())
-        return await message.answer(f"Использование: <code>/set_season [id]</code>\nДоступные: <code>{keys}</code>")
+        return await message.answer(f"Использование: <code>/set_season [id] [wipe: yes/no]</code>\nДоступные: <code>{keys}</code>")
     else:
         season_id = args[1].lower()
     
@@ -226,6 +513,14 @@ async def cmd_set_season(message: types.Message):
         return await message.answer("🛑 <b>Сезонный режим отключен.</b>")
     
     if season_id not in SEASON_TEMPLATES: return await message.answer("❌ Шаблон не найден.")
+
+    do_wipe = False
+    if len(args) >= 3 and args[2].lower() in ("wipe", "yes", "true", "1"):
+        do_wipe = True
+
+    if season_id == "warhammer" and do_wipe:
+        res = await perform_season_transition(message.bot, new_season_id="warhammer", do_wipe=True)
+        return await message.answer(f"✅ <b>Сезон 'warhammer' активирован с вайпом!</b>\nРезультат: {res}")
     
     new_cfg = SEASON_TEMPLATES[season_id].copy()
     new_cfg["active"] = True
