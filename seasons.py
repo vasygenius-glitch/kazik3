@@ -219,29 +219,41 @@ def _default_crypto_coins():
                    "prices": [random.randint(100, 500)], "creator": 0},
     }
 
-async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int, int]:
+async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int, int, int]:
     """
-    Выполняет полный вайп экономики во всех чатах из whitelist:
-    - Балансы сбрасываются до 500
-    - Банковские вклады обнуляются (0)
-    - Долги, навыки, питомцы сбрасываются
-    - Инвентарь очищается, но сохраняются коллекционные дикторы (dictor_*)
-    - Казна кланов обнуляется
-    - Криптобиржа сбрасывается к начальным ценам
+    Выполняет ПОЛНЫЙ ТОТАЛЬНЫЙ вайп экономики во всех чатах:
+    1. Игроки:
+       - Балансы сбрасываются до 500 сыр.
+       - Банковские вклады обнуляются (0)
+       - Статус банкира и привязка к банку сбрасываются (is_banker=False, bank_name=None)
+       - Бизнесы (biz_levels), портфель акций (stocks_portfolio) очищаются
+       - Долги, навыки, питомцы, престиж и карты сбрасываются
+       - ИНВЕНТАРЬ: сохраняются ТОЛЬКО коллекционные дикторы (dictor_*), все остальные предметы удаляются!
+    2. Банки:
+       - Полное удаление / сброс всех документов в коллекции 'banks' каждого чата
+       - Очистка кэша банков (_bank_cache)
+    3. Кланы:
+       - Казна кланов обнуляется (0)
+    4. Криптовалюта и акции:
+       - Сброс биржи криптовалют к начальным значениям
+       - Сброс котировок акций к базовым ценам
     """
     db = get_db()
     if db is None:
-        return 0, 0
+        return 0, 0, 0
 
     from whitelist import get_whitelist
     from user_manager import _user_cache
+    from profile_bank import _bank_cache
     
     _user_cache.clear()
+    _bank_cache.clear()
+    
     whitelist = await get_whitelist()
-    users_wiped, clans_wiped = 0, 0
-    batch_size = 500
+    users_wiped, banks_wiped, clans_wiped = 0, 0, 0
+    batch_size = 400
 
-    # Сброс криптобиржи
+    # 1. Сброс криптобиржи
     try:
         await db.collection("bot_settings").document("crypto_coins").set(
             {"coins": _default_crypto_coins(), "last_update": int(time.time())}
@@ -249,63 +261,120 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int,
     except Exception as e:
         logger.error("Ошибка сброса криптобиржи при вайпе: %s", e)
 
-    # Вайп пользователей и кланов по всем чатам
+    # 2. Сброс фондовой биржи акций
+    try:
+        from stocks import COMPANIES
+        stocks_data = {
+            "last_update": int(time.time()),
+            "prices": {cid_key: [random.randint(1000, 5000)] for cid_key in COMPANIES},
+            "news": "Рынок открылся после сезонного сброса."
+        }
+        await db.collection("bot_settings").document("stocks").set(stocks_data)
+    except Exception as e:
+        logger.error("Ошибка сброса фондовой биржи при вайпе: %s", e)
+
+    # 3. Вайп пользователей, банков и кланов по всем чатам
     target_cids = list(whitelist.keys()) if isinstance(whitelist, dict) else list(whitelist)
+    try:
+        chats_col = await db.collection("chats").get()
+        all_cids = set(str(k) for k in target_cids)
+        for cdoc in chats_col:
+            if cdoc.id:
+                all_cids.add(str(cdoc.id))
+        target_cids = list(all_cids)
+    except Exception:
+        pass
+
     for cid in target_cids:
         try:
-            users_ref = db.collection("chats").document(str(cid)).collection("users")
-            user_docs = await users_ref.get()
+            chat_doc_ref = db.collection("chats").document(str(cid))
 
-            batch = db.batch()
-            count = 0
-            for doc in user_docs:
-                if not doc.id:
+            # --- А. ВАЙП БАНКОВ ЧАТА ---
+            banks_ref = chat_doc_ref.collection("banks")
+            for bdoc in await banks_ref.get():
+                if not bdoc.id:
                     continue
-                doc_fields = {
-                    "balance": 500,
-                    "bank_deposit": 0,
-                    "debts": {},
-                    "skills": {},
-                    "pet": None,
-                }
-                if preserve_dictors:
-                    user_data = doc.to_dict() or {}
-                    curr_inv = user_data.get("inventory") or {}
-                    preserved = {k: v for k, v in curr_inv.items() if str(k).startswith("dictor_")}
-                    doc_fields["inventory"] = preserved
-                else:
-                    doc_fields["inventory"] = {}
+                try:
+                    await banks_ref.document(bdoc.id).delete()
+                    banks_wiped += 1
+                except Exception:
+                    pass
 
-                batch.set(users_ref.document(doc.id), doc_fields, merge=True)
-                users_wiped += 1
-                count += 1
-                if count >= batch_size:
-                    await batch.commit()
-                    batch = db.batch()
-                    count = 0
-
-            # Вайп кланов
-            clans_ref = db.collection("chats").document(str(cid)).collection("clans")
+            # --- Б. ВАЙП КЛАНОВ ЧАТА ---
+            clans_ref = chat_doc_ref.collection("clans")
+            c_batch = db.batch()
+            c_count = 0
             for cdoc in await clans_ref.get():
                 if not cdoc.id:
                     continue
-                batch.set(clans_ref.document(cdoc.id), {"treasury": 0}, merge=True)
+                c_batch.set(clans_ref.document(cdoc.id), {"treasury": 0}, merge=True)
                 clans_wiped += 1
-                count += 1
-                if count >= batch_size:
-                    await batch.commit()
-                    batch = db.batch()
-                    count = 0
+                c_count += 1
+                if c_count >= batch_size:
+                    await c_batch.commit()
+                    c_batch = db.batch()
+                    c_count = 0
+            if c_count > 0:
+                await c_batch.commit()
 
-            if count > 0:
-                await batch.commit()
+            # --- В. ВАЙП ПОЛЬЗОВАТЕЛЕЙ ЧАТА ---
+            users_ref = chat_doc_ref.collection("users")
+            user_docs = await users_ref.get()
+
+            u_batch = db.batch()
+            u_count = 0
+            for doc in user_docs:
+                if not doc.id:
+                    continue
+                user_data = doc.to_dict() or {}
+                
+                # Сохранение ТОЛЬКО дикторов
+                if preserve_dictors:
+                    curr_inv = user_data.get("inventory") or {}
+                    preserved = {k: v for k, v in curr_inv.items() if str(k).startswith("dictor_")}
+                else:
+                    preserved = {}
+
+                doc_fields = {
+                    "balance": 500,
+                    "bank_deposit": 0,
+                    "bank_name": None,
+                    "is_banker": False,
+                    "inventory": preserved,
+                    "biz_levels": {},
+                    "stocks_portfolio": {},
+                    "debts": {},
+                    "skills": {},
+                    "pet": None,
+                    "escort_count": 0,
+                    "meme_cards": {},
+                    "opened_cases_count": 0,
+                    "prestige_level": 0,
+                    "prestige_coins": 0,
+                    "prestige_inventory": {},
+                    "prestige_biz_levels": {},
+                    "unsettled_transfers": [],
+                }
+
+                u_batch.set(users_ref.document(doc.id), doc_fields, merge=True)
+                users_wiped += 1
+                u_count += 1
+                if u_count >= batch_size:
+                    await u_batch.commit()
+                    u_batch = db.batch()
+                    u_count = 0
+
+            if u_count > 0:
+                await u_batch.commit()
+
         except Exception as err:
             logger.error("Ошибка вайпа чата %s: %s", cid, err)
 
     _user_cache.clear()
-    logger.info("Глобальный вайп завершен: обнулено игроков: %s, кланов: %s (дикторы сохранены: %s)",
-                users_wiped, clans_wiped, preserve_dictors)
-    return users_wiped, clans_wiped
+    _bank_cache.clear()
+    logger.info("Глобальный ТОТАЛЬНЫЙ вайп завершен: обнулено игроков: %s, банков: %s, кланов: %s (дикторы сохранены: %s)",
+                users_wiped, banks_wiped, clans_wiped, preserve_dictors)
+    return users_wiped, banks_wiped, clans_wiped
 
 async def perform_season_transition(bot: Bot = None, new_season_id: str = "warhammer",
                                     do_wipe: bool = True, duration_days: int = 30) -> dict:
@@ -343,9 +412,9 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "warha
         await db.collection("bot_settings").document("season").set(new_cfg)
         global_cache.delete("current_season")
 
-        users_wiped, clans_wiped = 0, 0
+        users_wiped, banks_wiped, clans_wiped = 0, 0, 0
         if do_wipe:
-            users_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True)
+            users_wiped, banks_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True)
 
         announce_text = (
             f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
@@ -353,7 +422,7 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "warha
             f"⚔️ <b>ЭПОХА ВАРХАММЕРА НАСТАЛА!</b> ⚔️\n\n"
             f"💥 <b>ГЛОБАЛЬНЫЙ ВАЙП ЭКОНОМИКИ ЗАВЕРШЕН:</b>\n"
             f"• Балансы всех игроков сброшены до <b>500 сыр.</b>\n"
-            f"• Вклады, долги и казна кланов обнулены\n"
+            f"• Вклады, банки, долги и казна кланов обнулены\n"
             f"• 🖤🐇 Коллекционные Дикторы из Сезона 3 сохранены в вашем /inventory!\n\n"
             f"🦅 <b>БОНУС СЕЗОНА:</b>\n"
             f"🍀 <b>+15% к шансу выигрыша</b> во всех играх казино (Благословение Императора)!\n\n"
@@ -380,7 +449,7 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "warha
                         CREATOR_ID,
                         f"📢 <b>АВТОМАТИЧЕСКАЯ РОТАЦИЯ СЕЗОНА ЗАВЕРШЕНА!</b>\n"
                         f"🏆 Новый сезон: <b>{new_season_id}</b>\n"
-                        f"🧹 Обнулено игроков: <b>{users_wiped}</b>, кланов: <b>{clans_wiped}</b>\n"
+                        f"🧹 Обнулено игроков: <b>{users_wiped}</b>, банков: <b>{banks_wiped}</b>, кланов: <b>{clans_wiped}</b>\n"
                         f"📢 Оповещено чатов: <b>{sent}</b>"
                     )
                 except Exception:
@@ -393,6 +462,7 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "warha
             "status": "success",
             "season": new_season_id,
             "users_wiped": users_wiped,
+            "banks_wiped": banks_wiped,
             "clans_wiped": clans_wiped,
         }
 
@@ -492,6 +562,15 @@ async def cmd_force_season_rotate(message: types.Message):
         return
     res = await perform_season_transition(message.bot, new_season_id="warhammer", do_wipe=True)
     await message.answer(f"✅ Принудительная ротация выполнена: {res}")
+
+@router.message(Command("hard_wipe"))
+async def cmd_hard_wipe(message: types.Message):
+    """Полный сброс всех балансов, банков, кланов с сохранением дикторов."""
+    if message.from_user.id != CREATOR_ID:
+        return
+    msg = await message.answer("🔄 <i>Выполняю полный вайп экономики (банки, балансы, кланы)...</i>")
+    users, banks, clans = await execute_full_economy_wipe(preserve_dictors=True)
+    await msg.edit_text(f"✅ <b>Вайп завершен!</b>\n👤 Игроков: <b>{users}</b>\n🏛️ Банков удалено: <b>{banks}</b>\n🛡 Кланов: <b>{clans}</b>\n🖤🐇 Дикторы сохранены.")
 
 @router.message(Command("set_season", "start_season_1"))
 async def cmd_set_season(message: types.Message):

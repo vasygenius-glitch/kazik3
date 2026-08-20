@@ -135,6 +135,9 @@ class FakeDocRef:
         else:
             self.col._docs[self.doc_id] = data
 
+    async def delete(self):
+        self.col._docs.pop(self.doc_id, None)
+
     async def get(self):
         d = self.col._docs.get(self.doc_id, {})
         class DocRes:
@@ -188,12 +191,15 @@ class FakeChatDoc:
         self.cid = cid
         self.users = FakeCollection()
         self.clans = FakeCollection()
+        self.banks = FakeCollection()
 
     def collection(self, name):
         if name == "users":
             return self.users
         elif name == "clans":
             return self.clans
+        elif name == "banks":
+            return self.banks
         return FakeCollection()
 
 
@@ -222,12 +228,14 @@ async def test_execute_full_economy_wipe_preserves_dictors(monkeypatch):
         "inventory": {"chips": 5}
     }
     chat_doc.clans._docs["clan1"] = {"name": "TopClan", "treasury": 1000000}
+    chat_doc.banks._docs["bank1"] = {"name": "OldBank", "capital": 500000000}
 
     monkeypatch.setattr("seasons.get_db", lambda: fake_db)
     monkeypatch.setattr("whitelist.get_whitelist", AsyncMock(return_value={"100": "Test Group"}))
 
-    users_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True)
+    users_wiped, banks_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True)
     assert users_wiped == 2
+    assert banks_wiped == 1
     assert clans_wiped == 1
 
     u1 = chat_doc.users._docs["user1"]
