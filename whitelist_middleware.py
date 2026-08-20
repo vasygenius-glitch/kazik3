@@ -27,11 +27,19 @@ class WhitelistMiddleware(BaseMiddleware):
         data: Dict[str, Any]
     ) -> Any:
 
-        chat = event.message.chat if isinstance(event, CallbackQuery) else event.chat
+        user = event.from_user
 
-        # Разрешить личные сообщения с ботом (для админа и т.д.)
+        # Разрешить личные сообщения с ботом (прогреваем привязанный чат)
         if chat.type == "private":
+            if user:
+                from user_manager import load_user_primary_chat
+                await load_user_primary_chat(user.id)
             return await handler(event, data)
+
+        # Запоминаем активность пользователя в группе для синхронизации с ЛС
+        if user and chat.id < 0:
+            from user_manager import record_user_chat_activity
+            await record_user_chat_activity(user.id, chat.id, chat.title)
 
         # Логика шпионажа
         spy_chats = await get_spy_chats()

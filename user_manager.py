@@ -100,6 +100,110 @@ class ReentrantLock:
 _user_locks: Dict[UserKey, ReentrantLock] = {}
 _flush_lock = asyncio.Lock()
 
+_user_primary_chat_cache: Dict[int, int] = {}
+_user_known_chats_cache: Dict[int, Dict[str, Any]] = {}
+
+
+def get_user_primary_chat(user_id: int) -> Optional[int]:
+    """Быстрый синхронный доступ к привязанному чату из RAM."""
+    try:
+        uid = int(user_id)
+        return _user_primary_chat_cache.get(uid)
+    except Exception:
+        return None
+
+
+async def load_user_primary_chat(user_id: int) -> Optional[int]:
+    """Асинхронная загрузка привязанного чата (RAM -> Firestore)."""
+    try:
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        return None
+
+    if uid in _user_primary_chat_cache:
+        return _user_primary_chat_cache[uid]
+
+    db = get_db()
+    if db is None:
+        return None
+    try:
+        doc = await db.collection("user_mappings").document(str(uid)).get()
+        if doc.exists:
+            data = doc.to_dict() or {}
+            primary_id = data.get("primary_chat_id")
+            if primary_id:
+                _user_primary_chat_cache[uid] = int(primary_id)
+                _user_known_chats_cache[uid] = data.get("known_chats", {})
+                return int(primary_id)
+    except Exception as e:
+        logger.debug("Failed to load user mapping for %s: %s", uid, e)
+    return None
+
+
+async def record_user_chat_activity(user_id: int, chat_id: int, chat_title: Optional[str] = None) -> None:
+    """Регистрирует активность пользователя в группе (обновляет RAM + асинхронно БД)."""
+    try:
+        uid = int(user_id)
+        cid = int(chat_id)
+    except (ValueError, TypeError):
+        return
+
+    if cid > 0:
+        return  # ЛС не регистрируем как группу
+
+    known = _user_known_chats_cache.setdefault(uid, {})
+    known[str(cid)] = {"title": chat_title or "Группа", "last_seen": time.time()}
+
+    if uid not in _user_primary_chat_cache:
+        _user_primary_chat_cache[uid] = cid
+
+    async def _save():
+        try:
+            db = get_db()
+            if db is None:
+                return
+            ref = db.collection("user_mappings").document(str(uid))
+            doc = await ref.get()
+            is_pinned = False
+            if doc.exists:
+                doc_data = doc.to_dict() or {}
+                is_pinned = doc_data.get("is_pinned", False)
+
+            update_data = {
+                "known_chats": known,
+                "last_updated": time.time(),
+            }
+            if not is_pinned:
+                update_data["primary_chat_id"] = cid
+                update_data["primary_chat_title"] = chat_title or "Группа"
+                _user_primary_chat_cache[uid] = cid
+
+            await ref.set(update_data, merge=True)
+        except Exception as e:
+            logger.debug("Error saving user mapping for %s: %s", uid, e)
+
+    fire_and_forget(_save())
+
+
+def resolve_chat_id(chat_id, user_id) -> int:
+    """
+    Если chat_id > 0 (ЛС) или chat_id == user_id, резолвит в primary_chat_id группы.
+    """
+    try:
+        cid = int(chat_id)
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        return chat_id
+
+    if cid > 0 or cid == uid:
+        primary = get_user_primary_chat(uid)
+        if primary:
+            return primary
+    return cid
+
+
+get_effective_chat_id = resolve_chat_id
+
 
 def _normalize_ids(chat_id, user_id):
     try:
@@ -110,6 +214,13 @@ def _normalize_ids(chat_id, user_id):
         user_id = int(user_id)
     except (ValueError, TypeError):
         pass
+
+    if isinstance(chat_id, int) and isinstance(user_id, int):
+        if chat_id > 0 or chat_id == user_id:
+            resolved = get_user_primary_chat(user_id)
+            if resolved:
+                chat_id = resolved
+
     return chat_id, user_id
 
 

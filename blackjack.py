@@ -76,9 +76,15 @@ async def cmd_bj(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("cas_conf_blackjack_"))
 async def process_bj_confirm(callback: types.CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
     try:
-        bet = int(callback.data.split("_")[3])
-    except: return
+        bet = int(parts[3])
+        owner_id = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else None
+    except Exception:
+        return
+
+    if owner_id and callback.from_user.id != owner_id:
+        return await callback.answer("⛔ Это не ваша игра!", show_alert=True)
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
     message_id = callback.message.message_id
@@ -142,7 +148,8 @@ async def process_bj_hit(callback: types.CallbackQuery, state: FSMContext):
     if await state.get_state() != BlackjackState.playing.state: return await callback.answer()
     game = await state.get_data()
     if game.get('processing'): return await callback.answer()
-    if callback.from_user.id != game['user_id']: return await callback.answer()
+    if callback.from_user.id != game['user_id']:
+        return await callback.answer("⚠️ Это не ваша игра!", show_alert=True)
 
     # Train AI on player choosing hit ('h')
     try:
@@ -194,7 +201,8 @@ async def process_bj_stand(callback: types.CallbackQuery, state: FSMContext):
     if await state.get_state() != BlackjackState.playing.state: return await callback.answer()
     game = await state.get_data()
     if game.get('processing'): return await callback.answer()
-    if callback.from_user.id != game['user_id']: return await callback.answer()
+    if callback.from_user.id != game['user_id']:
+        return await callback.answer("⚠️ Это не ваша игра!", show_alert=True)
     
     await state.update_data(processing=True)
     

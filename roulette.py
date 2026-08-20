@@ -56,8 +56,17 @@ async def process_roulette_confirm(callback: types.CallbackQuery):
     parts = callback.data.split("_")
     try:
         bet = int(parts[3])
-        guess = int(parts[4])
-    except: return
+        if len(parts) >= 6 and parts[4].isdigit() and parts[5].isdigit():
+            owner_id = int(parts[4])
+            guess = int(parts[5])
+        else:
+            guess = int(parts[4])
+            owner_id = int(parts[5]) if len(parts) > 5 and parts[5].isdigit() else None
+    except Exception:
+        return
+
+    if owner_id and callback.from_user.id != owner_id:
+        return await callback.answer("⛔ Это не ваша игра!", show_alert=True)
     
     chat_id, user_id = callback.message.chat.id, callback.from_user.id
     message_id = callback.message.message_id

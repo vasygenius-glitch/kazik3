@@ -46,7 +46,7 @@ async def ask_casino_confirmation(message: types.Message, game_name: str, bet: i
         cb_data += f"_{v}"
     
     builder.button(text="✅ Подтвердить ставку", callback_data=cb_data)
-    builder.button(text="❌ Отмена", callback_data="cas_cancel")
+    builder.button(text="❌ Отмена", callback_data=f"cas_cancel_{message.from_user.id}")
     builder.adjust(1)
     
     await message.answer(

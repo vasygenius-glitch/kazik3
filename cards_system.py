@@ -341,14 +341,15 @@ def build_shop_text(balance: int) -> str:
     )
 
 
-def build_shop_keyboard() -> InlineKeyboardMarkup:
+def build_shop_keyboard(user_id: Optional[int] = None) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
     for case_id, case in CASES.items():
         builder.button(
             text=f"{case['name']} — {fmt_num(case['price'])} сыр.",
-            callback_data=f"card_buy_{case_id}",
+            callback_data=f"card_buy_{case_id}{uid_suffix}",
         )
-    builder.button(text="🎒 Моя Коллекция", callback_data="card_page_0")
+    builder.button(text="🎒 Моя Коллекция", callback_data=f"card_page_0{uid_suffix}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -491,10 +492,16 @@ async def cmd_free_case(message: types.Message):
     await send_card_message(message, card_id, result_text)
 
 
-@router.callback_query(F.data == "open_free_case_cb")
+@router.callback_query(F.data.startswith("open_free_case_cb"))
 async def callback_open_free_case(callback: CallbackQuery):
     if callback.message is None:
         return await callback.answer()
+
+    parts = callback.data.split("_")
+    if len(parts) >= 5 and parts[4].isdigit():
+        owner_id = int(parts[4])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваша кнопка!", show_alert=True)
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
@@ -552,21 +559,26 @@ async def callback_open_free_case(callback: CallbackQuery):
 
 @router.message(Command("cases", "card_shop", "кейсы"))
 async def cmd_cases(message: types.Message):
-
     data = await get_user_data(message.chat.id, message.from_user.id, message.from_user.full_name)
     if data.get("is_banned"):
         return
 
     await message.answer(
         build_shop_text(data.get("balance", 0)),
-        reply_markup=build_shop_keyboard(),
+        reply_markup=build_shop_keyboard(user_id=message.from_user.id),
     )
 
 
-@router.callback_query(F.data == "card_shop_back")
+@router.callback_query(F.data.startswith("card_shop_back"))
 async def callback_shop_back(callback: CallbackQuery):
     if callback.message is None:
         return await callback.answer()
+
+    parts = callback.data.split("_")
+    if len(parts) >= 4 and parts[3].isdigit():
+        owner_id = int(parts[3])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню!", show_alert=True)
 
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
     if data.get("is_banned"):
@@ -575,7 +587,7 @@ async def callback_shop_back(callback: CallbackQuery):
     try:
         await callback.message.edit_text(
             build_shop_text(data.get("balance", 0)),
-            reply_markup=build_shop_keyboard(),
+            reply_markup=build_shop_keyboard(user_id=callback.from_user.id),
         )
     except Exception:
         pass
@@ -600,7 +612,16 @@ async def callback_buy_case(callback: CallbackQuery):
     if callback.message is None:
         return await callback.answer("Сообщение устарело, вызовите /cases заново.", show_alert=True)
 
-    case_id = callback.data.removeprefix("card_buy_")
+    raw_data = callback.data.removeprefix("card_buy_")
+    parts = raw_data.split("_")
+    if len(parts) >= 2 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        case_id = "_".join(parts[:-1])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню кейсов!", show_alert=True)
+    else:
+        case_id = raw_data
+
     case_info = CASES.get(case_id)
     if not case_info:
         return await callback.answer("Кейс не найден.", show_alert=True)
@@ -670,7 +691,7 @@ async def cmd_cards(message: types.Message):
     if data.get("is_banned"):
         return
 
-    await render_collection_page(message, data, page=0, as_new=True)
+    await render_collection_page(message, data, page=0, as_new=True, user_id=message.from_user.id)
 
 
 @router.callback_query(F.data.startswith("card_page_"))
@@ -679,8 +700,18 @@ async def callback_card_page(callback: CallbackQuery):
         if callback.message is None:
             return await callback.answer()
 
+        raw_data = callback.data.removeprefix("card_page_")
+        parts = raw_data.split("_")
+        if len(parts) >= 2 and parts[-1].isdigit():
+            owner_id = int(parts[-1])
+            page_str = parts[0]
+            if callback.from_user.id != owner_id:
+                return await callback.answer("⚠️ Это не ваша коллекция!", show_alert=True)
+        else:
+            page_str = raw_data
+
         try:
-            page = int(callback.data.removeprefix("card_page_"))
+            page = int(page_str)
         except ValueError:
             return await callback.answer("Некорректная страница.", show_alert=True)
 
@@ -688,7 +719,7 @@ async def callback_card_page(callback: CallbackQuery):
         if data.get("is_banned"):
             return await callback.answer("Вы забанены.", show_alert=True)
 
-        await render_collection_page(callback.message, data, page=page, as_new=False)
+        await render_collection_page(callback.message, data, page=page, as_new=False, user_id=callback.from_user.id)
         await callback.answer()
     except Exception:
         pass
@@ -703,7 +734,7 @@ async def callback_noop(callback: CallbackQuery):
         pass
 
 
-async def render_collection_page(message: types.Message, data: dict, page: int, as_new: bool = False):
+async def render_collection_page(message: types.Message, data: dict, page: int, as_new: bool = False, user_id: Optional[int] = None):
     meme_cards = data.get("meme_cards", {}) or {}
     opened_count = sum(1 for count in meme_cards.values() if count > 0)
 
@@ -749,20 +780,21 @@ async def render_collection_page(message: types.Message, data: dict, page: int, 
     )
     text = "\n".join(lines)
 
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
     builder = InlineKeyboardBuilder()
     if page > 0:
-        builder.button(text="⬅️ Назад", callback_data=f"card_page_{page - 1}")
+        builder.button(text="⬅️ Назад", callback_data=f"card_page_{page - 1}{uid_suffix}")
     else:
         builder.button(text="🛑 Начало", callback_data="none")
 
-    builder.button(text="❌ Закрыть", callback_data="inv_close")
+    builder.button(text="❌ Закрыть", callback_data=f"inv_close{uid_suffix}")
 
     if page < TOTAL_PAGES - 1:
-        builder.button(text="Вперед ➡️", callback_data=f"card_page_{page + 1}")
+        builder.button(text="Вперед ➡️", callback_data=f"card_page_{page + 1}{uid_suffix}")
     else:
         builder.button(text="🛑 Конец", callback_data="none")
 
-    builder.button(text="🛒 Купить Кейсы", callback_data="card_shop_back")
+    builder.button(text="🛒 Купить Кейсы", callback_data=f"card_shop_back{uid_suffix}")
     builder.adjust(3, 1)
     markup = builder.as_markup()
 

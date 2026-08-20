@@ -132,15 +132,15 @@ async def cmd_will(message: types.Message):
 async def process_all_deals(callback: types.CallbackQuery):
     action = callback.data.split("_")[1]
     deal_id = callback.data.split("_")[2]
-
-    if deal_id not in active_deals:
+    info = active_deals.get(deal_id)
+    if not info:
         return await callback.answer("Сделка просрочена.", show_alert=True)
 
-    info = active_deals.pop(deal_id)
-    chat_id = callback.message.chat.id
-
     if callback.from_user.id != info['to_id']:
-        return await callback.answer("Эта кнопка не для тебя!", show_alert=True)
+        return await callback.answer("⚠️ Эта кнопка не для тебя!", show_alert=True)
+
+    active_deals.pop(deal_id, None)
+    chat_id = callback.message.chat.id
 
     if action == "no":
         return await callback.message.edit_text("❌ Сделка отклонена второй стороной.")

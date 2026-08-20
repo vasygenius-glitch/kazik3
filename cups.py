@@ -290,14 +290,15 @@ def _format_difficulty_block(d: Difficulty) -> str:
 # КЛАВИАТУРЫ
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_difficulty_keyboard(bet: int) -> types.InlineKeyboardMarkup:
+def get_difficulty_keyboard(bet: int, user_id: Optional[int] = None) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
+    uid_suffix = f"|{user_id}" if user_id is not None else ""
     for code, d in DIFFICULTIES.items():
         builder.button(
             text=f"{d.emoji} {d.title} ×{d.multiplier}",
-            callback_data=f"cups_diff|{bet}|{code}",
+            callback_data=f"cups_diff|{bet}|{code}{uid_suffix}",
         )
-    builder.button(text="❌ Отмена", callback_data=f"cups_cancel|{bet}")
+    builder.button(text="❌ Отмена", callback_data=f"cups_cancel|{bet}{uid_suffix}")
     builder.adjust(2, 2, 1)
     return builder.as_markup()
 
@@ -318,11 +319,12 @@ def get_cups_keyboard(game_id: str, cup_count: int, disabled: bool = False) -> t
     return builder.as_markup()
 
 
-def get_play_again_keyboard(bet: int, difficulty_code: str) -> types.InlineKeyboardMarkup:
+def get_play_again_keyboard(bet: int, difficulty_code: str, user_id: Optional[int] = None) -> types.InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔁 Ещё раз", callback_data=f"cups_again|{bet}|{difficulty_code}")
-    builder.button(text="2️⃣ Удвоить", callback_data=f"cups_again|{bet * 2}|{difficulty_code}")
-    builder.button(text="🎲 Сменить режим", callback_data=f"cups_pick|{bet}")
+    uid_suffix = f"|{user_id}" if user_id is not None else ""
+    builder.button(text="🔁 Ещё раз", callback_data=f"cups_again|{bet}|{difficulty_code}{uid_suffix}")
+    builder.button(text="2️⃣ Удвоить", callback_data=f"cups_again|{bet * 2}|{difficulty_code}{uid_suffix}")
+    builder.button(text="🎲 Сменить режим", callback_data=f"cups_pick|{bet}{uid_suffix}")
     builder.adjust(2, 1)
     return builder.as_markup()
 
@@ -492,7 +494,7 @@ async def _animate_reveal_all(message: types.Message, game: CupsGame, header: st
     await _safe_edit(
         message,
         text,
-        reply_markup=get_play_again_keyboard(game.bet, game.difficulty.code),
+        reply_markup=get_play_again_keyboard(game.bet, game.difficulty.code, user_id=game.user_id),
     )
 
 
@@ -623,7 +625,7 @@ async def _offer_difficulty(message: types.Message, bet: int, bonus_text: str = 
             for d in DIFFICULTIES.values()
         ],
     ]
-    await message.answer("\n".join(lines), reply_markup=get_difficulty_keyboard(bet))
+    await message.answer("\n".join(lines), reply_markup=get_difficulty_keyboard(bet, user_id=message.from_user.id))
 
 
 async def _start_with_difficulty(message: types.Message, bet: int, diff_code: str) -> None:
@@ -647,9 +649,14 @@ async def _start_with_difficulty(message: types.Message, bet: int, diff_code: st
 @router.callback_query(F.data.startswith("cups_diff|"))
 async def on_difficulty_chosen(callback: types.CallbackQuery):
     parts = callback.data.split("|")
-    if len(parts) != 3:
+    if len(parts) < 3:
         await callback.answer()
         return
+
+    if len(parts) >= 4 and parts[3].isdigit():
+        owner_id = int(parts[3])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваша игра!", show_alert=True)
 
     try:
         bet = int(parts[1])
@@ -696,6 +703,12 @@ async def on_difficulty_chosen(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("cups_cancel|"))
 async def on_difficulty_cancelled(callback: types.CallbackQuery):
+    parts = callback.data.split("|")
+    if len(parts) >= 3 and parts[2].isdigit():
+        owner_id = int(parts[2])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваша игра!", show_alert=True)
+
     with suppress(TelegramBadRequest):
         await callback.message.delete()
     await callback.answer("Игра отменена.")
@@ -704,9 +717,15 @@ async def on_difficulty_cancelled(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("cups_pick|"))
 async def on_pick_again(callback: types.CallbackQuery):
     parts = callback.data.split("|")
-    if len(parts) != 2:
+    if len(parts) < 2:
         await callback.answer()
         return
+
+    if len(parts) >= 3 and parts[2].isdigit():
+        owner_id = int(parts[2])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваша игра!", show_alert=True)
+
     try:
         bet = int(parts[1])
     except ValueError:
@@ -721,9 +740,15 @@ async def on_pick_again(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("cups_again|"))
 async def on_play_again(callback: types.CallbackQuery):
     parts = callback.data.split("|")
-    if len(parts) != 3:
+    if len(parts) < 3:
         await callback.answer()
         return
+
+    if len(parts) >= 4 and parts[3].isdigit():
+        owner_id = int(parts[3])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваша игра!", show_alert=True)
+
     try:
         bet = int(parts[1])
     except ValueError:
@@ -826,10 +851,21 @@ async def on_confirm_legacy(callback: types.CallbackQuery):
 async def _process_casino_confirm(callback: types.CallbackQuery, diff: Difficulty):
     parts = callback.data.split("_")
     try:
-        bet = int(parts[-1])
-    except ValueError:
+        if len(parts) >= 6 and parts[4].isdigit() and parts[5].isdigit():
+            bet = int(parts[4])
+            owner_id = int(parts[5])
+        elif len(parts) >= 5 and parts[4].isdigit():
+            bet = int(parts[4])
+            owner_id = None
+        else:
+            bet = int(parts[-1])
+            owner_id = None
+    except (ValueError, IndexError):
         await callback.answer("Ошибка ставки.", show_alert=True)
         return
+
+    if owner_id and callback.from_user.id != owner_id:
+        return await callback.answer("⛔ Это не ваша игра!", show_alert=True)
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id

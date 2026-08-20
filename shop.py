@@ -29,6 +29,8 @@ from diseases import get_active_diseases
 logger = logging.getLogger(__name__)
 router = Router()
 
+MAX_BIZ_LEVEL: int = 5
+
 # ─────────────────────────────────────────────────────────────
 #  КАТАЛОГ ТОВАРОВ
 # ─────────────────────────────────────────────────────────────
@@ -293,21 +295,23 @@ async def _safe_edit(message: types.Message, text: str, reply_markup=None):
 # ─────────────────────────────────────────────────────────────
 #  КЛАВИАТУРЫ
 # ─────────────────────────────────────────────────────────────
-async def get_main_shop_kb(prestige_level: int = 0):
+async def get_main_shop_kb(prestige_level: int = 0, user_id: Optional[int] = None):
     await _shop_kb_cache.refresh_if_needed()
     builder = InlineKeyboardBuilder()
-    builder.button(text=_shop_kb_cache.biz, callback_data="shop_cat_biz")
-    builder.button(text=_shop_kb_cache.cars, callback_data="shop_cat_cars")
-    builder.button(text="💎 Прочее", callback_data="shop_cat_other")
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
+    builder.button(text=_shop_kb_cache.biz, callback_data=f"shop_cat_biz{uid_suffix}")
+    builder.button(text=_shop_kb_cache.cars, callback_data=f"shop_cat_cars{uid_suffix}")
+    builder.button(text="💎 Прочее", callback_data=f"shop_cat_other{uid_suffix}")
     if prestige_level >= 1:
-        builder.button(text="🌟 Магазин Престижа", callback_data="shop_cat_prestige")
-    builder.button(text="🎒 Мой инвентарь", callback_data="shop_to_inv")
+        builder.button(text="🌟 Магазин Престижа", callback_data=f"shop_cat_prestige{uid_suffix}")
+    builder.button(text="🎒 Мой инвентарь", callback_data=f"shop_to_inv{uid_suffix}")
     builder.adjust(2, 2 if prestige_level < 1 else 3)
     return builder.as_markup()
 
 
-def get_sell_menu_kb(inventory: dict, is_vip: bool):
+def get_sell_menu_kb(inventory: dict, is_vip: bool, user_id: Optional[int] = None):
     builder = InlineKeyboardBuilder()
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
     has_items = False
 
     for item_id, count in (inventory or {}).items():
@@ -327,7 +331,7 @@ def get_sell_menu_kb(inventory: dict, is_vip: bool):
         qty_str = f" ({cnt} шт)" if cnt > 1 else ""
         builder.button(
             text=f"Продать: {info['name']}{qty_str} — {sell_price} сыр.",
-            callback_data=f"sell_ask_{item_id}",
+            callback_data=f"sell_ask_{item_id}{uid_suffix}",
         )
         has_items = True
 
@@ -336,42 +340,44 @@ def get_sell_menu_kb(inventory: dict, is_vip: bool):
         sell_price = int(info["price"] * SELL_RATIO)
         builder.button(
             text=f"Продать: {info['name']} — {sell_price} сыр.",
-            callback_data="sell_ask_вип",
+            callback_data=f"sell_ask_вип{uid_suffix}",
         )
         has_items = True
 
-    builder.button(text="⬅️ Назад", callback_data="shop_main")
+    builder.button(text="⬅️ Назад", callback_data=f"shop_main{uid_suffix}")
     builder.adjust(1)
     return builder.as_markup(), has_items
 
 
-def get_sell_confirm_kb(item_id: str, owned_qty: int = 1, base_price: int = 0, upgrade_refund: int = 0):
+def get_sell_confirm_kb(item_id: str, owned_qty: int = 1, base_price: int = 0, upgrade_refund: int = 0, user_id: Optional[int] = None):
     builder = InlineKeyboardBuilder()
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
     if item_id == "вип" or owned_qty <= 1:
         total_payout = base_price + upgrade_refund
-        builder.button(text=f"✅ Да, продать ({total_payout} сыр.)", callback_data=f"sell_confirm_{item_id}_1")
+        builder.button(text=f"✅ Да, продать ({total_payout} сыр.)", callback_data=f"sell_confirm_{item_id}_1{uid_suffix}")
     else:
-        builder.button(text=f"1 шт. ({base_price} сыр.)", callback_data=f"sell_confirm_{item_id}_1")
+        builder.button(text=f"1 шт. ({base_price} сыр.)", callback_data=f"sell_confirm_{item_id}_1{uid_suffix}")
         if owned_qty >= 5:
             payout_5 = (base_price * 5) + (upgrade_refund if owned_qty == 5 else 0)
-            builder.button(text=f"5 шт. ({payout_5} сыр.)", callback_data=f"sell_confirm_{item_id}_5")
+            builder.button(text=f"5 шт. ({payout_5} сыр.)", callback_data=f"sell_confirm_{item_id}_5{uid_suffix}")
         payout_all = (base_price * owned_qty) + upgrade_refund
-        builder.button(text=f"Все ({owned_qty} шт. = {payout_all} сыр.)", callback_data=f"sell_confirm_{item_id}_all")
+        builder.button(text=f"Все ({owned_qty} шт. = {payout_all} сыр.)", callback_data=f"sell_confirm_{item_id}_all{uid_suffix}")
 
-    builder.button(text="❌ Отмена", callback_data="shop_sell_menu")
+    builder.button(text="❌ Отмена", callback_data=f"shop_sell_menu{uid_suffix}")
     builder.adjust(1) if owned_qty <= 1 else builder.adjust(2)
     return builder.as_markup()
 
 
-def get_category_kb(category: str, data: dict, base_tax: float, page: int = 0):
+def get_category_kb(category: str, data: dict, base_tax: float, page: int = 0, user_id: Optional[int] = None):
     builder = InlineKeyboardBuilder()
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
     tax_rate = _calc_user_tax(data, base_tax)
     balance = data.get("balance", 0)
 
     cat_items = [(item_id, info) for item_id, info in ITEMS.items() if info.get("cat") == category]
     per_page = 5
     total_pages = max(1, (len(cat_items) + per_page - 1) // per_page)
-    
+
     if page < 0:
         page = 0
     if page >= total_pages:
@@ -385,29 +391,29 @@ def get_category_kb(category: str, data: dict, base_tax: float, page: int = 0):
         final_price = _calc_final_price(info, balance, tax_rate)
         builder.button(
             text=f"{info['name']} — {final_price} сыр.",
-            callback_data=f"buy_{item_id}_{page}",
+            callback_data=f"buy_{item_id}_{page}{uid_suffix}",
         )
     builder.adjust(1)
 
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(types.InlineKeyboardButton(text="⬅️ Пред.", callback_data=f"shop_cat_{category}_{page-1}"))
+        nav_buttons.append(types.InlineKeyboardButton(text="⬅️ Пред.", callback_data=f"shop_cat_{category}_{page-1}{uid_suffix}"))
     if total_pages > 1:
         nav_buttons.append(types.InlineKeyboardButton(text=f"[ {page+1} / {total_pages} ]", callback_data="none"))
     if page < total_pages - 1:
-        nav_buttons.append(types.InlineKeyboardButton(text="След. ➡️", callback_data=f"shop_cat_{category}_{page+1}"))
-    
+        nav_buttons.append(types.InlineKeyboardButton(text="След. ➡️", callback_data=f"shop_cat_{category}_{page+1}{uid_suffix}"))
+
     if nav_buttons:
         builder.row(*nav_buttons)
 
-    builder.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data="shop_main"))
+    builder.row(types.InlineKeyboardButton(text="⬅️ Назад", callback_data=f"shop_main{uid_suffix}"))
     return builder.as_markup()
 
 
 # ─────────────────────────────────────────────────────────────
 #  РЕНДЕРИНГ ЭКРАНОВ (переиспользуется из разных хендлеров)
 # ─────────────────────────────────────────────────────────────
-async def _render_main_shop(message: types.Message, data: dict, *, as_new: bool = False):
+async def _render_main_shop(message: types.Message, data: dict, *, as_new: bool = False, user_id: Optional[int] = None):
     base_tax = await get_global_tax()
     tax_rate = _calc_user_tax(data, base_tax)
 
@@ -429,27 +435,27 @@ async def _render_main_shop(message: types.Message, data: dict, *, as_new: bool 
         "Выберите категорию товаров:"
     )
     prestige_level = int(data.get("prestige_level", 0) or 0)
-    kb = await get_main_shop_kb(prestige_level=prestige_level)
+    kb = await get_main_shop_kb(prestige_level=prestige_level, user_id=user_id)
     if as_new:
         await message.answer(text, reply_markup=kb)
     else:
         await _safe_edit(message, text, reply_markup=kb)
 
 
-async def _render_category(message: types.Message, data: dict, category: str, page: int = 0):
+async def _render_category(message: types.Message, data: dict, category: str, page: int = 0, user_id: Optional[int] = None):
     base_tax = await get_global_tax()
     cat_name = CATEGORY_NAMES.get(category, "?")
     text = (
         f"📂 <b>Категория: {cat_name}</b>\n\n"
         "Выбери товар для покупки (цены указаны с учётом твоего налога):"
     )
-    await _safe_edit(message, text, reply_markup=get_category_kb(category, data, base_tax, page=page))
+    await _safe_edit(message, text, reply_markup=get_category_kb(category, data, base_tax, page=page, user_id=user_id))
 
 
-async def _render_sell_menu(message: types.Message, data: dict):
+async def _render_sell_menu(message: types.Message, data: dict, user_id: Optional[int] = None):
     inventory = data.get("inventory") or {}
     is_vip = bool(data.get("is_vip"))
-    kb, has_items = get_sell_menu_kb(inventory, is_vip)
+    kb, has_items = get_sell_menu_kb(inventory, is_vip, user_id=user_id)
     if not has_items:
         text = "🤷‍♂️ У вас нет имущества для продажи."
     else:
@@ -476,18 +482,28 @@ async def cmd_shop(message: types.Message):
             "🦠 <b>Уреаплазмоз</b>: Продавцы боятся заразиться и не пускают вас в магазин!"
         )
 
-    await _render_main_shop(message, data, as_new=True)
+    await _render_main_shop(message, data, as_new=True, user_id=message.from_user.id)
 
 
-@router.callback_query(F.data == "shop_main")
+@router.callback_query(F.data.startswith("shop_main"))
 async def shop_back(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
     await callback.answer()
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    await _render_main_shop(callback.message, data)
+    await _render_main_shop(callback.message, data, user_id=callback.from_user.id)
 
 
-@router.callback_query(F.data == "shop_to_inv")
+@router.callback_query(F.data.startswith("shop_to_inv"))
 async def shop_to_inv(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) >= 4 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
     await callback.answer(
         "🎒 Для управления имуществом, продажи и улучшения бизнесов введи команду /inv !",
         show_alert=True,
@@ -496,37 +512,49 @@ async def shop_to_inv(callback: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("shop_cat_"))
 async def show_category(callback: types.CallbackQuery):
-    await callback.answer()
     raw_data = callback.data.removeprefix("shop_cat_")
-    if "_" in raw_data:
-        category, page_str = raw_data.rsplit("_", 1)
-        try:
-            page = int(page_str)
-        except ValueError:
-            category = raw_data
-            page = 0
+    parts = raw_data.split("_")
+    # format: shop_cat_{category}_{page}_{user_id} or shop_cat_{category}_{page}
+    if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
+        owner_id = int(parts[-1])
+        page = int(parts[-2])
+        category = "_".join(parts[:-2])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
+    elif len(parts) >= 2 and parts[-1].isdigit():
+        owner_id = None
+        page = int(parts[-1])
+        category = "_".join(parts[:-1])
     else:
+        owner_id = None
         category = raw_data
         page = 0
 
     if category not in CATEGORY_NAMES:
         return
+    await callback.answer()
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    await _render_category(callback.message, data, category, page=page)
+    await _render_category(callback.message, data, category, page=page, user_id=callback.from_user.id)
 
 
 # Обработчик подтверждения покупки: ставим раньше общего, чтобы parse был чистый
 @router.callback_query(F.data.startswith("buy_conf_"))
 async def process_buy_confirmed(callback: types.CallbackQuery):
     raw_data = callback.data.removeprefix("buy_conf_")
-    if "_" in raw_data:
-        item_id, page_str = raw_data.rsplit("_", 1)
-        try:
-            page = int(page_str)
-        except ValueError:
-            item_id = raw_data
-            page = 0
+    parts = raw_data.split("_")
+    # format: buy_conf_{item_id}_{page}_{user_id}
+    if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
+        owner_id = int(parts[-1])
+        page = int(parts[-2])
+        item_id = "_".join(parts[:-2])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
+    elif len(parts) >= 2 and parts[-1].isdigit():
+        owner_id = None
+        page = int(parts[-1])
+        item_id = "_".join(parts[:-1])
     else:
+        owner_id = None
         item_id = raw_data
         page = 0
     await _process_buy(callback, item_id=item_id, page=page, confirmed=True)
@@ -538,14 +566,20 @@ async def process_buy(callback: types.CallbackQuery):
     if callback.data.startswith("buy_conf_"):
         return
     raw_data = callback.data.removeprefix("buy_")
-    if "_" in raw_data:
-        item_id, page_str = raw_data.rsplit("_", 1)
-        try:
-            page = int(page_str)
-        except ValueError:
-            item_id = raw_data
-            page = 0
+    parts = raw_data.split("_")
+    # format: buy_{item_id}_{page}_{user_id}
+    if len(parts) >= 3 and parts[-1].isdigit() and parts[-2].isdigit():
+        owner_id = int(parts[-1])
+        page = int(parts[-2])
+        item_id = "_".join(parts[:-2])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
+    elif len(parts) >= 2 and parts[-1].isdigit():
+        owner_id = None
+        page = int(parts[-1])
+        item_id = "_".join(parts[:-1])
     else:
+        owner_id = None
         item_id = raw_data
         page = 0
     await _process_buy(callback, item_id=item_id, page=page, confirmed=False)
@@ -652,23 +686,38 @@ async def _process_buy(callback: types.CallbackQuery, item_id: str, page: int, c
 
     # Обновляем экран категории актуальными данными
     fresh = await get_user_data(chat_id, user_id)
-    await _render_category(callback.message, fresh, item.get("cat", "other"), page=page)
+    await _render_category(callback.message, fresh, item.get("cat", "other"), page=page, user_id=callback.from_user.id)
 
 
-@router.callback_query(F.data == "shop_sell_menu")
+@router.callback_query(F.data.startswith("shop_sell_menu"))
 async def show_sell_menu(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) >= 4 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
     await callback.answer()
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
-    await _render_sell_menu(callback.message, data)
+    await _render_sell_menu(callback.message, data, user_id=callback.from_user.id)
 
 
 @router.callback_query(F.data.startswith("sell_ask_"))
 async def ask_sell_confirm(callback: types.CallbackQuery):
-    await callback.answer()
-    item_id = callback.data.removeprefix("sell_ask_")
+    raw_data = callback.data.removeprefix("sell_ask_")
+    parts = raw_data.split("_")
+    if len(parts) >= 2 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        item_id = "_".join(parts[:-1])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
+    else:
+        owner_id = None
+        item_id = raw_data
+
     item = ITEMS.get(item_id)
     if not item:
         return
+    await callback.answer()
 
     # Доп. проверка владения
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
@@ -710,7 +759,7 @@ async def ask_sell_confirm(callback: types.CallbackQuery):
         callback.message,
         text,
         reply_markup=get_sell_confirm_kb(
-            item_id, owned_qty=owned_qty, base_price=base_sell_price, upgrade_refund=upgrade_refund
+            item_id, owned_qty=owned_qty, base_price=base_sell_price, upgrade_refund=upgrade_refund, user_id=callback.from_user.id
         )
     )
 
@@ -718,11 +767,19 @@ async def ask_sell_confirm(callback: types.CallbackQuery):
 @router.callback_query(F.data.startswith("sell_confirm_"))
 async def process_sell_confirm(callback: types.CallbackQuery):
     raw_data = callback.data.removeprefix("sell_confirm_")
-    parts = raw_data.rsplit("_", 1)
-    if len(parts) == 2 and (parts[1].isdigit() or parts[1] == "all"):
+    parts = raw_data.split("_")
+    if len(parts) >= 3 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        req_count_str = parts[-2]
+        item_id = "_".join(parts[:-2])
+        if callback.from_user.id != owner_id:
+            return await callback.answer("⚠️ Это не ваше меню магазина!", show_alert=True)
+    elif len(parts) >= 2 and (parts[1].isdigit() or parts[1] == "all"):
+        owner_id = None
         item_id = parts[0]
         req_count_str = parts[1]
     else:
+        owner_id = None
         item_id = raw_data
         req_count_str = "1"
 

@@ -1,34 +1,33 @@
-import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from user_manager import get_user_data, update_user_balance, update_user_field
-from shop import ITEMS
-from escape import escape_html
-
-_inv_locks = {}
-def get_inv_lock(chat_id, user_id):
-    key = (chat_id, user_id)
-    if key not in _inv_locks:
-        _inv_locks[key] = asyncio.Lock()
-    return _inv_locks[key]
+from shop import ITEMS, MAX_BIZ_LEVEL
+from user_manager import get_user_data, get_effective_chat_id
+from typing import Optional
 
 router = Router()
 
-MAX_BIZ_LEVEL = 5
-
 PAGE_SIZE = 15
 
-def get_inventory_main_kb(inventory, biz_levels, meme_cards=None, page: int = 0):
+
+def parse_owner_from_cb(data: str) -> tuple[str, Optional[int]]:
+    parts = data.rsplit("_", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0], int(parts[1])
+    return data, None
+
+
+def get_inventory_main_kb(inventory, biz_levels, meme_cards=None, page: int = 0, user_id: Optional[int] = None):
     builder = InlineKeyboardBuilder()
-    
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
+
     # Кнопка открытия 12-часового кейса
-    builder.button(text="🎁 Бесплатный кейс карт (12ч)", callback_data="open_free_case_cb")
+    builder.button(text="🎁 Бесплатный кейс карт (12ч)", callback_data=f"open_free_case_cb{uid_suffix}")
 
     meme_cards = meme_cards or {}
     unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
     if unique_cards > 0:
-        builder.button(text=f"🎴 Моя коллекция карт ({unique_cards}/200)", callback_data="card_page_0")
+        builder.button(text=f"🎴 Моя коллекция карт ({unique_cards}/200)", callback_data=f"card_page_0{uid_suffix}")
 
     valid_items = [(k, v) for k, v in inventory.items() if v > 0 and k in ITEMS]
     total_pages = max(1, (len(valid_items) + PAGE_SIZE - 1) // PAGE_SIZE)
@@ -45,23 +44,23 @@ def get_inventory_main_kb(inventory, biz_levels, meme_cards=None, page: int = 0)
             text = f"{info['name']} (Ур. {level}) ({count} шт)"
         else:
             text = f"{info['name']} ({count} шт)"
-        builder.button(text=text, callback_data=f"inv_item_{item_id}")
+        builder.button(text=text, callback_data=f"inv_item_{item_id}{uid_suffix}")
 
     if total_pages > 1:
         if page > 0:
-            builder.button(text="⬅️ Назад", callback_data=f"inv_page_{page - 1}")
+            builder.button(text="⬅️ Назад", callback_data=f"inv_page_{page - 1}{uid_suffix}")
         else:
             builder.button(text="⛔️", callback_data="none")
 
         builder.button(text=f"📄 {page + 1}/{total_pages}", callback_data="none")
 
         if page < total_pages - 1:
-            builder.button(text="Вперед ➡️", callback_data=f"inv_page_{page + 1}")
+            builder.button(text="Вперед ➡️", callback_data=f"inv_page_{page + 1}{uid_suffix}")
         else:
             builder.button(text="⛔️", callback_data="none")
 
-    builder.button(text="❌ Закрыть", callback_data="inv_close")
-    
+    builder.button(text="❌ Закрыть", callback_data=f"inv_close{uid_suffix}")
+
     layout = [1]
     if unique_cards > 0:
         layout.append(1)
@@ -72,25 +71,32 @@ def get_inventory_main_kb(inventory, biz_levels, meme_cards=None, page: int = 0)
     builder.adjust(*layout)
     return builder.as_markup()
 
-def get_item_kb(item_id, biz_level):
+
+def get_item_kb(item_id: str, biz_level: int, user_id: Optional[int] = None):
     builder = InlineKeyboardBuilder()
     info = ITEMS.get(item_id)
-    if info.get('action') == 'business':
+    uid_suffix = f"_{user_id}" if user_id is not None else ""
+
+    if info and info.get('action') == 'business':
         if biz_level < MAX_BIZ_LEVEL:
             upgrade_cost = int(info['price'] * 0.5 * biz_level)
-            builder.button(text=f"⬆️ Улучшить ({upgrade_cost} сыр.)", callback_data=f"inv_upg_{item_id}")
+            builder.button(text=f"⬆️ Улучшить ({upgrade_cost} сыр.)", callback_data=f"inv_upg_{item_id}{uid_suffix}")
         else:
             builder.button(text="🌟 Макс. уровень", callback_data="none")
-            
-    builder.button(text="💰 Продать", callback_data=f"inv_sell_{item_id}")
-    builder.button(text="⬅️ Назад в инвентарь", callback_data="inv_main")
+
+    builder.button(text="💰 Продать", callback_data=f"inv_sell_{item_id}{uid_suffix}")
+    builder.button(text="⬅️ Назад в инвентарь", callback_data=f"inv_main{uid_suffix}")
     builder.adjust(1)
     return builder.as_markup()
 
+
 @router.message(Command("inventory", "inv", "инвентарь"))
 async def cmd_inventory(message: types.Message):
-    data = await get_user_data(message.chat.id, message.from_user.id)
-    if data.get('is_banned'): return
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    data = await get_user_data(chat_id, user_id)
+    if data.get('is_banned'):
+        return
 
     inventory = data.get('inventory', {})
     biz_levels = data.get('biz_levels', {})
@@ -111,67 +117,94 @@ async def cmd_inventory(message: types.Message):
         text += f"🎴 <b>Коллекция карточек свинок:</b> <code>{unique_cards}/200</code> (всего {total_cards} шт.)\n\n"
     text += "Нажмите на предмет для управления или откройте карточки:"
 
-    await message.answer(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards))
+    await message.answer(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards, user_id=user_id))
 
-@router.callback_query(F.data == "inv_main")
+
+@router.callback_query(F.data.startswith("inv_main"))
 async def inv_back(callback: types.CallbackQuery):
-    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    _, owner_id = parse_owner_from_cb(callback.data)
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь! Откройте свой через /inv", show_alert=True)
+
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    data = await get_user_data(chat_id, user_id)
     inventory = data.get('inventory', {})
     biz_levels = data.get('biz_levels', {})
     meme_cards = data.get('meme_cards', {}) or {}
 
     unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
     total_cards = sum(qty for qty in meme_cards.values() if qty > 0)
-    
+
     text = "🎒 <b>ВАШ ИНВЕНТАРЬ И КОЛЛЕКЦИЯ</b>\n\n"
     if unique_cards > 0:
         text += f"🎴 <b>Коллекция карточек свинок:</b> <code>{unique_cards}/200</code> (всего {total_cards} шт.)\n\n"
     text += "Нажмите на предмет для управления или откройте карточки:"
 
-    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards))
+    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards, user_id=user_id))
 
 
 @router.callback_query(F.data.startswith("inv_page_"))
 async def inv_page_cb(callback: types.CallbackQuery):
+    raw = callback.data.removeprefix("inv_page_")
+    prefix, owner_id = parse_owner_from_cb(raw)
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь! Откройте свой через /inv", show_alert=True)
+
     try:
-        page = int(callback.data.removeprefix("inv_page_"))
+        page = int(prefix)
     except ValueError:
         page = 0
 
-    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    data = await get_user_data(chat_id, user_id)
     inventory = data.get('inventory', {})
     biz_levels = data.get('biz_levels', {})
     meme_cards = data.get('meme_cards', {}) or {}
 
     unique_cards = sum(1 for c, qty in meme_cards.items() if qty > 0)
     total_cards = sum(qty for qty in meme_cards.values() if qty > 0)
-    
+
     text = "🎒 <b>ВАШ ИНВЕНТАРЬ И КОЛЛЕКЦИЯ</b>\n\n"
     if unique_cards > 0:
         text += f"🎴 <b>Коллекция карточек свинок:</b> <code>{unique_cards}/200</code> (всего {total_cards} шт.)\n\n"
     text += "Нажмите на предмет для управления или откройте карточки:"
 
-    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards, page=page))
+    await callback.message.edit_text(text, reply_markup=get_inventory_main_kb(inventory, biz_levels, meme_cards, page=page, user_id=user_id))
 
 
-
-@router.callback_query(F.data == "inv_close")
+@router.callback_query(F.data.startswith("inv_close"))
 async def inv_close(callback: types.CallbackQuery):
-    await callback.message.delete()
+    _, owner_id = parse_owner_from_cb(callback.data)
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь!", show_alert=True)
+    try:
+        await callback.message.delete()
+    except Exception:
+        await callback.answer("Закрыто.")
+
 
 @router.callback_query(F.data.startswith("inv_item_"))
 async def inv_item_info(callback: types.CallbackQuery):
-    item_id = callback.data.replace("inv_item_", "")
-    info = ITEMS.get(item_id)
-    if not info: return
+    raw = callback.data.removeprefix("inv_item_")
+    item_id, owner_id = parse_owner_from_cb(raw)
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь! Откройте свой через /inv", show_alert=True)
 
-    data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    info = ITEMS.get(item_id)
+    if not info:
+        return
+
+    user_id = callback.from_user.id
+    chat_id = callback.message.chat.id
+    data = await get_user_data(chat_id, user_id)
     inventory = data.get('inventory', {})
     if inventory.get(item_id, 0) <= 0:
         return await callback.answer("У вас нет этого предмета!", show_alert=True)
 
     biz_levels = data.get('biz_levels', {})
-    
+
     text = f"📦 <b>Предмет:</b> {info['name']}\n"
     qty = inventory.get(item_id, 0)
     text += f"🎒 <b>Количество:</b> {qty} шт.\n"
@@ -183,41 +216,47 @@ async def inv_item_info(callback: types.CallbackQuery):
         income = int(info.get('income', 0) * level_multiplier)
         text += f"📈 <b>Уровень:</b> {level} / {MAX_BIZ_LEVEL}\n"
         text += f"💸 <b>Доход в час (за шт):</b> {income} сыр. (Всего: {income * qty} сыр./ч)\n"
-        
-        # Calculate total invested for sell info
+
         total_invested = info['price']
         for l in range(1, level):
             total_invested += int(info['price'] * 0.5 * l)
         sell_price = int(total_invested * 0.75)
         text += f"💵 <b>Цена продажи:</b> {sell_price} сыр. за шт. (75% от всех вложений)\n\n"
-        
+
         if level < MAX_BIZ_LEVEL:
             text += f"<i>Улучшение увеличит базовый доход на +50%.</i>"
     else:
         sell_price = int(info['price'] * 0.75)
         text += f"💵 <b>Цена продажи:</b> {sell_price} сыр. за шт.\n"
 
-    await callback.message.edit_text(text, reply_markup=get_item_kb(item_id, biz_levels.get(item_id, 1)))
+    await callback.message.edit_text(text, reply_markup=get_item_kb(item_id, biz_levels.get(item_id, 1), user_id=user_id))
+
 
 @router.callback_query(F.data == "none")
 async def dummy_callback(callback: types.CallbackQuery):
     await callback.answer()
 
+
 @router.callback_query(F.data.startswith("inv_upg_"))
 async def inv_upgrade(callback: types.CallbackQuery):
-    item_id = callback.data.replace("inv_upg_", "")
+    raw = callback.data.removeprefix("inv_upg_")
+    item_id, owner_id = parse_owner_from_cb(raw)
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь!", show_alert=True)
+
     info = ITEMS.get(item_id)
-    if not info or info.get('action') != 'business': return
+    if not info or info.get('action') != 'business':
+        return
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
-    
+
     from db import get_db
     from user_manager import upgrade_business_tr, get_user_data
     from firebase_admin import firestore_async
-    
+
     db = get_db()
-    
+
     @firestore_async.async_transactional
     async def run_upgrade_transaction(transaction, chat_id, user_id, item_id, cost, max_lvl):
         return await upgrade_business_tr(transaction, chat_id, user_id, item_id, cost, max_lvl)
@@ -233,33 +272,44 @@ async def inv_upgrade(callback: types.CallbackQuery):
             success, error_msg = await run_upgrade_transaction(db.transaction(), chat_id, user_id, item_id, upgrade_cost, MAX_BIZ_LEVEL)
             if success:
                 invalidate_user_cache(chat_id, user_id)
-        
+
         if not success:
             return await callback.answer(f"Ошибка: {error_msg}", show_alert=True)
-            
+
         await callback.answer(f"🎉 Бизнес {info['name']} успешно улучшен!", show_alert=True)
-        
+
         # Reload UI
-        callback.data = f"inv_item_{item_id}"
+        callback.data = f"inv_item_{item_id}_{user_id}"
         await inv_item_info(callback)
 
     except Exception as e:
         print(f"Upgrade error: {e}")
         return await callback.answer("Ошибка при улучшении.", show_alert=True)
 
+
 @router.callback_query(F.data.startswith("inv_sellcf_"))
 async def confirm_inv_sell(callback: types.CallbackQuery):
-    raw_data = callback.data.replace("inv_sellcf_", "")
-    parts = raw_data.rsplit("_", 1)
-    if len(parts) == 2 and (parts[1].isdigit() or parts[1] == "all"):
-        item_id = parts[0]
-        req_count_str = parts[1]
+    raw_data = callback.data.removeprefix("inv_sellcf_")
+    parts = raw_data.split("_")
+    # format: inv_sellcf_{item_id}_{count}_{owner_id} or inv_sellcf_{item_id}_{count}
+    if len(parts) >= 3 and parts[-1].isdigit():
+        owner_id = int(parts[-1])
+        req_count_str = parts[-2]
+        item_id = "_".join(parts[:-2])
+    elif len(parts) >= 2:
+        owner_id = None
+        req_count_str = parts[-1]
+        item_id = "_".join(parts[:-1])
     else:
+        owner_id = None
         item_id = raw_data
         req_count_str = "1"
 
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь!", show_alert=True)
+
     info = ITEMS.get(item_id)
-    if not info: 
+    if not info:
         return await callback.answer("Ошибка: Предмет не существует!", show_alert=True)
 
     chat_id = callback.message.chat.id
@@ -268,15 +318,16 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
     from db import get_db
     from user_manager import sell_item_tr, get_user_ref, safe_get_snapshot
     from firebase_admin import firestore_async
-    
+
     db = get_db()
-    
+
     @firestore_async.async_transactional
     async def run_sell_transaction(transaction, chat_id, user_id, item_id, item_info, req_count_str):
         ref = get_user_ref(chat_id, user_id)
         snapshot = await safe_get_snapshot(transaction, ref)
-        if not snapshot.exists: return False, 0, 0
-        
+        if not snapshot.exists:
+            return False, 0, 0
+
         data = snapshot.to_dict() or {}
         inv = data.get('inventory', {})
         owned_qty = inv.get(item_id, 0)
@@ -314,16 +365,17 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
         async with lock:
             res = run_sell_transaction(db.transaction(), chat_id, user_id, item_id, info, req_count_str)
             if hasattr(res, "__aiter__"):
-                async for r in res: success, total_payout, sold_count = r
+                async for r in res:
+                    success, total_payout, sold_count = r
             else:
                 success, total_payout, sold_count = await res
-                
+
             if success:
                 invalidate_user_cache(chat_id, user_id)
-            
+
         if not success:
             return await callback.answer("Предмет не найден в инвентаре!", show_alert=True)
-            
+
     except Exception as e:
         print(f"Sell error: {e}")
         return await callback.answer("Ошибка при продаже.", show_alert=True)
@@ -331,18 +383,24 @@ async def confirm_inv_sell(callback: types.CallbackQuery):
     await callback.answer(f"✅ Успешно продано {sold_count} шт. за {total_payout} сыр.!", show_alert=True)
     await inv_back(callback)
 
+
 @router.callback_query(F.data.startswith("inv_sell_"))
 async def ask_inv_sell(callback: types.CallbackQuery):
-    item_id = callback.data.replace("inv_sell_", "")
+    raw = callback.data.removeprefix("inv_sell_")
+    item_id, owner_id = parse_owner_from_cb(raw)
+    if owner_id is not None and callback.from_user.id != owner_id:
+        return await callback.answer("⚠️ Это не ваш инвентарь!", show_alert=True)
+
     info = ITEMS.get(item_id)
-    if not info: return
-    
+    if not info:
+        return
+
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
     u_data = await get_user_data(chat_id, user_id)
     inv = u_data.get('inventory', {})
     owned_qty = inv.get(item_id, 0)
-    
+
     if owned_qty <= 0:
         return await callback.answer("У вас нет этого предмета!", show_alert=True)
 
@@ -354,33 +412,33 @@ async def ask_inv_sell(callback: types.CallbackQuery):
         upgrade_invested = sum(int(info['price'] * 0.5 * l) for l in range(1, level))
         upgrade_refund = int(upgrade_invested * 0.75)
 
+    uid_suffix = f"_{user_id}"
     builder = InlineKeyboardBuilder()
     if owned_qty == 1:
         total_payout_1 = base_unit_price + upgrade_refund
-        builder.button(text=f"✅ Продать 1 шт. ({total_payout_1} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
+        builder.button(text=f"✅ Продать 1 шт. ({total_payout_1} сыр.)", callback_data=f"inv_sellcf_{item_id}_1{uid_suffix}")
     else:
-        builder.button(text=f"1 шт. ({base_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1")
+        builder.button(text=f"1 шт. ({base_unit_price} сыр.)", callback_data=f"inv_sellcf_{item_id}_1{uid_suffix}")
         if owned_qty >= 5:
             payout_5 = (base_unit_price * 5) + (upgrade_refund if owned_qty == 5 else 0)
-            builder.button(text=f"5 шт. ({payout_5} сыр.)", callback_data=f"inv_sellcf_{item_id}_5")
+            builder.button(text=f"5 шт. ({payout_5} сыр.)", callback_data=f"inv_sellcf_{item_id}_5{uid_suffix}")
         if owned_qty >= 10:
             payout_10 = (base_unit_price * 10) + (upgrade_refund if owned_qty == 10 else 0)
-            builder.button(text=f"10 шт. ({payout_10} сыр.)", callback_data=f"inv_sellcf_{item_id}_10")
+            builder.button(text=f"10 шт. ({payout_10} сыр.)", callback_data=f"inv_sellcf_{item_id}_10{uid_suffix}")
         if owned_qty >= 50:
             payout_50 = (base_unit_price * 50) + (upgrade_refund if owned_qty == 50 else 0)
-            builder.button(text=f"50 шт. ({payout_50} сыр.)", callback_data=f"inv_sellcf_{item_id}_50")
+            builder.button(text=f"50 шт. ({payout_50} сыр.)", callback_data=f"inv_sellcf_{item_id}_50{uid_suffix}")
         payout_all = (base_unit_price * owned_qty) + upgrade_refund
-        builder.button(text=f"Все ({owned_qty} шт. = {payout_all} сыр.)", callback_data=f"inv_sellcf_{item_id}_all")
+        builder.button(text=f"Все ({owned_qty} шт. = {payout_all} сыр.)", callback_data=f"inv_sellcf_{item_id}_all{uid_suffix}")
 
-    builder.button(text="❌ Отмена", callback_data=f"inv_item_{item_id}")
+    builder.button(text="❌ Отмена", callback_data=f"inv_item_{item_id}{uid_suffix}")
     builder.adjust(1) if owned_qty == 1 else builder.adjust(2)
-    
+
     upgrade_note = f"\n<i>Включает возврат за улучшения при продаже всех шт.: {upgrade_refund} сыр.</i>" if upgrade_refund > 0 else ""
     await callback.message.edit_text(
         f"💰 <b>Продажа предмета:</b> <code>{info['name']}</code>\n"
         f"У вас в наличии: <b>{owned_qty} шт.</b>\n"
         f"Базовая цена продажи: <b>{base_unit_price}</b> сыр./шт.{upgrade_note}\n\n"
-        f"Выберите количество для продажи:", 
+        f"Выберите количество для продажи:",
         reply_markup=builder.as_markup()
     )
-
