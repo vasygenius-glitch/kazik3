@@ -7,7 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import asyncio
 import logging
 import time
-from typing import Optional
+from typing import Optional, Union
 
 from firebase_admin import firestore_async
 
@@ -187,14 +187,181 @@ ITEMS: dict[str, dict] = {
     "dictor_antigravity":        {"name": "антигравитационный диктор тайний баний", "price": 0, "cat": "tayniy_baniy", "action": "other", "desc": "Антигравитационный диктор тайний баний (черный кролик 🖤🐇)."},
 }
 
-CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное", "prestige": "🌟 Престиж"}
+CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное", "prestige": "🌟 Престиж", "tayniy_baniy": "🐰 Дикторы"}
 CONFIRM_THRESHOLD = 1_000_000  # цена, выше которой требуется подтверждение
 SELL_RATIO = 0.75
 CACHE_TTL = 60
 
 # ─────────────────────────────────────────────────────────────
-#  ВСПОМОГАТЕЛЬНЫЕ УТИЛИТЫ
+#  ИНДЕКСАЦИЯ ДЛЯ КОМПАКТНЫХ CALLBACK DATA (<=64 байт)
 # ─────────────────────────────────────────────────────────────
+ITEM_KEYS: list[str] = list(ITEMS.keys())
+ITEM_INDEX_MAP: dict[str, int] = {k: i for i, k in enumerate(ITEM_KEYS)}
+INDEX_ITEM_MAP: dict[int, str] = {i: k for i, k in enumerate(ITEM_KEYS)}
+
+CAT_KEYS: list[str] = ["biz", "cars", "prestige", "other", "tayniy_baniy"]
+CAT_INDEX_MAP: dict[str, int] = {"biz": 0, "cars": 1, "prestige": 2, "other": 3, "tayniy_baniy": 4}
+INDEX_CAT_MAP: dict[int, str] = {0: "biz", 1: "cars", 2: "prestige", 3: "other", 4: "tayniy_baniy"}
+
+DICTORS_ORDER: list[str] = [k for k in ITEM_KEYS if k.startswith("dictor_")]
+
+ITEM_ALIASES: dict[str, str] = {
+    # Машины
+    "bmw": "бмв", "m5": "бмв", "бэха": "бмв", "бимер": "бмв",
+    "gelik": "гелик", "гелендваген": "гелик", "g63": "гелик", "gwagen": "гелик", "gelandewagen": "гелик",
+    "bugatti": "бугатти", "chiron": "бугатти", "широн": "бугатти",
+    "camry": "камри", "камри3.5": "камри", "камри 3.5": "камри", "toyota": "камри", "тойота": "камри",
+    "priora": "лада", "приора": "лада", "lada": "лада",
+    "oka": "ока", "окушка": "ока",
+    "жигули": "жигули", "ваз": "жигули", "ваз2106": "жигули", "vaz": "жигули", "шестерка": "жигули", "шестёрка": "жигули",
+    "москвич": "москвич", "moskvich": "москвич", "412": "москвич",
+    "самокат": "самокат", "scooter": "самокат", "электросамокат": "самокат",
+    "велик": "велосипед", "велосипед": "велосипед", "bike": "велосипед", "аист": "велосипед",
+    "самолет": "самолет", "самолёт": "самолет", "джет": "самолет", "jet": "самолет", "plane": "самолет",
+    "яхта": "яхта", "yacht": "яхта", "суперъяхта": "яхта",
+    "лайнер": "круизер", "круизер": "круизер", "liner": "круизер", "cruiser": "круизер",
+    "ракета": "ракета", "rocket": "ракета", "falcon": "ракета", "falcon9": "ракета",
+    "ковчег": "kovcheg", "ark": "kovcheg", "kovcheg": "kovcheg",
+    "аполлон": "гиперкар_аполлон", "apollo": "гиперкар_аполлон", "hypercar": "гиперкар_аполлон",
+    "грави_яхта": "грави_яхта", "гравияхта": "грави_яхта", "graviyacht": "грави_яхта",
+    "дредноут": "планетарный_дредноут", "планетарный_дредноут": "планетарный_дредноут", "dreadnought": "планетарный_дредноут",
+    "титан": "титан_крейсер", "титан_крейсер": "титан_крейсер", "titan": "титан_крейсер",
+    "гиперион": "гипер_гиперион", "гипер_гиперион": "гипер_гиперион", "hyperion": "гипер_гиперион",
+    "цитадель": "орбитальная_цитадель", "орбитальная_цитадель": "орбитальная_цитадель", "citadel": "орбитальная_цитадель",
+    "ковчег_миров": "ковчег_миров", "ковчегмиров": "ковчег_миров",
+
+    # Бизнесы
+    "семечки": "семечки", "seeds": "семечки",
+    "газеты": "газеты", "киоск": "газеты", "newspapers": "газеты",
+    "дворник": "свип", "свип": "свип", "sweep": "свип",
+    "пирожки": "пирожки", "ларёк с пирожками": "пирожки", "ларек с пирожками": "пирожки", "pies": "пирожки",
+    "цветы": "цветы", "flowers": "цветы",
+    "ларек": "ларек", "ларёк": "ларек", "kiosk": "ларек",
+    "шаурма": "шаурма", "шаверма": "шаурма", "shawarma": "шаурма",
+    "мойка": "мойка", "автомойка": "мойка", "carwash": "мойка",
+    "вендинг": "вендинг", "vending": "вендинг",
+    "кофейня": "кофейня", "кафе": "кофейня", "coffee": "кофейня",
+    "ресторан": "ресторан", "рестик": "ресторан", "restaurant": "ресторан",
+    "отель": "отель", "гостиница": "отель", "hotel": "отель",
+    "ферма": "ферма", "farm": "ферма",
+    "кинотеатр": "кинотеатр", "кино": "кинотеатр", "cinema": "кинотеатр",
+    "завод": "завод", "фабрика": "завод", "factory": "завод",
+    "салон": "салон", "автосалон": "салон", "autosalon": "салон",
+    "нефть": "нефть", "вышка": "нефть", "нефтевышка": "нефть", "oil": "нефть",
+    "банк": "банк", "bank": "банк",
+    "айти": "айти", "it": "айти", "it_company": "айти",
+    "казино": "казино", "casino": "казино",
+    "стадион": "стадион", "stadium": "стадион",
+    "мегакорп": "мегакорп", "корпорация": "мегакорп", "megacorp": "мегакорп",
+    "бункер": "sec_bunker", "sec_bunker": "sec_bunker", "bunker": "sec_bunker",
+    "врата": "звездные_врата", "звездные_врата": "звездные_врата", "звёздные_врата": "звездные_врата", "stargate": "звездные_врата",
+    "дайсон": "сфера_дайсона", "сфера_дайсона": "сфера_дайсона", "сферадайсона": "сфера_дайсона", "dyson": "сфера_дайсона",
+    "квантовый_компьютер": "квантовый_компьютер", "квант": "квантовый_компьютер", "quantum": "квантовый_компьютер",
+    "варп": "варп_станция", "варп_станция": "варп_станция", "warp": "варп_станция",
+    "матрица": "матрица_времени", "матрица_времени": "матрица_времени", "хроно": "матрица_времени", "matrix": "матрица_времени",
+    "лифт": "космо_лифт", "космо_лифт": "космо_лифт", "космолифт": "космо_лифт", "elevator": "космо_лифт",
+    "темная_материя": "фабрика_темной_материи", "тёмная_материя": "фабрика_темной_материи", "фабрика_темной_материи": "фабрика_темной_материи", "dark_matter": "фабрика_темной_материи",
+    "галактический_банк": "галактический_банк", "галактический": "галактический_банк", "галактика": "галактический_банк",
+    "абсолютный_абсолют": "абсолютный_абсолют", "абсолют": "абсолютный_абсолют",
+
+    # Прочее
+    "вип": "вип", "vip": "вип", "статус вип": "вип",
+    "презерватив": "condom", "condom": "condom", "гондон": "condom", "гандон": "condom",
+    "отмычка": "lockpick", "lockpick": "lockpick", "отмычки": "lockpick",
+    "маска": "mask", "маска вора": "mask", "mask": "mask",
+    "аптечка": "medkit", "medkit": "medkit", "лекарство": "medkit", "хил": "medkit", "аптека": "medkit",
+
+    # Престиж
+    "майнер": "prestige_mine", "квантовый майнер": "prestige_mine", "prestige_mine": "prestige_mine",
+    "глайдер": "prestige_kopter", "дрон": "prestige_kopter", "prestige_kopter": "prestige_kopter",
+    "нанороботы": "prestige_factory", "завод нанороботов": "prestige_factory", "prestige_factory": "prestige_factory",
+    "плазменный гиперкар": "prestige_hypercar", "prestige_hypercar": "prestige_hypercar",
+    "башня": "prestige_tower", "башня синдиката": "prestige_tower", "prestige_tower": "prestige_tower",
+    "квантовая суперъяхта": "prestige_yacht", "prestige_yacht": "prestige_yacht",
+    "орбитальная база": "prestige_station", "prestige_station": "prestige_station",
+    "шаттл": "prestige_shuttle", "prestige_shuttle": "prestige_shuttle",
+    "звездный реактор": "prestige_reactor", "звёздный реактор": "prestige_reactor", "prestige_reactor": "prestige_reactor",
+    "гравитационный дредноут": "prestige_dreadnought", "prestige_dreadnought": "prestige_dreadnought",
+    "монолит": "prestige_monolith", "вселенский монолит": "prestige_monolith", "prestige_monolith": "prestige_monolith",
+    "ковчег вечности": "prestige_ark", "prestige_ark": "prestige_ark",
+
+    # Дикторы и спец. алиасы
+    "антигравити": "dictor_antigravity", "антигравитация": "dictor_antigravity", "antigravity": "dictor_antigravity",
+    "топдиктор": "dictor_antigravity", "topdictor": "dictor_antigravity", "топ_диктор": "dictor_antigravity",
+    "созидательный": "dictor_creation", "разрушительный": "dictor_destruction", "суверенный": "dictor_sovereign",
+    "богоподобный": "dictor_godlike", "вечность": "dictor_eternity", "безграничный": "dictor_boundless",
+    "феникс": "dictor_phoenix", "титан_диктор": "dictor_titan", "омега": "dictor_omega", "альфа": "dictor_alpha",
+    "хаос": "dictor_chaos", "бездна": "dictor_abyss", "пустота": "dictor_void", "божественный": "dictor_divine",
+}
+
+
+def get_item_by_ref(ref: Union[int, str]) -> Optional[str]:
+    """Возвращает item_id по строковому id или целочисленному индексу."""
+    if isinstance(ref, int):
+        return INDEX_ITEM_MAP.get(ref)
+    if isinstance(ref, str):
+        if ref.isdigit():
+            idx = int(ref)
+            if idx in INDEX_ITEM_MAP:
+                return INDEX_ITEM_MAP[idx]
+        if ref in ITEMS:
+            return ref
+    return None
+
+
+def get_item_ref(item_id: str) -> str:
+    """Возвращает короткий строковый индекс для item_id."""
+    if item_id in ITEM_INDEX_MAP:
+        return str(ITEM_INDEX_MAP[item_id])
+    return item_id
+
+
+def resolve_item_id(query: str) -> Optional[str]:
+    """
+    Умное сопоставление строки с ID предмета (ID, номер 1..70, алиас или подстрока названия).
+    """
+    if not query:
+        return None
+    q = query.strip().lower()
+
+    # 1. Номер диктора (1..70)
+    if q.isdigit():
+        num = int(q)
+        if 1 <= num <= len(DICTORS_ORDER):
+            return DICTORS_ORDER[num - 1]
+        if num in INDEX_ITEM_MAP:
+            return INDEX_ITEM_MAP[num]
+
+    # 2. Прямое совпадение с ключом ITEMS
+    if q in ITEMS:
+        return q
+
+    # 3. Прямой алиас
+    if q in ITEM_ALIASES:
+        return ITEM_ALIASES[q]
+
+    # 4. Нормализованный алиас (без пробелов и подчеркиваний)
+    q_norm = q.replace(" ", "").replace("_", "").replace("-", "")
+    for alias_key, target_id in ITEM_ALIASES.items():
+        if q_norm == alias_key.replace(" ", "").replace("_", "").replace("-", ""):
+            return target_id
+
+    # 5. Префикс dictor_
+    if f"dictor_{q}" in ITEMS:
+        return f"dictor_{q}"
+
+    # 6. Поиск по подстроке в ID
+    for item_id in ITEM_KEYS:
+        if q_norm in item_id.replace("_", "").lower():
+            return item_id
+
+    # 7. Поиск по подстроке в отображаемом названии
+    for item_id, info in ITEMS.items():
+        name_clean = info.get("name", "").lower()
+        if q in name_clean or q_norm in name_clean.replace(" ", "").replace("_", ""):
+            return item_id
+
+    return None
 class _ShopKbCache:
     """Потокобезопасный кэш сезонных строк клавиатуры."""
     __slots__ = ("biz", "cars", "ts", "_lock")

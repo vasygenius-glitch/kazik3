@@ -19,7 +19,7 @@ async def cmd_createpromo(message: types.Message):
         await message.answer("Использование: <code>/createpromo [код] [награда] [кол-во активаций]</code>")
         return
 
-    code = args[1]
+    code = args[1].upper()
     try:
         reward = int(args[2])
         max_activations = int(args[3])
@@ -45,7 +45,7 @@ async def cmd_promo(message: types.Message):
         await message.answer("Укажите промокод: <code>/promo КОД</code>")
         return
 
-    code = args[1]
+    code = args[1].upper()
     chat_id = message.chat.id
     user_id = message.from_user.id
 

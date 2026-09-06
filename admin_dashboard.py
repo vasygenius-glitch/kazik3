@@ -159,6 +159,8 @@ class AdminPanelState(StatesGroup):
     waiting_for_player_inv_qty = State()
     waiting_for_player_escort = State()
     waiting_for_player_role = State()
+    waiting_for_admin_give_item_query = State()
+    waiting_for_admin_give_item_qty = State()
 
     # Крипта
     waiting_for_coin_ticker = State()
@@ -625,6 +627,7 @@ async def cb_banks_list(callback: types.CallbackQuery, state: FSMContext):
 async def show_bank_detail_screen(callback_or_message, state: FSMContext,
                                   chat_id: int, banker_id: int, edit: bool = False) -> None:
     """Детальный экран конкретного банка."""
+    await state.clear()
     bank_data = await get_bank_info(chat_id, banker_id)
     if not bank_data:
         if isinstance(callback_or_message, types.CallbackQuery):
@@ -707,6 +710,8 @@ async def cb_bank_details(callback: types.CallbackQuery, state: FSMContext):
 async def cb_bank_capital_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, banker_id = cb_int(parts, 2), cb_int(parts, 3)
+    if chat_id is None or banker_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_bank_capital)
     await state.update_data(chat_id=chat_id, banker_id=banker_id,
                             menu_message_id=callback.message.message_id)
@@ -725,7 +730,10 @@ async def cb_bank_capital_prompt(callback: types.CallbackQuery, state: FSMContex
 @creator_only
 async def process_bank_capital_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, banker_id = data["chat_id"], data["banker_id"]
+    chat_id, banker_id = data.get("chat_id"), data.get("banker_id")
+    if chat_id is None or banker_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
 
     val = parse_int(message.text, allow_negative=False, minimum=0)
     if val is None:
@@ -736,6 +744,7 @@ async def process_bank_capital_input(message: types.Message, state: FSMContext):
     invalidate_bank_cache(chat_id, banker_id)
     logger.info("Capital of bank %s in chat %s set to %s", banker_id, chat_id, val)
 
+    await state.clear()
     await show_bank_detail_screen(message, state, chat_id, banker_id)
     await safe_delete(message)
 
@@ -745,6 +754,8 @@ async def process_bank_capital_input(message: types.Message, state: FSMContext):
 async def cb_bank_rate_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, banker_id = cb_int(parts, 2), cb_int(parts, 3)
+    if chat_id is None or banker_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_bank_rate)
     await state.update_data(chat_id=chat_id, banker_id=banker_id,
                             menu_message_id=callback.message.message_id)
@@ -763,7 +774,10 @@ async def cb_bank_rate_prompt(callback: types.CallbackQuery, state: FSMContext):
 @creator_only
 async def process_bank_rate_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, banker_id = data["chat_id"], data["banker_id"]
+    chat_id, banker_id = data.get("chat_id"), data.get("banker_id")
+    if chat_id is None or banker_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
 
     rate = parse_float(message.text, minimum=MIN_DEPOSIT_RATE, maximum=MAX_DEPOSIT_RATE)
     if rate is None:
@@ -774,6 +788,7 @@ async def process_bank_rate_input(message: types.Message, state: FSMContext):
 
     await create_or_update_bank(chat_id, banker_id, {"deposit_rate": rate})
     invalidate_bank_cache(chat_id, banker_id)
+    await state.clear()
     await show_bank_detail_screen(message, state, chat_id, banker_id)
     await safe_delete(message)
 
@@ -783,6 +798,8 @@ async def process_bank_rate_input(message: types.Message, state: FSMContext):
 async def cb_bank_owner_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, banker_id = cb_int(parts, 2), cb_int(parts, 3)
+    if chat_id is None or banker_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_bank_new_owner)
     await state.update_data(chat_id=chat_id, banker_id=banker_id,
                             menu_message_id=callback.message.message_id)
@@ -802,7 +819,10 @@ async def cb_bank_owner_prompt(callback: types.CallbackQuery, state: FSMContext)
 @creator_only
 async def process_bank_owner_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, old_banker_id = data["chat_id"], data["banker_id"]
+    chat_id, old_banker_id = data.get("chat_id"), data.get("banker_id")
+    if chat_id is None or old_banker_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
 
     target_id, target_data = await get_user_by_username_or_id(chat_id, message.text.strip())
     if not target_id:
@@ -826,11 +846,13 @@ async def process_bank_owner_input(message: types.Message, state: FSMContext):
 
         bank_doc = await old_ref.get()
         if not bank_doc.exists:
+            await state.clear()
             await message.answer("❌ Банк не найден.")
             return
 
         bank_data = bank_doc.to_dict()
         bank_data["banker_name"] = target_data.get("full_name", "Игрок")
+        bank_data["banker_id"] = target_id
 
         await new_ref.set(bank_data)
         await old_ref.delete()
@@ -861,6 +883,7 @@ async def process_bank_owner_input(message: types.Message, state: FSMContext):
             f"👤 Новый: <b>{escape_html(target_data.get('full_name'))}</b> (<code>{target_id}</code>)\n"
             f"👥 Перенаправлено вкладчиков: {updated}"
         )
+        await state.clear()
         await show_bank_detail_screen(message, state, chat_id, target_id)
         await safe_delete(message)
     except Exception as exc:  # noqa: BLE001
@@ -993,10 +1016,16 @@ async def process_bank_create_user_input(message: types.Message, state: FSMConte
 @creator_only
 async def process_bank_create_name_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id = data["chat_id"]
-    target_id = data["target_user_id"]
-    target_name = data["target_name"]
-    bank_name = message.text.strip()[: Cfg.BANK_NAME_MAXLEN]
+    chat_id = data.get("chat_id")
+    target_id = data.get("target_user_id")
+    target_name = data.get("target_name")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
+    bank_name = message.text.strip()[: Cfg.BANK_NAME_MAXLEN] if message.text else ""
+    if len(bank_name) < 2:
+        return await message.answer("❌ Название банка должно содержать минимум 2 символа. Введите повторно:")
 
     await update_user_field(chat_id, target_id, "is_banker", True)
     await flush_user_cache_immediately(chat_id, target_id)
@@ -1010,6 +1039,7 @@ async def process_bank_create_name_input(message: types.Message, state: FSMConte
     logger.info("Bank '%s' created for %s in chat %s", bank_name, target_id, chat_id)
 
     await message.answer(f"🏛 Банк <b>\"{escape_html(bank_name)}\"</b> создан, банкир назначен!")
+    await state.clear()
     await show_bank_detail_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -1021,6 +1051,8 @@ async def process_bank_create_name_input(message: types.Message, state: FSMConte
 @creator_only
 async def cb_player_search_prompt(callback: types.CallbackQuery, state: FSMContext):
     chat_id = cb_int(split_cb(callback.data), 2)
+    if chat_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_player_search)
     await state.update_data(chat_id=chat_id, menu_message_id=callback.message.message_id)
     builder = InlineKeyboardBuilder()
@@ -1038,11 +1070,18 @@ async def cb_player_search_prompt(callback: types.CallbackQuery, state: FSMConte
 @creator_only
 async def process_player_search_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id = data["chat_id"]
-    target_id, _ = await get_user_by_username_or_id(chat_id, message.text.strip())
+    chat_id = data.get("chat_id")
+    if chat_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
+    query_text = message.text.strip() if message.text else ""
+    target_id, _ = await get_user_by_username_or_id(chat_id, query_text)
     if not target_id:
         await message.answer("❌ Игрок не найден в базе чата. Попробуйте ещё раз:")
         return
+
+    await state.clear()
     await show_player_details_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -1050,6 +1089,7 @@ async def process_player_search_input(message: types.Message, state: FSMContext)
 async def show_player_details_screen(callback_or_message, state: FSMContext,
                                      chat_id: int, target_id: int, edit: bool = False) -> None:
     """Детальный экран профиля игрока."""
+    await state.clear()
     data = await get_user_data(chat_id, target_id)
 
     vip_status = "👑 Да" if data.get("is_vip") else "❌ Нет"
@@ -1349,7 +1389,11 @@ async def cb_player_money_add_prompt(callback: types.CallbackQuery, state: FSMCo
 @creator_only
 async def process_player_money_add(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
     val = parse_int(message.text)
     if val is None:
         await message.answer("❌ Сумма должна быть целым числом. Попробуйте ещё раз:")
@@ -1357,6 +1401,7 @@ async def process_player_money_add(message: types.Message, state: FSMContext):
     await update_user_balance(chat_id, target_id, val, action="Creator Panel Give")
     await flush_user_cache_immediately(chat_id, target_id)
     await message.answer(f"✅ Баланс изменён на {val:+,} сыроежек.")
+    await state.clear()
     await show_player_details_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -1366,6 +1411,8 @@ async def process_player_money_add(message: types.Message, state: FSMContext):
 async def cb_player_money_set_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_player_money_set)
     await state.update_data(chat_id=chat_id, target_user_id=target_id,
                             menu_message_id=callback.message.message_id)
@@ -1383,7 +1430,11 @@ async def cb_player_money_set_prompt(callback: types.CallbackQuery, state: FSMCo
 @creator_only
 async def process_player_money_set(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
     val = parse_int(message.text, allow_negative=False, minimum=0)
     if val is None:
         await message.answer("❌ Введите корректное положительное число:")
@@ -1391,6 +1442,7 @@ async def process_player_money_set(message: types.Message, state: FSMContext):
     await update_user_field(chat_id, target_id, "balance", val)
     await flush_user_cache_immediately(chat_id, target_id)
     await message.answer(f"✅ Установлен баланс: {fmt_money(val)} сыроежек.")
+    await state.clear()
     await show_player_details_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -1972,7 +2024,9 @@ async def cb_pdis_cure(callback: types.CallbackQuery, state: FSMContext):
 async def cb_pdis_inf(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
-    disease_id = parts[5] if len(parts) > 5 else ""
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
+    disease_id = "_".join(parts[5:]) if len(parts) > 5 else ""
     from diseases import infect_full_house, DISEASES
 
     if disease_id == "fullhouse":
@@ -1980,13 +2034,16 @@ async def cb_pdis_inf(callback: types.CallbackQuery, state: FSMContext):
         await safe_answer(callback, "✅ Игрок заражён всеми болезнями!", show_alert=True)
     else:
         data = await get_user_data(chat_id, target_id)
-        current = data.get("diseases")
-        if not isinstance(current, dict):
-            current = {}
-        current[disease_id] = time.time() + Cfg.DISEASE_INFECT_SECONDS
-        await update_user_field(chat_id, target_id, "diseases", current)
+        current = dict(data.get("diseases") or {})
         d_name = DISEASES.get(disease_id, {}).get("name", disease_id)
-        await safe_answer(callback, f"✅ Игрок заражён: {d_name}!", show_alert=True)
+        if disease_id in current and current[disease_id] > time.time():
+            current.pop(disease_id, None)
+            await update_user_field(chat_id, target_id, "diseases", current)
+            await safe_answer(callback, f"🧼 Вылечено: {d_name}!", show_alert=True)
+        else:
+            current[disease_id] = time.time() + Cfg.DISEASE_INFECT_SECONDS
+            await update_user_field(chat_id, target_id, "diseases", current)
+            await safe_answer(callback, f"🦠 Заражён: {d_name}!", show_alert=True)
 
     await flush_user_cache_immediately(chat_id, target_id)
     await cb_pdiseases_menu(callback, state)
@@ -2009,17 +2066,18 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
     text = (
         f"🎒 <b>Управление инвентарём</b>\n\n"
         f"👤 Игрок ID: <code>{target_id}</code>\n\n"
-        f"<b>Текущие вещи:</b>\n{inv_text}\n\nВыберите категорию:"
+        f"<b>Текущие вещи:</b>\n{inv_text}\n\nВыберите действие или категорию:"
     )
     builder = InlineKeyboardBuilder()
-    builder.button(text="🏢 Бизнесы", callback_data=f"db_pic_{chat_id}:{target_id}:0:biz")
-    builder.button(text="🚗 Машины", callback_data=f"db_pic_{chat_id}:{target_id}:0:cars")
-    builder.button(text="🎒 Прочее", callback_data=f"db_pic_{chat_id}:{target_id}:0:other")
-    builder.button(text="🐰 Дикторы", callback_data=f"db_pic_{chat_id}:{target_id}:0:tayniy_baniy")
-    builder.button(text="🌟 Престиж", callback_data=f"db_pic_{chat_id}:{target_id}:0:prestige")
+    builder.button(text="🏢 Бизнесы", callback_data=f"db_pic_{chat_id}:{target_id}:0:0")
+    builder.button(text="🚗 Машины", callback_data=f"db_pic_{chat_id}:{target_id}:0:1")
+    builder.button(text="🌟 Престиж", callback_data=f"db_pic_{chat_id}:{target_id}:0:2")
+    builder.button(text="🎒 Прочее", callback_data=f"db_pic_{chat_id}:{target_id}:0:3")
+    builder.button(text="🐰 Дикторы", callback_data=f"db_pic_{chat_id}:{target_id}:0:4")
+    builder.button(text="🔍 Выдать по названию / ID", callback_data=f"db_pisr_{chat_id}_{target_id}")
     builder.button(text="🧹 Очистить инвентарь", callback_data=f"db_pia_{chat_id}_{target_id}_clear")
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
-    builder.adjust(3, 2, 1, 1)
+    builder.adjust(2, 2, 1, 1, 1, 1)
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -2029,25 +2087,34 @@ async def cb_pinv_menu(callback: types.CallbackQuery, state: FSMContext):
 async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     payload = callback.data.removeprefix("db_pic_")
     if ":" in payload:
-        p_chat_id, p_target_id, p_page, cat = payload.split(":", 3)
-        chat_id = int(p_chat_id)
-        target_id = int(p_target_id)
-        page = int(p_page) if p_page.isdigit() else 0
+        parts = payload.split(":")
+        chat_id = int(parts[0])
+        target_id = int(parts[1])
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        cat_raw = parts[3] if len(parts) > 3 else "0"
     else:
         parts = split_cb(callback.data)
         chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
-        if len(parts) >= 6 and parts[4] == "tayniy" and parts[5] == "baniy":
-            cat = "tayniy_baniy"
-            p_val = cb_int(parts, 6, 0)
-            page = p_val if p_val is not None else 0
-        else:
-            cat = parts[4] if len(parts) > 4 else "other"
-            p_val = cb_int(parts, 5, 0)
-            page = p_val if p_val is not None else 0
+        cat_raw = parts[4] if len(parts) > 4 else "0"
+        page = cb_int(parts, 5, 0) or 0
+
+    from shop import (
+        ITEMS, ITEM_INDEX_MAP, CAT_INDEX_MAP, INDEX_CAT_MAP
+    )
+
+    if cat_raw.isdigit():
+        cat = INDEX_CAT_MAP.get(int(cat_raw), "other")
+    elif cat_raw in CAT_INDEX_MAP:
+        cat = cat_raw
+    elif cat_raw in ("tayniy_baniy", "tayniy"):
+        cat = "tayniy_baniy"
+    else:
+        cat = "other"
+
+    cat_code = CAT_INDEX_MAP.get(cat, 0)
 
     data = await get_user_data(chat_id, target_id)
     inventory = data.get("inventory", {}) or {}
-    from shop import ITEMS
     cat_names = {
         "biz": "🏢 Бизнесы",
         "cars": "🚗 Машины",
@@ -2057,7 +2124,7 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     }
 
     items_list = [(item_id, item_cfg) for item_id, item_cfg in ITEMS.items() if item_cfg.get("cat") == cat]
-    page_size = 8
+    page_size = 6
     total_pages = max(1, (len(items_list) + page_size - 1) // page_size)
     page = max(0, min(page, total_pages - 1))
     start_idx = page * page_size
@@ -2066,33 +2133,47 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
     text = (
         f"🎒 <b>Категория: {cat_names.get(cat, cat)}</b>\n"
         f"👤 Игрок ID: <code>{target_id}</code> | Страница: <b>{page + 1}/{total_pages}</b>\n\n"
-        f"Нажимайте ➖ или ➕ для изменения количества:"
+        f"Нажимайте ➖ или ➕ для изменения количества (или нажмите на название для точного ввода):"
     )
     builder = InlineKeyboardBuilder()
     rows = 0
     for item_id, item_cfg in page_items:
         qty = inventory.get(item_id, 0)
         item_name = item_cfg.get("name", item_id)
-        builder.button(text="➖", callback_data=f"db_pich_{chat_id}:{target_id}:m:{page}:{cat}:{item_id}")
-        builder.button(text=f"{item_name} ({qty})", callback_data=f"db_piq_{chat_id}:{target_id}:{cat}:{item_id}")
-        builder.button(text="➕", callback_data=f"db_pich_{chat_id}:{target_id}:p:{page}:{cat}:{item_id}")
+        item_idx = ITEM_INDEX_MAP.get(item_id, 0)
+        builder.button(text="➖", callback_data=f"db_pich_{chat_id}:{target_id}:m:{page}:{item_idx}")
+        builder.button(text=f"{item_name} ({qty})", callback_data=f"db_piq_{chat_id}:{target_id}:{item_idx}")
+        builder.button(text="➕", callback_data=f"db_pich_{chat_id}:{target_id}:p:{page}:{item_idx}")
         rows += 1
 
     # Пагинация
     if total_pages > 1:
         prev_p = max(0, page - 1)
         next_p = min(total_pages - 1, page + 1)
-        builder.button(text="◀️ Назад", callback_data=f"db_pic_{chat_id}:{target_id}:{prev_p}:{cat}")
-        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
-        builder.button(text="Вперед ▶️", callback_data=f"db_pic_{chat_id}:{target_id}:{next_p}:{cat}")
+        builder.button(text="◀️ Назад", callback_data=f"db_pic_{chat_id}:{target_id}:{prev_p}:{cat_code}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="db_noop")
+        builder.button(text="Вперед ▶️", callback_data=f"db_pic_{chat_id}:{target_id}:{next_p}:{cat_code}")
 
+    # Быстрые действия категории
+    if cat == "tayniy_baniy":
+        builder.button(text="🎁 Выдать ВСЕ 70 дикторов (x1)", callback_data=f"db_pial_{chat_id}_{target_id}_4")
+        builder.button(text="🌌 Выдать ТОП-5 (#66-70)", callback_data=f"db_pidtop5_{chat_id}_{target_id}")
+        builder.button(text="👑 Выдать #70 Антигравити", callback_data=f"db_pidtop1_{chat_id}_{target_id}")
+    else:
+        builder.button(text=f"🎁 Выдать всё в категории (x1)", callback_data=f"db_pial_{chat_id}_{target_id}_{cat_code}")
+
+    builder.button(text="🧹 Очистить эту категорию", callback_data=f"db_picl_{chat_id}_{target_id}_{cat_code}")
     builder.button(text="⬅️ Назад к категориям", callback_data=f"db_pim_{chat_id}_{target_id}")
 
+    layout = [3] * rows
     if total_pages > 1:
-        builder.adjust(*([3] * rows + [3, 1]))
+        layout.append(3)
+    if cat == "tayniy_baniy":
+        layout.extend([1, 2, 1, 1])
     else:
-        builder.adjust(*([3] * rows + [1]))
+        layout.extend([1, 1, 1])
 
+    builder.adjust(*layout)
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -2102,16 +2183,23 @@ async def cb_pinv_cat(callback: types.CallbackQuery, state: FSMContext):
 async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
     payload = callback.data.removeprefix("db_pich_")
     if ":" in payload:
-        p_chat_id, p_target_id, action, p_page, cat, item_id = payload.split(":", 5)
-        chat_id, target_id = int(p_chat_id), int(p_target_id)
-        page = int(p_page) if p_page.isdigit() else 0
+        parts = payload.split(":", 4)
+        chat_id = int(parts[0])
+        target_id = int(parts[1])
+        action = parts[2]
+        page = int(parts[3]) if parts[3].isdigit() else 0
+        item_ref = parts[4]
     else:
         parts = split_cb(callback.data)
         chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
-        item_id = parts[4]
-        action = parts[5]
-        cat = parts[6] if len(parts) > 6 else "other"
-        page = cb_int(parts, 7, 0) or 0
+        action = parts[4] if len(parts) > 4 else "p"
+        page = cb_int(parts, 5, 0) or 0
+        item_ref = parts[6] if len(parts) > 6 else "0"
+
+    from shop import ITEMS, CAT_INDEX_MAP, get_item_by_ref
+    item_id = get_item_by_ref(item_ref)
+    if not item_id or item_id not in ITEMS:
+        return await safe_answer(callback, "❌ Предмет не найден!", show_alert=True)
 
     data = await get_user_data(chat_id, target_id)
     inventory = dict(data.get("inventory", {}) or {})
@@ -2119,12 +2207,23 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
 
     if action == "p":
         inventory[item_id] = current_qty + 1
+        item_cfg = ITEMS.get(item_id, {})
+        if item_cfg.get("action") == "business":
+            biz_levels = dict(data.get("biz_levels") or {})
+            if item_id not in biz_levels:
+                biz_levels[item_id] = 1
+                await update_user_field(chat_id, target_id, "biz_levels", biz_levels)
         await safe_answer(callback, "➕ Количество увеличено!")
     elif action == "m":
         if current_qty <= 0:
             return await safe_answer(callback, "❌ Предмета уже 0 в инвентаре!", show_alert=True)
         if current_qty == 1:
             inventory.pop(item_id, None)
+            item_cfg = ITEMS.get(item_id, {})
+            if item_cfg.get("action") == "business":
+                biz_levels = dict(data.get("biz_levels") or {})
+                biz_levels.pop(item_id, None)
+                await update_user_field(chat_id, target_id, "biz_levels", biz_levels)
         else:
             inventory[item_id] = current_qty - 1
         await safe_answer(callback, "➖ Количество уменьшено!")
@@ -2132,9 +2231,269 @@ async def cb_pinv_change(callback: types.CallbackQuery, state: FSMContext):
     await update_user_field(chat_id, target_id, "inventory", inventory)
     asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
 
-    # Перерисовка категории на той же странице
-    callback.data = f"db_pic_{chat_id}:{target_id}:{page}:{cat}"
+    cat = ITEMS.get(item_id, {}).get("cat", "other")
+    cat_code = CAT_INDEX_MAP.get(cat, 0)
+    callback.data = f"db_pic_{chat_id}:{target_id}:{page}:{cat_code}"
     await cb_pinv_cat(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pial_"))
+@creator_only
+async def cb_pinv_category_give_all(callback: types.CallbackQuery, state: FSMContext):
+    """Выдача всех предметов выбранной категории по 1 шт."""
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 2, 0), cb_int(parts, 3, 0)
+    cat_code = cb_int(parts, 4, 0)
+
+    from shop import ITEMS, INDEX_CAT_MAP
+    cat = INDEX_CAT_MAP.get(cat_code, "other")
+    cat_items = [i_id for i_id, i_cfg in ITEMS.items() if i_cfg.get("cat") == cat]
+
+    data = await get_user_data(chat_id, target_id)
+    inventory = dict(data.get("inventory") or {})
+    biz_levels = dict(data.get("biz_levels") or {})
+
+    for item_id in cat_items:
+        inventory[item_id] = max(1, inventory.get(item_id, 0))
+        if ITEMS[item_id].get("action") == "business" and item_id not in biz_levels:
+            biz_levels[item_id] = 1
+
+    await update_user_field(chat_id, target_id, "inventory", inventory)
+    await update_user_field(chat_id, target_id, "biz_levels", biz_levels)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+
+    await safe_answer(callback, f"✅ Выданы все предметы категории ({len(cat_items)} шт.)!", show_alert=True)
+    callback.data = f"db_pic_{chat_id}:{target_id}:0:{cat_code}"
+    await cb_pinv_cat(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_picl_"))
+@creator_only
+async def cb_pinv_category_clear(callback: types.CallbackQuery, state: FSMContext):
+    """Очистка всех предметов выбранной категории."""
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 2, 0), cb_int(parts, 3, 0)
+    cat_code = cb_int(parts, 4, 0)
+
+    from shop import ITEMS, INDEX_CAT_MAP
+    cat = INDEX_CAT_MAP.get(cat_code, "other")
+    cat_items = set(i_id for i_id, i_cfg in ITEMS.items() if i_cfg.get("cat") == cat)
+
+    data = await get_user_data(chat_id, target_id)
+    inventory = dict(data.get("inventory") or {})
+    biz_levels = dict(data.get("biz_levels") or {})
+
+    for item_id in cat_items:
+        inventory.pop(item_id, None)
+        biz_levels.pop(item_id, None)
+
+    await update_user_field(chat_id, target_id, "inventory", inventory)
+    await update_user_field(chat_id, target_id, "biz_levels", biz_levels)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+
+    await safe_answer(callback, "🧹 Категория очищена!", show_alert=True)
+    callback.data = f"db_pic_{chat_id}:{target_id}:0:{cat_code}"
+    await cb_pinv_cat(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pidtop5_"))
+@creator_only
+async def cb_dictors_top5_give(callback: types.CallbackQuery, state: FSMContext):
+    """Выдача ТОП-5 дикторов (#66-70)."""
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 2, 0), cb_int(parts, 3, 0)
+    from user_manager import add_item_to_inventory, flush_user_cache_immediately
+    top5_ids = [
+        "dictor_creation",       # 66
+        "dictor_destruction",    # 67
+        "dictor_sovereign",      # 68
+        "dictor_godlike",        # 69
+        "dictor_antigravity",    # 70
+    ]
+    for d_id in top5_ids:
+        await add_item_to_inventory(chat_id, target_id, d_id, count=1)
+    await flush_user_cache_immediately(chat_id, target_id)
+    await safe_answer(callback, "🌌 ТОП-5 дикторов (#66-70) успешно выданы!", show_alert=True)
+    callback.data = f"db_pic_{chat_id}:{target_id}:0:4"
+    await cb_pinv_cat(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pidtop1_"))
+@creator_only
+async def cb_dictors_top1_give(callback: types.CallbackQuery, state: FSMContext):
+    """Выдача лучшего диктора (#70 Антигравити)."""
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 2, 0), cb_int(parts, 3, 0)
+    from user_manager import add_item_to_inventory, flush_user_cache_immediately
+    await add_item_to_inventory(chat_id, target_id, "dictor_antigravity", count=1)
+    await flush_user_cache_immediately(chat_id, target_id)
+    await safe_answer(callback, "👑 #70 Антигравитационный диктор выдан!", show_alert=True)
+    callback.data = f"db_pic_{chat_id}:{target_id}:0:4"
+    await cb_pinv_cat(callback, state)
+
+
+@router.callback_query(F.data.startswith("db_pisr_"))
+@creator_only
+async def cb_player_inv_search_prompt(callback: types.CallbackQuery, state: FSMContext):
+    """Интерактивный ввод ID или названия для точной выдачи предмета."""
+    parts = split_cb(callback.data)
+    chat_id, target_id = cb_int(parts, 2, 0), cb_int(parts, 3, 0)
+    await state.set_state(AdminPanelState.waiting_for_admin_give_item_query)
+    await state.update_data(chat_id=chat_id, target_user_id=target_id, menu_message_id=callback.message.message_id)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_pim_{chat_id}_{target_id}")
+    await safe_edit(
+        callback.message,
+        "🔍 <b>Выдача предмета по ID / названию</b>\n\n"
+        "Введите номер (1-70 для дикторов), ID или название любого предмета:\n"
+        "<i>Примеры:</i> <code>бмв</code>, <code>семечки</code>, <code>аптечка</code>, <code>70</code>, <code>бункер</code>, <code>майнер</code>, <code>гелик</code>\n\n"
+        "<i>Для отмены напишите 'отмена'.</i>",
+        builder.as_markup(),
+    )
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_admin_give_item_query)
+@creator_only
+async def process_admin_give_item_query(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    from shop import ITEMS, resolve_item_id
+    item_id = resolve_item_id(message.text)
+    if not item_id or item_id not in ITEMS:
+        return await message.answer(
+            f"❌ Предмет <code>{escape_html(message.text)}</code> не найден в каталоге.\n"
+            f"Попробуйте другое название (например: <code>бмв</code>, <code>семечки</code>, <code>70</code>, <code>бункер</code>) или напишите 'отмена':"
+        )
+
+    item_info = ITEMS[item_id]
+    u_data = await get_user_data(chat_id, target_id)
+    current_qty = (u_data.get("inventory") or {}).get(item_id, 0)
+
+    await state.set_state(AdminPanelState.waiting_for_admin_give_item_qty)
+    await state.update_data(item_id=item_id)
+
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_pim_{chat_id}_{target_id}")
+    await message.answer(
+        f"✅ <b>Найден предмет:</b> {item_info.get('name', item_id)} (<code>{item_id}</code>)\n"
+        f"У игрока в наличии: <b>{current_qty} шт.</b>\n\n"
+        f"Введите новое общее количество (от {Cfg.MIN_INV_QTY} до {Cfg.MAX_INV_QTY}, 0 — удалить):"
+    )
+    await safe_delete(message)
+
+
+@router.message(AdminPanelState.waiting_for_admin_give_item_qty)
+@creator_only
+async def process_admin_give_item_qty(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id, target_id, item_id = data["chat_id"], data["target_user_id"], data["item_id"]
+    val = parse_int(message.text, allow_negative=False, minimum=Cfg.MIN_INV_QTY, maximum=Cfg.MAX_INV_QTY)
+    if val is None:
+        return await message.answer(f"❌ Количество — целое число от {Cfg.MIN_INV_QTY} до {Cfg.MAX_INV_QTY}:")
+
+    from shop import ITEMS
+    u_data = await get_user_data(chat_id, target_id)
+    inv = dict(u_data.get("inventory") or {})
+    biz_levels = dict(u_data.get("biz_levels") or {})
+
+    if val == 0:
+        inv.pop(item_id, None)
+        biz_levels.pop(item_id, None)
+    else:
+        inv[item_id] = val
+        if ITEMS.get(item_id, {}).get("action") == "business" and item_id not in biz_levels:
+            biz_levels[item_id] = 1
+
+    await update_user_field(chat_id, target_id, "inventory", inv)
+    await update_user_field(chat_id, target_id, "biz_levels", biz_levels)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+
+    item_name = ITEMS.get(item_id, {}).get("name", item_id)
+    await message.answer(f"✅ Количество предмета <b>{item_name}</b> установлено в <b>{val} шт.</b>!")
+    await state.clear()
+    await cb_pinv_menu(
+        MockCallback(message, data.get("menu_message_id"), f"db_pim_{chat_id}_{target_id}"), state
+    )
+    await safe_delete(message)
+
+
+@router.callback_query(F.data.startswith("db_piq_"))
+@creator_only
+async def cb_player_inv_qty_prompt(callback: types.CallbackQuery, state: FSMContext):
+    payload = callback.data.removeprefix("db_piq_")
+    if ":" in payload:
+        parts = payload.split(":")
+        chat_id = int(parts[0])
+        target_id = int(parts[1])
+        item_ref = parts[2]
+    else:
+        parts = split_cb(callback.data)
+        chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
+        item_ref = parts[4] if len(parts) > 4 else "0"
+
+    from shop import ITEMS, CAT_INDEX_MAP, get_item_by_ref
+    item_id = get_item_by_ref(item_ref)
+    if not item_id or item_id not in ITEMS:
+        return await safe_answer(callback, "❌ Предмет не найден!", show_alert=True)
+
+    data = await get_user_data(chat_id, target_id)
+    current_qty = int((data.get("inventory", {}) or {}).get(item_id, 0) or 0)
+    item_name = ITEMS.get(item_id, {}).get("name", item_id)
+    cat = ITEMS.get(item_id, {}).get("cat", "other")
+    cat_code = CAT_INDEX_MAP.get(cat, 0)
+
+    await state.set_state(AdminPanelState.waiting_for_player_inv_qty)
+    await state.update_data(chat_id=chat_id, target_user_id=target_id, item_id=item_id,
+                            cat_code=cat_code, menu_message_id=callback.message.message_id)
+    builder = InlineKeyboardBuilder()
+    builder.button(text="❌ Отмена", callback_data=f"db_pic_{chat_id}:{target_id}:0:{cat_code}")
+    await safe_edit(
+        callback.message,
+        f"🎒 <b>Изменение количества</b>\n\n"
+        f"Предмет: <b>{item_name}</b> (<code>{item_id}</code>)\nТекущее: <b>{current_qty} шт.</b>\n\n"
+        f"Введите новое количество (от {Cfg.MIN_INV_QTY} до {Cfg.MAX_INV_QTY}, 0 — удалить):",
+        builder.as_markup(),
+    )
+    await safe_answer(callback)
+
+
+@router.message(AdminPanelState.waiting_for_player_inv_qty)
+@creator_only
+async def process_player_inv_qty_input(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    item_id, cat_code = data["item_id"], data.get("cat_code", 0)
+    val = parse_int(message.text, allow_negative=False, minimum=Cfg.MIN_INV_QTY, maximum=Cfg.MAX_INV_QTY)
+    if val is None:
+        await message.answer(f"❌ Количество — целое от {Cfg.MIN_INV_QTY} до {Cfg.MAX_INV_QTY}:")
+        return
+
+    from shop import ITEMS
+    u_data = await get_user_data(chat_id, target_id)
+    inv = dict(u_data.get("inventory", {}) or {})
+    biz_levels = dict(u_data.get("biz_levels", {}) or {})
+
+    if val == 0:
+        inv.pop(item_id, None)
+        biz_levels.pop(item_id, None)
+    else:
+        inv[item_id] = val
+        if ITEMS.get(item_id, {}).get("action") == "business" and item_id not in biz_levels:
+            biz_levels[item_id] = 1
+
+    await update_user_field(chat_id, target_id, "inventory", inv)
+    await update_user_field(chat_id, target_id, "biz_levels", biz_levels)
+    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
+
+    item_name = ITEMS.get(item_id, {}).get("name", item_id)
+    await message.answer(f"✅ Количество <b>{item_name}</b> установлено в <b>{val} шт.</b>")
+    await state.clear()
+    await cb_pinv_cat(
+        MockCallback(message, data["menu_message_id"], f"db_pic_{chat_id}:{target_id}:0:{cat_code}"), state
+    )
+    await safe_delete(message)
 
 
 # ==============================================================================
@@ -2185,14 +2544,17 @@ async def cb_pprestige_set(callback: types.CallbackQuery, state: FSMContext):
 async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
     payload = callback.data.removeprefix("db_pcards_menu_")
     if ":" in payload:
-        p_chat_id, p_target_id, p_page = payload.split(":", 2)
-        chat_id = int(p_chat_id)
-        target_id = int(p_target_id)
-        page = int(p_page) if p_page.isdigit() else 0
+        parts = payload.split(":", 2)
+        chat_id = int(parts[0]) if len(parts) > 0 and parts[0].lstrip("-").isdigit() else None
+        target_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
     else:
         parts = split_cb(callback.data)
-        chat_id, target_id = cb_int(parts, 3, 0) or 0, cb_int(parts, 4, 0) or 0
+        chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
         page = 0
+
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
 
     data = await get_user_data(chat_id, target_id)
     cards = data.get("meme_cards") or {}
@@ -2217,7 +2579,7 @@ async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
         qty = cards.get(cid, 0)
         cname = cinfo.get("name", cid)
         builder.button(text="➖", callback_data=f"db_pcard_ch_{chat_id}:{target_id}:m:{page}:{cid}")
-        builder.button(text=f"{cname} ({qty})", callback_data="noop")
+        builder.button(text=f"{cname} ({qty})", callback_data="db_noop")
         builder.button(text="➕", callback_data=f"db_pcard_ch_{chat_id}:{target_id}:p:{page}:{cid}")
         rows += 1
 
@@ -2226,7 +2588,7 @@ async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
         prev_p = max(0, page - 1)
         next_p = min(total_pages - 1, page + 1)
         builder.button(text="◀️ Назад", callback_data=f"db_pcards_menu_{chat_id}:{target_id}:{prev_p}")
-        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="db_noop")
         builder.button(text="Вперед ▶️", callback_data=f"db_pcards_menu_{chat_id}:{target_id}:{next_p}")
 
     builder.button(text="🎁 Выдать все карты x1", callback_data=f"db_pcard_all_{chat_id}_{target_id}")
@@ -2246,15 +2608,21 @@ async def cb_pcards_menu(callback: types.CallbackQuery, state: FSMContext):
 async def cb_pcard_change(callback: types.CallbackQuery, state: FSMContext):
     payload = callback.data.removeprefix("db_pcard_ch_")
     if ":" in payload:
-        p_chat_id, p_target_id, action, p_page, cid = payload.split(":", 4)
-        chat_id, target_id = int(p_chat_id), int(p_target_id)
-        page = int(p_page) if p_page.isdigit() else 0
+        parts = payload.split(":", 4)
+        chat_id = int(parts[0]) if len(parts) > 0 and parts[0].lstrip("-").isdigit() else None
+        target_id = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else None
+        action = parts[2] if len(parts) > 2 else "p"
+        page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+        cid = parts[4] if len(parts) > 4 else ""
     else:
         parts = split_cb(callback.data)
-        chat_id, target_id = cb_int(parts, 3, 0) or 0, cb_int(parts, 4, 0) or 0
-        action = parts[-1]
-        cid = "_".join(parts[5:-1])
+        chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+        action = parts[-1] if len(parts) > 0 else "p"
+        cid = "_".join(parts[5:-1]) if len(parts) > 6 else (parts[5] if len(parts) > 5 else "")
         page = 0
+
+    if chat_id is None or target_id is None or not cid:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
 
     data = await get_user_data(chat_id, target_id)
     cards = dict(data.get("meme_cards") or {})
@@ -2277,7 +2645,9 @@ async def cb_pcard_change(callback: types.CallbackQuery, state: FSMContext):
 @creator_only
 async def cb_pcard_all(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
-    chat_id, target_id = cb_int(parts, 3, 0) or 0, cb_int(parts, 4, 0) or 0
+    chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     from cards_system import CARDS
     cards = {cid: 1 for cid in CARDS.keys()}
     await update_user_field(chat_id, target_id, "meme_cards", cards)
@@ -2322,7 +2692,7 @@ async def cb_pquarantine_clear(callback: types.CallbackQuery, state: FSMContext)
     await cb_pquarantine_menu(callback, state)
 
 
-@router.callback_query(F.data == "db_noop")
+@router.callback_query(F.data.in_({"db_noop", "noop"}))
 async def cb_noop(callback: types.CallbackQuery):
     await safe_answer(callback)
 
@@ -2341,66 +2711,6 @@ async def cb_pinv_act(callback: types.CallbackQuery, state: FSMContext):
         asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
         await safe_answer(callback, "✅ Инвентарь очищен (коллекционные Дикторы сохранены)!", show_alert=True)
         await cb_pinv_menu(callback, state)
-
-
-@router.callback_query(F.data.startswith("db_piq_"))
-@creator_only
-async def cb_player_inv_qty_prompt(callback: types.CallbackQuery, state: FSMContext):
-    payload = callback.data.removeprefix("db_piq_")
-    if ":" in payload:
-        p_chat_id, p_target_id, cat, item_id = payload.split(":", 3)
-        chat_id, target_id = int(p_chat_id), int(p_target_id)
-    else:
-        parts = split_cb(callback.data)
-        chat_id, target_id = cb_int(parts, 2, 0) or 0, cb_int(parts, 3, 0) or 0
-        item_id = parts[4]
-        cat = parts[5] if len(parts) > 5 else "other"
-
-    data = await get_user_data(chat_id, target_id)
-    current_qty = int((data.get("inventory", {}) or {}).get(item_id, 0) or 0)
-    from shop import ITEMS
-    item_name = ITEMS.get(item_id, {}).get("name", item_id)
-
-    await state.set_state(AdminPanelState.waiting_for_player_inv_qty)
-    await state.update_data(chat_id=chat_id, target_user_id=target_id, item_id=item_id,
-                            cat=cat, menu_message_id=callback.message.message_id)
-    builder = InlineKeyboardBuilder()
-    builder.button(text="❌ Отмена", callback_data=f"db_pic_{chat_id}:{target_id}:0:{cat}")
-    await safe_edit(
-        callback.message,
-        f"🎒 <b>Изменение количества</b>\n\n"
-        f"Предмет: <b>{item_name}</b>\nТекущее: <b>{current_qty} шт.</b>\n\n"
-        f"Введите новое количество (от {Cfg.MIN_INV_QTY} до {Cfg.MAX_INV_QTY}):",
-        builder.as_markup(),
-    )
-    await safe_answer(callback)
-
-
-@router.message(AdminPanelState.waiting_for_player_inv_qty)
-@creator_only
-async def process_player_inv_qty_input(message: types.Message, state: FSMContext):
-    data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
-    item_id, cat = data["item_id"], data["cat"]
-    val = parse_int(message.text, allow_negative=False, minimum=Cfg.MIN_INV_QTY, maximum=Cfg.MAX_INV_QTY)
-    if val is None:
-        await message.answer(f"❌ Количество — целое от {Cfg.MIN_INV_QTY} до {Cfg.MAX_INV_QTY}:")
-        return
-
-    inv = dict((await get_user_data(chat_id, target_id)).get("inventory", {}) or {})
-    if val == 0:
-        inv.pop(item_id, None)
-    else:
-        inv[item_id] = val
-    await update_user_field(chat_id, target_id, "inventory", inv)
-    asyncio.create_task(flush_user_cache_immediately(chat_id, target_id))
-
-    await message.answer(f"✅ Количество установлено в {val}.")
-    await state.clear()
-    await cb_pinv_cat(
-        MockCallback(message, data["menu_message_id"], f"db_pic_{chat_id}:{target_id}:0:{cat}"), state
-    )
-    await safe_delete(message)
 
 
 # ==============================================================================
@@ -2428,7 +2738,11 @@ async def cb_player_reputation_prompt(callback: types.CallbackQuery, state: FSMC
 @creator_only
 async def process_player_reputation_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
     val = parse_int(message.text)
     if val is None:
         await message.answer("❌ Репутация — целое число. Попробуйте ещё раз:")
@@ -2436,6 +2750,7 @@ async def process_player_reputation_input(message: types.Message, state: FSMCont
     await update_user_field(chat_id, target_id, "reputation", val)
     await flush_user_cache_immediately(chat_id, target_id)
     await message.answer(f"✅ Репутация установлена в {val}.")
+    await state.clear()
     await show_player_details_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -2445,6 +2760,8 @@ async def process_player_reputation_input(message: types.Message, state: FSMCont
 async def cb_player_escort_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_player_escort)
     await state.update_data(chat_id=chat_id, target_user_id=target_id,
                             menu_message_id=callback.message.message_id)
@@ -2462,7 +2779,11 @@ async def cb_player_escort_prompt(callback: types.CallbackQuery, state: FSMConte
 @creator_only
 async def process_player_escort_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
     val = parse_int(message.text, allow_negative=False, minimum=0)
     if val is None:
         await message.answer("❌ Введите неотрицательное целое число:")
@@ -2470,6 +2791,7 @@ async def process_player_escort_input(message: types.Message, state: FSMContext)
     await update_user_field(chat_id, target_id, "escort_count", val)
     await flush_user_cache_immediately(chat_id, target_id)
     await message.answer(f"✅ Счётчик установлен в {val}.")
+    await state.clear()
     await show_player_details_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -2479,6 +2801,8 @@ async def process_player_escort_input(message: types.Message, state: FSMContext)
 async def cb_player_role_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_player_role)
     await state.update_data(chat_id=chat_id, target_user_id=target_id,
                             menu_message_id=callback.message.message_id)
@@ -2498,14 +2822,19 @@ async def cb_player_role_prompt(callback: types.CallbackQuery, state: FSMContext
 @creator_only
 async def process_player_role_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
-    text = message.text.strip()
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
+    text = message.text.strip() if message.text else ""
     role_lower = text.lower()
     clear_words = {"none", "отмена", "clear", "сбросить", "удалить"}
 
     if role_lower not in clear_words and ("создатель" in role_lower or "creator" in role_lower):
         if target_id not in CREATOR_IDS:
             await message.answer("❌ Роль 'Создатель' доступна только разработчикам бота.")
+            await state.clear()
             await show_player_details_screen(message, state, chat_id, target_id)
             await safe_delete(message)
             return
@@ -2520,6 +2849,7 @@ async def process_player_role_input(message: types.Message, state: FSMContext):
     await update_user_field(chat_id, target_id, "custom_role", role_val)
     await flush_user_cache_immediately(chat_id, target_id)
     await message.answer(success_text)
+    await state.clear()
     await show_player_details_screen(message, state, chat_id, target_id)
     await safe_delete(message)
 
@@ -2547,13 +2877,12 @@ async def cb_player_pet_menu(callback: types.CallbackQuery, state: FSMContext):
         f"👤 Игрок ID: <code>{target_id}</code>\n🐾 Питомец: <b>{pet_text}</b>\n\nВыберите действие:"
     )
     builder = InlineKeyboardBuilder()
-    builder.button(text="🐱 Выдать Кота", callback_data=f"db_ppet_act_{chat_id}_{target_id}_set_cat")
-    builder.button(text="🐶 Выдать Собаку", callback_data=f"db_ppet_act_{chat_id}_{target_id}_set_dog")
-    builder.button(text="🐉 Выдать Дракона", callback_data=f"db_ppet_act_{chat_id}_{target_id}_set_dragon")
+    for p_id, p_info in PETS_SHOP.items():
+        builder.button(text=f"🐾 Выдать: {p_info['name']}", callback_data=f"db_ppet_act_{chat_id}_{target_id}_set_{p_id}")
     builder.button(text="🍗 Покормить питомца", callback_data=f"db_ppet_act_{chat_id}_{target_id}_feed")
     builder.button(text="🗑 Убрать питомца", callback_data=f"db_ppet_act_{chat_id}_{target_id}_remove")
     builder.button(text="⬅️ Назад к профилю", callback_data=f"db_pv_{chat_id}_{target_id}")
-    builder.adjust(1)
+    builder.adjust(2, 2, 2, 1, 1, 1)
     await safe_edit(callback.message, text, builder.as_markup())
     await safe_answer(callback)
 
@@ -2563,6 +2892,8 @@ async def cb_player_pet_menu(callback: types.CallbackQuery, state: FSMContext):
 async def cb_player_pet_act(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     action = parts[5] if len(parts) > 5 else ""
     data = await get_user_data(chat_id, target_id)
     pet = data.get("pet")
@@ -2576,6 +2907,12 @@ async def cb_player_pet_act(callback: types.CallbackQuery, state: FSMContext):
         pet["last_fed"] = int(time.time())
         await update_user_field(chat_id, target_id, "pet", pet)
         await safe_answer(callback, "🍗 Питомец сыт и доволен!", show_alert=True)
+    elif action == "set" and len(parts) > 6:
+        pet_id = "_".join(parts[6:])
+        await update_user_field(chat_id, target_id, "pet", {"id": pet_id, "last_fed": int(time.time())})
+        from pets import PETS_SHOP
+        p_name = PETS_SHOP.get(pet_id, {}).get("name", pet_id)
+        await safe_answer(callback, f"✅ Выдан питомец: {p_name}!", show_alert=True)
     elif action.startswith("set_"):
         pet_id = action.replace("set_", "")
         await update_user_field(chat_id, target_id, "pet", {"id": pet_id, "last_fed": int(time.time())})
@@ -2616,8 +2953,13 @@ async def cb_player_skills_menu(callback: types.CallbackQuery, state: FSMContext
 async def cb_player_skills_change(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 2), cb_int(parts, 3)
-    sk_id = parts[4]
-    action = parts[5]
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
+    sk_id = parts[4] if len(parts) > 4 else ""
+    action = parts[5] if len(parts) > 5 else "p"
+    if not sk_id:
+        return await safe_answer(callback, "❌ Навык не найден.", show_alert=True)
+
     data = await get_user_data(chat_id, target_id)
     skills = dict(data.get("skills", {}) or {})
     current_lvl = skills.get(sk_id, 0)
@@ -2646,6 +2988,8 @@ async def cb_player_skills_change(callback: types.CallbackQuery, state: FSMConte
 async def cb_player_debts_menu(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     data = await get_user_data(chat_id, target_id)
     debts = data.get("debts", {}) or {}
 
@@ -2685,15 +3029,21 @@ async def cb_player_debts_menu(callback: types.CallbackQuery, state: FSMContext)
 async def cb_player_debt_delete(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     index = cb_int(parts, 5)
     state_data = await state.get_data()
     debt_keys = state_data.get("debt_keys", [])
+
+    data = await get_user_data(chat_id, target_id)
+    debts = dict(data.get("debts", {}) or {})
+    if not debt_keys:
+        debt_keys = list(debts.keys())
 
     if index is None or index >= len(debt_keys):
         return await safe_answer(callback, "❌ Ошибка: долг не найден.", show_alert=True)
 
     key_to_delete = debt_keys[index]
-    debts = dict((await get_user_data(chat_id, target_id)).get("debts", {}) or {})
     if key_to_delete in debts:
         del debts[key_to_delete]
         await update_user_field(chat_id, target_id, "debts", debts)
@@ -2743,11 +3093,18 @@ async def cb_player_debt_add_prompt(callback: types.CallbackQuery, state: FSMCon
 @creator_only
 async def process_debt_creditor_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
     cred_id, cred_data = await get_user_by_username_or_id(chat_id, message.text.strip())
     if not cred_id:
         await message.answer("❌ Кредитор не найден в базе. Попробуйте ещё раз:")
         return
+
+    if int(cred_id) == int(target_id):
+        return await message.answer("❌ Нельзя выдать долг самому себе! Укажите другого кредитора:")
 
     await state.set_state(AdminPanelState.waiting_for_debt_amount)
     await state.update_data(creditor_key=str(cred_id), creditor_name=cred_data.get("full_name", "Игрок"))
@@ -2766,7 +3123,9 @@ async def process_debt_creditor_input(message: types.Message, state: FSMContext)
 async def cb_player_debt_select_bank(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id, target_id = cb_int(parts, 3), cb_int(parts, 4)
-    banker_id = parts[5]
+    if chat_id is None or target_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
+    banker_id = parts[5] if len(parts) > 5 else ""
     bank_info = await get_bank_info(chat_id, banker_id)
     if not bank_info:
         return await safe_answer(callback, "Банк не найден.", show_alert=True)
@@ -2789,8 +3148,12 @@ async def cb_player_debt_select_bank(callback: types.CallbackQuery, state: FSMCo
 @creator_only
 async def process_debt_amount_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, target_id = data["chat_id"], data["target_user_id"]
-    creditor_key, creditor_name = data["creditor_key"], data["creditor_name"]
+    chat_id, target_id = data.get("chat_id"), data.get("target_user_id")
+    if chat_id is None or target_id is None:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
+
+    creditor_key, creditor_name = data.get("creditor_key"), data.get("creditor_name")
     amount = parse_int(message.text, allow_negative=False, minimum=1)
     if amount is None:
         await message.answer("❌ Сумма — целое число больше нуля. Введите повторно:")
@@ -2915,10 +3278,52 @@ async def cb_toggle_maintenance(callback: types.CallbackQuery, state: FSMContext
     await cb_global_settings_view(callback, state)
 
 
+@router.message(Command("broadcast", "рассылка"))
+@creator_only
+async def cmd_global_broadcast(message: types.Message, state: FSMContext):
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1 and args[1].strip():
+        whitelist = await get_whitelist()
+        status_msg = await message.answer(
+            f"📡 <b>Рассылка запущена!</b>\nЧатов: {len(whitelist)}\n\nБот оповестит о завершении."
+        )
+        creator_id = message.from_user.id
+        bot = message.bot
+        broadcast_text = args[1].strip()
+
+        async def run_broadcast_task() -> None:
+            success, fail = 0, 0
+            for cid in whitelist.keys():
+                try:
+                    await bot.send_message(chat_id=cid, text=broadcast_text, parse_mode="HTML")
+                    success += 1
+                    await asyncio.sleep(Cfg.BROADCAST_DELAY)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("broadcast to %s failed: %s", cid, exc)
+                    fail += 1
+            try:
+                await bot.send_message(
+                    chat_id=creator_id,
+                    text=(f"✅ <b>Рассылка завершена!</b>\n\n"
+                          f"Успешно: <b>{success}</b>\nНе удалось: <b>{fail}</b>"),
+                )
+            except Exception:
+                pass
+
+        asyncio.create_task(run_broadcast_task())
+        return
+
+    await state.set_state(AdminPanelState.waiting_for_global_broadcast)
+    await state.update_data(chat_id=message.chat.id)
+    await message.answer("📡 <b>Глобальная рассылка</b>\n\nОтправьте сообщение (текст, фото или пересылку), которое нужно разослать во все чаты:")
+
+
 @router.callback_query(F.data.startswith("db_gbroadcast_prompt_"))
 @creator_only
 async def cb_global_broadcast_prompt(callback: types.CallbackQuery, state: FSMContext):
     chat_id = cb_int(split_cb(callback.data), 3)
+    if chat_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     await state.set_state(AdminPanelState.waiting_for_global_broadcast)
     await state.update_data(chat_id=chat_id, menu_message_id=callback.message.message_id)
     builder = InlineKeyboardBuilder()
@@ -3353,6 +3758,7 @@ async def cb_perform_clan_delete(callback: types.CallbackQuery, state: FSMContex
         await safe_answer(callback, f"Клан {clan_name} распущен!", show_alert=True)
     else:
         await safe_answer(callback, "Клан не найден.")
+    callback.data = f"db_clans_list_{chat_id}"
     await cb_clans_list(callback, state)
 
 
@@ -3487,6 +3893,9 @@ async def cb_clan_kick(callback: types.CallbackQuery, state: FSMContext):
     if not doc.exists:
         return await safe_answer(callback, "Клан не найден.")
     clan_data = doc.to_dict() or {}
+    leader_id = clan_data.get("leader_id")
+    if member_id == leader_id:
+        return await safe_answer(callback, "❌ Нельзя исключить лидера клана!", show_alert=True)
     members = list(clan_data.get("members", []))
     deputies = list(clan_data.get("deputy_ids", []))
     if member_id in members:
@@ -3940,7 +4349,7 @@ async def process_coin_name_input(message: types.Message, state: FSMContext):
 async def cb_crypto_coin_view(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id = cb_int(parts, 3, default=0)
-    ticker = parts[4].lower()
+    ticker = "_".join(parts[4:]).lower() if len(parts) > 4 else ""
     
     from crypto import get_all_coins
     coins = await get_all_coins()
@@ -3978,7 +4387,7 @@ async def cb_crypto_coin_view(callback: types.CallbackQuery, state: FSMContext):
 async def cb_crypto_price_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id = cb_int(parts, 3, default=0)
-    ticker = parts[4].lower()
+    ticker = "_".join(parts[4:]).lower() if len(parts) > 4 else ""
     
     await state.set_state(AdminPanelState.waiting_for_coin_price)
     await state.update_data(chat_id=chat_id, coin_ticker=ticker, menu_message_id=callback.message.message_id)
@@ -3999,7 +4408,10 @@ async def cb_crypto_price_prompt(callback: types.CallbackQuery, state: FSMContex
 @creator_only
 async def process_coin_price_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, ticker = data["chat_id"], data["coin_ticker"]
+    chat_id, ticker = data.get("chat_id"), data.get("coin_ticker")
+    if chat_id is None or not ticker:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
     
     price = parse_int(message.text, allow_negative=False, minimum=1)
     if price is None:
@@ -4023,7 +4435,7 @@ async def process_coin_price_input(message: types.Message, state: FSMContext):
 async def cb_crypto_crash_prompt(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id = cb_int(parts, 3, default=0)
-    ticker = parts[4].lower()
+    ticker = "_".join(parts[4:]).lower() if len(parts) > 4 else ""
     
     await state.set_state(AdminPanelState.waiting_for_coin_crash)
     await state.update_data(chat_id=chat_id, coin_ticker=ticker, menu_message_id=callback.message.message_id)
@@ -4046,7 +4458,10 @@ async def cb_crypto_crash_prompt(callback: types.CallbackQuery, state: FSMContex
 @creator_only
 async def process_coin_crash_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    chat_id, ticker = data["chat_id"], data["coin_ticker"]
+    chat_id, ticker = data.get("chat_id"), data.get("coin_ticker")
+    if chat_id is None or not ticker:
+        await state.clear()
+        return await message.answer("❌ Сессия устарела. Откройте меню заново: <code>/admin</code>")
     
     percent = parse_int(message.text, allow_negative=True)
     if percent is None or percent < -99 or percent > 1000:
@@ -4078,7 +4493,7 @@ async def process_coin_crash_input(message: types.Message, state: FSMContext):
 async def cb_crypto_del_confirm(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id = cb_int(parts, 3, default=0)
-    ticker = parts[4].lower()
+    ticker = "_".join(parts[4:]).lower() if len(parts) > 4 else ""
     
     from crypto import get_all_coins
     coins = await get_all_coins()
@@ -4111,7 +4526,7 @@ async def cb_crypto_del_confirm(callback: types.CallbackQuery, state: FSMContext
 async def cb_crypto_del_execute(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id = cb_int(parts, 3, default=0)
-    ticker = parts[4].lower()
+    ticker = "_".join(parts[4:]).lower() if len(parts) > 4 else ""
     
     await safe_edit(callback.message, f"🗑 <i>Провожу делистинг монеты {ticker.upper()}... Пожалуйста, подождите.</i>")
     await safe_answer(callback, "🔄 Запуск делистинга...")
@@ -4276,12 +4691,14 @@ async def cb_extra_bankers(callback: types.CallbackQuery, state: FSMContext):
 async def cb_extra_delbanker(callback: types.CallbackQuery, state: FSMContext):
     parts = split_cb(callback.data)
     chat_id = cb_int(parts, 3, default=0)
-    target_chat_id = parts[4]
-    target_user_id = parts[5]
+    target_chat_id = cb_int(parts, 4)
+    target_user_id = cb_int(parts, 5)
+    if target_chat_id is None or target_user_id is None:
+        return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     
     from user_manager import update_user_field, invalidate_user_cache
-    await update_user_field(int(target_chat_id), int(target_user_id), 'is_banker', False)
-    invalidate_user_cache(int(target_chat_id), int(target_user_id))
+    await update_user_field(target_chat_id, target_user_id, 'is_banker', False)
+    invalidate_user_cache(target_chat_id, target_user_id)
     
     await safe_answer(callback, "✅ Банкир успешно разжалован!", show_alert=True)
     await cb_extra_bankers(callback, state)

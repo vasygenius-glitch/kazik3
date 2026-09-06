@@ -8,6 +8,9 @@ assets/cards/cache/
 scratch/
 data/
 .agents/
+*_audit.txt
+audit_report.txt
+test_audit.py
 
 
 

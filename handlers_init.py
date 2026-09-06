@@ -42,6 +42,8 @@ from feedback import router as feedback_router
 from prestige import router as prestige_router
 from jackpot import router as jackpot_router
 from pm_sync import pm_sync_router
+from duels import router as duels_router
+from battle_pass import router as battle_pass_router
 
 import asyncio
 from user_manager import get_user_data, update_user_balance
@@ -144,4 +146,6 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(court_router)
     dp.include_router(cards_system_router)
     dp.include_router(pm_sync_router)
+    dp.include_router(duels_router)
+    dp.include_router(battle_pass_router)
     dp.include_router(catch_all_router)

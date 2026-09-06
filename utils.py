@@ -1,5 +1,8 @@
 import asyncio
+import logging
 from contextlib import suppress
+
+logger = logging.getLogger(__name__)
 
 _background_tasks = set()
 
@@ -11,7 +14,9 @@ def fire_and_forget(coro):
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        return  # No running event loop
+        if asyncio.iscoroutine(coro):
+            coro.close()
+        return None  # No running event loop; do not leak an unawaited coroutine.
 
     async def _runner():
         try:
@@ -20,11 +25,24 @@ def fire_and_forget(coro):
             elif hasattr(coro, '__await__'):
                 await coro
         except Exception:
-            pass  # Подавляем unretrieved task exception для фоновых задач
+            logger.exception("Ошибка фоновой операции")
 
     task = loop.create_task(_runner())
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
+    return task
+
+
+async def drain_background_tasks(timeout: float = 5.0):
+    """Give best-effort tasks time to finish, then cancel remaining work."""
+    tasks = set(_background_tasks)
+    if not tasks:
+        return
+    _, pending = await asyncio.wait(tasks, timeout=timeout)
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def schedule_delete(*messages, delay: int = 40):

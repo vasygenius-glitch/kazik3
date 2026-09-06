@@ -1,154 +1,110 @@
 import asyncio
 import logging
 import os
-import socket
 import warnings
+from functools import partial
+
 import aiohttp
-from urllib.parse import urlparse
-from aiohttp import web, ClientError
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
-from aiogram.client.session.middlewares.base import BaseRequestMiddleware
 from aiogram.client.telegram import TelegramAPIServer, PRODUCTION
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramNetworkError, TelegramRetryAfter
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import BOT_TOKEN, FIREBASE_KEY_PATH
+
+from config import (
+    BOT_TOKEN,
+    FIREBASE_KEY_PATH,
+    API_TIMEOUT_SECONDS,
+    API_CONNECT_TIMEOUT_SECONDS,
+    API_RETRY_DELAY_SECONDS,
+)
 from db import init_db
 from handlers_init import register_all_handlers
+from runtime import RuntimeStatus, TaskSupervisor, create_health_app
+from telegram_retry import RetryRequestMiddleware
 from whitelist_middleware import WhitelistMiddleware
 
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    message="Detected filter.*positional arguments",
-)
+warnings.filterwarnings("ignore", category=UserWarning, message="Detected filter.*positional arguments")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Порт для Hugging Face Space Health Check
-WEB_SERVER_HOST = "0.0.0.0"
-WEB_SERVER_PORT = 7860
-
-class RetryRequestMiddleware(BaseRequestMiddleware):
-
-    def __init__(self, max_retries: int = 3):
-        self.max_retries = max_retries
-
-    async def __call__(self, make_request, bot, method):
-        last_exc = None
-        for attempt in range(1, self.max_retries + 1):
-            try:
-                return await make_request(bot, method)
-            except TelegramRetryAfter as e:
-                logger.warning(
-                    "⏳ Превышен лимит флуда Telegram (Flood Control). Ожидание %s сек. перед повторным запросом...",
-                    e.retry_after
-                )
-                await asyncio.sleep(e.retry_after + 1)
-                continue
-            except (TelegramNetworkError, ClientError, asyncio.TimeoutError, OSError) as e:
-                last_exc = e
-                if attempt < self.max_retries:
-                    delay = 1.0 * attempt
-                    logger.warning(
-                        "Сетевая ошибка воркера (%s: %s), попытка %s/%s...",
-                        type(e).__name__, e, attempt, self.max_retries
-                    )
-                    await asyncio.sleep(delay)
-        if last_exc:
-            raise last_exc
-
-
 
 class CustomAiohttpSession(AiohttpSession):
-
     async def create_session(self) -> aiohttp.ClientSession:
-        if self._should_reset_connector:
+        if getattr(self, "_should_reset_connector", False):
             await self.close()
-
         if self._session is None or self._session.closed:
+            connector_type = getattr(self, "_connector_type", aiohttp.TCPConnector)
+            connector_init = getattr(self, "_connector_init", {})
             self._session = aiohttp.ClientSession(
-                connector=self._connector_type(**self._connector_init),
-                trust_env=True,
+                connector=connector_type(**connector_init), trust_env=True,
             )
             self._should_reset_connector = False
-
         return self._session
 
 
-async def _test_network(url: str):
-    import urllib.request
-    try:
-        def _do():
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
-            with urllib.request.urlopen(req, timeout=4.0) as resp:
-                return resp.status
-        status = await asyncio.to_thread(_do)
-        logger.info("📡 [Сетевой тест urllib] Доступ к %s: УСПЕШНО (HTTP %s)", url, status)
-    except Exception as e:
-        logger.warning("📡 [Сетевой тест urllib] Ошибка доступа к %s: %s", url, e)
-
-
 def _build_bot(api_server: TelegramAPIServer) -> Bot:
-    session = CustomAiohttpSession(api=api_server, timeout=30)
+    session = CustomAiohttpSession(api=api_server, timeout=API_TIMEOUT_SECONDS)
     session.middleware(RetryRequestMiddleware())
-    return Bot(
-        token=BOT_TOKEN,
-        session=session,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    return Bot(token=BOT_TOKEN, session=session,
+               default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+
 
 async def _create_bot() -> Bot:
     if not BOT_TOKEN:
-        logger.error("❌ ОШИБКА: BOT_TOKEN не найден в переменных окружения!")
-    else:
-        masked = BOT_TOKEN[:6] + "..." + BOT_TOKEN[-4:] if len(BOT_TOKEN) > 10 else "***"
-        logger.info("🔑 BOT_TOKEN обнаружен: %s (длина %s)", masked, len(BOT_TOKEN))
-
+        raise RuntimeError("BOT_TOKEN не задан. Настройте окружение перед запуском.")
     custom_proxy = os.environ.get("TELEGRAM_API_URL", "").strip().rstrip("/")
-    if custom_proxy:
-        await _test_network(custom_proxy)
-    await _test_network("https://api.telegram.org")
-    
     candidates = []
-    if custom_proxy and custom_proxy != "https://123123-woad.vercel.app":
-        candidates.append(("Кастомный ПРОКСИ (" + custom_proxy + ")", TelegramAPIServer.from_base(custom_proxy)))
-    elif custom_proxy == "https://123123-woad.vercel.app":
-        candidates.append(("Прокси Vercel", TelegramAPIServer.from_base("https://123123-woad.vercel.app")))
-    
-    candidates.append(("Стандартный сервер", PRODUCTION))
-
-    last_error = None
+    if custom_proxy:
+        candidates.append(("custom", TelegramAPIServer.from_base(custom_proxy)))
+    candidates.append(("telegram", PRODUCTION))
     for name, server in candidates:
         for attempt in range(1, 3):
             bot = _build_bot(server)
+            connected = False
             try:
-                me = await asyncio.wait_for(bot.get_me(), timeout=12.0)
-                logger.info("✅ Успешно подключено к Telegram API! Бот: @%s", me.username)
+                me = await asyncio.wait_for(bot.get_me(), timeout=API_CONNECT_TIMEOUT_SECONDS)
+                connected = True
+                logger.info("Подключено к Telegram: @%s", me.username)
                 return bot
-            except Exception as e:
-                last_error = e
-                err_str = str(e) or repr(e)
-                logger.warning("⚠️ [%s] Попытка %s/2 не удалась (%s: %s)", name, attempt, type(e).__name__, err_str)
-                await bot.session.close()
-                if attempt < 2:
-                    await asyncio.sleep(1.5)
-
-    raise RuntimeError(
-        f"Не удалось запустить бота ни одним способом. Последняя ошибка: {last_error}.\n"
-        f"Если api.telegram.org заблокирован на вашем хостинге, разверните прокси (папка tg_proxy_render) и укажите TELEGRAM_API_URL."
-    )
+            except Exception as exc:
+                # Network exceptions may contain the entire token-bearing URL.
+                logger.warning("Telegram connection %s attempt %s/2 failed (%s)",
+                               name, attempt, type(exc).__name__)
+            finally:
+                if not connected:
+                    await bot.session.close()
+            if attempt < 2:
+                await asyncio.sleep(API_RETRY_DELAY_SECONDS)
+    raise RuntimeError("Нет подключения к Telegram. Проверьте токен, сеть и TELEGRAM_API_URL.")
 
 
+async def create_storage():
+    redis_url = os.environ.get("REDIS_URL")
+    if redis_url:
+        client = None
+        try:
+            from aiogram.fsm.storage.redis import RedisStorage
+            from redis.asyncio import Redis
+            client = Redis.from_url(redis_url, socket_timeout=3, socket_connect_timeout=3,
+                                    health_check_interval=30)
+            await asyncio.wait_for(client.ping(), timeout=3)
+            logger.info("RedisStorage подключен.")
+            return RedisStorage(redis=client)
+        except BaseException as exc:
+            if client is not None:
+                await client.aclose()
+            if not isinstance(exc, Exception):
+                raise
+            logger.warning("Redis недоступен (%s); используется MemoryStorage.", type(exc).__name__)
+    else:
+        logger.warning("REDIS_URL не задан; FSM-состояния не сохраняются при перезапуске.")
+    return MemoryStorage()
 
 
-background_tasks = []
-
-async def on_startup(bot: Bot):
-    logger.info("✅ Запуск фоновых задач бота...")
-    
+async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus):
     from admin_logs import admin_alert_worker
     from backup_system import backup_database_task
     from chat_stats import flush_stats_task, weekly_reset_task
@@ -156,108 +112,84 @@ async def on_startup(bot: Bot):
     from stocks import update_stocks_task
     from user_manager import flush_user_data_task
     from seasons import season_rotator_task
-    
-    background_tasks.extend([
-        asyncio.create_task(flush_logs(bot)),
-        asyncio.create_task(weekly_reset_task(bot)),
-        asyncio.create_task(flush_stats_task()),
-        asyncio.create_task(flush_user_data_task()),
-        asyncio.create_task(update_stocks_task()),
-        asyncio.create_task(admin_alert_worker(bot)),
-        asyncio.create_task(backup_database_task()),
-        asyncio.create_task(season_rotator_task(bot)),
-    ])
-    logger.info("Все фоновые задачи успешно инициализированы.")
 
-async def on_shutdown(bot: Bot, storage):
-    logger.info("Бот завершает работу.")
-    for task in background_tasks:
-        task.cancel()
-    if background_tasks:
-        await asyncio.gather(*background_tasks, return_exceptions=True)
-        
+    workers = {
+        "logs": partial(flush_logs, bot),
+        "weekly_stats": partial(weekly_reset_task, bot),
+        "chat_stats": flush_stats_task,
+        "user_data": flush_user_data_task,
+        "stocks": update_stocks_task,
+        "admin_alerts": partial(admin_alert_worker, bot),
+        "backups": backup_database_task,
+        "seasons": partial(season_rotator_task, bot),
+    }
+    for name, factory in workers.items():
+        supervisor.start(name, factory)
+    status.ready = True
+    logger.info("Запущено фоновых задач: %s", len(workers))
+
+
+async def on_shutdown(bot, storage, supervisor, status):
+    status.ready = False
+    await supervisor.stop()
+    from utils import drain_background_tasks
+    from user_manager import flush_user_data
+    await drain_background_tasks(timeout=5)
     try:
-        from user_manager import flush_user_data
-        await asyncio.wait_for(flush_user_data(), timeout=10)
+        quota_hit = await asyncio.wait_for(flush_user_data(), timeout=15)
+        from user_manager import _dirty_cache
+        if quota_hit or _dirty_cache:
+            logger.error("Завершение с несохранёнными профилями: %s", len(_dirty_cache))
     except Exception:
-        pass
-        
-    await storage.close()
-    await bot.session.close()
+        logger.exception("Не удалось выполнить финальное сохранение профилей")
+    try:
+        await storage.close()
+    finally:
+        if bot is not None:
+            await bot.session.close()
+
 
 async def main():
-    redis_url = os.environ.get("REDIS_URL")
-
-
-    storage = None
-    if redis_url:
-        try:
-            from aiogram.fsm.storage.redis import RedisStorage
-            from redis.asyncio import Redis
-            redis_client = Redis.from_url(
-                redis_url,
-                socket_timeout=3.0,
-                socket_connect_timeout=3.0,
-                health_check_interval=30,
-                retry_on_timeout=True
-            )
-            await asyncio.wait_for(redis_client.ping(), timeout=3.0)
-            storage = RedisStorage(redis=redis_client)
-            logger.info("✅ RedisStorage успешно подключен и проверен!")
-        except Exception as e:
-            logger.warning("⚠️ Ошибка подключения к Redis (%s). Переключение на MemoryStorage.", e)
-            storage = MemoryStorage()
-    else:
-        storage = MemoryStorage()
-        logger.warning("REDIS_URL не найден. Используется MemoryStorage.")
-
-        
-    dp = Dispatcher(storage=storage)
-    
+    # Never continue serving economy operations after a failed DB initialization.
+    init_db(FIREBASE_KEY_PATH)
+    storage = await create_storage()
+    supervisor = TaskSupervisor()
+    status = RuntimeStatus(supervisor)
+    bot = None
+    runner = None
     try:
-        init_db(FIREBASE_KEY_PATH)
-        logger.info("База данных подключена.")
-    except Exception:
-        logger.exception("Не удалось подключить базу данных.")
-        
-    from cooldown_middleware import CooldownMiddleware
-    from log_system import LoggingMiddleware
-    
-    dp.message.outer_middleware(WhitelistMiddleware())
-    dp.message.outer_middleware(LoggingMiddleware())
-    dp.callback_query.outer_middleware(WhitelistMiddleware())
-    dp.callback_query.outer_middleware(LoggingMiddleware())
-    dp.callback_query.middleware(CooldownMiddleware())
-    
-    register_all_handlers(dp)
-    
-    bot = await _create_bot()
-    dp.startup.register(on_startup)
-    
-    # Создаем веб-сервер aiohttp только ради Health Check для Hugging Face
-    app = web.Application()
-    
-    async def health(request):
-        return web.Response(text="Bot is running")
-        
-    app.router.add_get("/", health)
-    app.router.add_get("/health", lambda r: web.json_response({"status": "ok"}))
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    site = web.TCPSite(runner, WEB_SERVER_HOST, WEB_SERVER_PORT)
-    await site.start()
-    logger.info("Веб-сервер для Health Check запущен на порту %s", WEB_SERVER_PORT)
-    
-    try:
-        logger.info("Запуск бота в режиме Long Polling...")
-        # Перед стартом принудительно удаляем старый вебхук, если он был установлен
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+        dp = Dispatcher(storage=storage)
+        from cooldown_middleware import CooldownMiddleware
+        from log_system import LoggingMiddleware
+
+        # Cheap button throttling runs before database-heavy middleware.
+        dp.callback_query.outer_middleware(CooldownMiddleware())
+        for observer in (dp.message, dp.callback_query):
+            observer.outer_middleware(WhitelistMiddleware())
+            observer.outer_middleware(LoggingMiddleware())
+        register_all_handlers(dp)
+        bot = await _create_bot()
+        dp.startup.register(partial(on_startup, supervisor=supervisor, status=status))
+
+        runner = web.AppRunner(create_health_app(status))
+        await runner.setup()
+        port = int(os.environ.get("PORT", "7860"))
+        host = os.environ.get("WEB_SERVER_HOST", "0.0.0.0")
+        await web.TCPSite(runner, host, port).start()
+        logger.info("Health server listening on port %s", port)
+
+        # Preserve queued updates by default. Dropping them must be deliberate.
+        drop_pending = os.environ.get("DROP_PENDING_UPDATES", "false").lower() == "true"
+        await bot.delete_webhook(drop_pending_updates=drop_pending)
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types(),
+                               close_bot_session=False)
     finally:
-        await on_shutdown(bot, storage)
-        await runner.cleanup()
+        try:
+            await on_shutdown(bot, storage, supervisor, status)
+        finally:
+            if runner is not None:
+                await runner.cleanup()
+
 
 if __name__ == "__main__":
     try:

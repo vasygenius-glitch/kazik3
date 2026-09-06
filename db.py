@@ -1,5 +1,9 @@
 import os
 import json
+import copy
+import tempfile
+from pathlib import Path
+import logging
 import firebase_admin
 from firebase_admin import credentials
 from firebase_admin import firestore_async
@@ -50,20 +54,34 @@ class MockDB:
 
     def _load(self):
         if os.path.exists(self.filepath):
-            try:
-                with open(self.filepath, 'r', encoding='utf-8') as f:
-                    self.data = json.load(f)
-                print(f"✅ Локальная база данных успешно загружена из {self.filepath}")
-            except Exception as e:
-                print(f"⚠️ Ошибка чтения {self.filepath}: {e}")
+            # Never silently replace a corrupt database with an empty one.
+            with open(self.filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                raise ValueError("Local database root must be an object")
+            self.data = data
 
     def save(self):
+        """Atomic replacement; interrupted serialization preserves the old file.
+
+        This development backend is single-process, not a Firestore substitute.
+        Persistence errors propagate so the write-behind cache can retry.
+        """
+        target = Path(self.filepath).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = None
         try:
-            os.makedirs(os.path.dirname(self.filepath), exist_ok=True)
-            with open(self.filepath, 'w', encoding='utf-8') as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"⚠️ Ошибка сохранения локальной БД: {e}")
+            with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                             dir=target.parent, prefix=target.name + '.',
+                                             suffix='.tmp', delete=False) as f:
+                temp_path = f.name
+                json.dump(self.data, f, ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, target)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
 
     def collection(self, name):
         return MockCollection(self, self.data, name)
@@ -151,8 +169,8 @@ class MockDocument:
         class MockDocRes:
             def __init__(self, exists, data=None):
                 self.exists = exists
-                self._data = data or {}
-            def to_dict(self): return self._data
+                self._data = copy.deepcopy(data or {})
+            def to_dict(self): return copy.deepcopy(self._data)
 
         if '_data' in self.doc_node:
             return MockDocRes(True, self.doc_node['_data'])
@@ -180,37 +198,27 @@ class MockDocument:
 
 def init_db(key_path):
     global db
-    import json
-
+    backend = os.environ.get("DB_BACKEND", "auto").strip().lower()
+    if backend not in {"auto", "firestore", "local"}:
+        raise ValueError("DB_BACKEND must be auto, firestore or local")
     fb_config = os.environ.get("FIREBASE_JSON")
-    cred = None
-
-    if fb_config:
-        try:
-            cred_dict = json.loads(fb_config)
-            cred = credentials.Certificate(cred_dict)
-            print("✅ Загружен ключ Firebase из переменной окружения (Секрета).")
-        except Exception as e:
-            print(f"❌ Ошибка парсинга FIREBASE_JSON: {e}")
-    elif os.path.exists(key_path):
-        cred = credentials.Certificate(key_path)
-        print(f"✅ Загружен ключ Firebase из файла: {key_path}")
-
-    # При наличии ключа подключаем основной Firebase Firestore с реальными балансами
-    if cred:
-        try:
-            if not firebase_admin._apps:
-                firebase_admin.initialize_app(cred)
-            db = firestore_async.client()
-            print("✅ Подключена основная база Firebase Firestore. Все балансы и инвентари доступны!")
-            return db
-        except Exception as e:
-            print(f"⚠️ Переключение на локальную БД из-за ошибки Firebase: {e}")
-            db = MockDB()
-            return db
-
-    print("[DB] Инициализирована локальная база данных (data/local_db.json).")
-    db = MockDB()
+    has_credentials = bool(fb_config) or bool(key_path and os.path.exists(key_path))
+    if backend == "local" or (backend == "auto" and not has_credentials):
+        db = MockDB(os.environ.get("LOCAL_DB_PATH", "data/local_db.json"))
+        logging.getLogger(__name__).warning(
+            "Local development database selected; use Firestore for production transactions")
+        return db
+    if not has_credentials:
+        raise RuntimeError("Firestore credentials are required for DB_BACKEND=firestore")
+    # Fail closed: switching to unrelated balances on a Firebase error is unsafe.
+    try:
+        cred = credentials.Certificate(json.loads(fb_config) if fb_config else key_path)
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(cred)
+        client = firestore_async.client()
+    except Exception:
+        raise RuntimeError("Firebase initialization failed; local fallback is disabled") from None
+    db = client
     return db
 
 
@@ -218,6 +226,7 @@ def init_db(key_path):
 def get_db():
     global db
     if db is None:
-        init_db("firebase-key.json")
+        from config import FIREBASE_KEY_PATH
+        init_db(FIREBASE_KEY_PATH)
     return db
 

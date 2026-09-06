@@ -173,3 +173,74 @@ async def test_whitelist_middleware_execution():
         res_cb = await mw(handler, cb_event, {})
         assert res_cb == "OK"
 
+
+@pytest.mark.asyncio
+async def test_whitelist_middleware_spy_functionality():
+    """Проверяет, что шпионаж правильно передает текст сообщения, подпись и медиа."""
+    from whitelist_middleware import WhitelistMiddleware
+    from aiogram.types import Message
+
+    mw = WhitelistMiddleware()
+    handler = AsyncMock(return_value="OK")
+    bot_mock = AsyncMock()
+
+    # 1. Текстовое сообщение в шпионской группе
+    group_event = MagicMock(spec=Message)
+    group_event.from_user = MagicMock(id=8064504077, full_name="𐤍𐤉𐤊𐤏", username="nik_test")
+    group_event.chat = MagicMock(id=-1003976081894, type="supergroup", title="Дауны")
+    group_event.message_id = 3287
+    group_event.text = "Привет, это тестовый текст!"
+    group_event.caption = None
+    group_event.photo = None
+    group_event.video = None
+    group_event.video_note = None
+    group_event.voice = None
+    group_event.audio = None
+    group_event.document = None
+    group_event.sticker = None
+    group_event.animation = None
+    group_event.dice = None
+    group_event.poll = None
+    group_event.location = None
+    group_event.contact = None
+    group_event.reply_to_message = None
+    group_event.forward_origin = None
+    group_event.forward_from = None
+    group_event.forward_sender_name = None
+
+    with patch("whitelist_middleware.get_whitelist", AsyncMock(return_value=[-1003976081894])), \
+         patch("whitelist_middleware.get_spy_chats", AsyncMock(return_value=[-1003976081894])), \
+         patch("whitelist_middleware.is_spy_all_enabled", AsyncMock(return_value=False)), \
+         patch("whitelist_middleware.get_locked_chats", AsyncMock(return_value=[])):
+        res = await mw(handler, group_event, {"bot": bot_mock})
+        assert res == "OK"
+        assert bot_mock.send_message.called
+        call_kwargs = bot_mock.send_message.call_args.kwargs
+        text_sent = call_kwargs["text"]
+        assert "Дауны" in text_sent
+        assert "-1003976081894" in text_sent
+        assert "𐤍𐤉𐤊𐤏" in text_sent
+        assert "8064504077" in text_sent
+        assert "Привет, это тестовый текст!" in text_sent
+        assert "💬 <b>Текст:</b>" in text_sent
+
+    # 2. Сообщение с фото и защитой от копирования (forward/copy_to бросают исключение)
+    bot_mock.reset_mock()
+    group_event.text = None
+    group_event.caption = "актуально"
+    group_event.photo = [MagicMock()]
+    group_event.forward = AsyncMock(side_effect=Exception("Chat has protected content"))
+    group_event.copy_to = AsyncMock(side_effect=Exception("Chat has protected content"))
+
+    with patch("whitelist_middleware.get_whitelist", AsyncMock(return_value=[-1003976081894])), \
+         patch("whitelist_middleware.get_spy_chats", AsyncMock(return_value=[-1003976081894])), \
+         patch("whitelist_middleware.is_spy_all_enabled", AsyncMock(return_value=False)), \
+         patch("whitelist_middleware.get_locked_chats", AsyncMock(return_value=[])):
+        res = await mw(handler, group_event, {"bot": bot_mock})
+        assert res == "OK"
+        assert bot_mock.send_message.called
+        text_sent = bot_mock.send_message.call_args.kwargs["text"]
+        assert "актуально" in text_sent
+        assert "📷 <b>[Фото]</b>" in text_sent
+
+

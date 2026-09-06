@@ -118,28 +118,42 @@ async def cmd_addmoney(message: types.Message):
     if not is_creator(message):
         return
 
-    if not message.reply_to_message:
-        await message.answer("Ответьте на сообщение пользователя.")
+    args = message.text.split()
+    if len(args) < 2 and not message.reply_to_message:
+        await message.answer("Использование: <code>/addmoney [@user/ID] <сумма></code> или ответом на сообщение: <code>/addmoney <сумма></code>")
         return
 
-    args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Укажите сумму.")
-        return
+    target_str = ""
+    amount_str = ""
+
+    if message.reply_to_message:
+        amount_str = args[1] if len(args) > 1 else ""
+    elif len(args) >= 3:
+        target_str = args[1]
+        amount_str = args[2]
+    elif len(args) == 2:
+        # If args[1] is a number and no reply, could be adding money to self or amount
+        if args[1].lstrip("-+").isdigit():
+            target_str = str(message.from_user.id)
+            amount_str = args[1]
+        else:
+            await message.answer("Укажите сумму: <code>/addmoney [@user/ID] <сумма></code>")
+            return
 
     try:
-        amount = int(args[1])
-        chat_id = message.chat.id
-        target_id = message.reply_to_message.from_user.id
-        target_name = escape_html(message.reply_to_message.from_user.full_name)
-
-        await get_user_data(chat_id, target_id, target_name)
-        await update_user_balance(chat_id, target_id, amount)
-        await message.answer(f"Выдано {amount} сыроежек пользователю {target_name}.")
-        from log_system import log_action
-        log_action(f"💰 <b>Выдача денег:</b> {message.from_user.full_name} ({message.from_user.id}) выдал <code>{amount:,}</code> сыроежек пользователю {target_name} ({target_id}) в чате {chat_id}")
+        amount = int(amount_str)
     except ValueError:
-        pass
+        return await message.answer("❌ Сумма должна быть целым числом.")
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    await get_user_data(t_chat_id, t_uid, t_name)
+    await update_user_balance(t_chat_id, t_uid, amount, action="Creator Addmoney")
+    await message.answer(f"Выдано {amount:,} сыроежек пользователю {escape_html(t_name)}.")
+    from log_system import log_action
+    log_action(f"💰 <b>Выдача денег:</b> {message.from_user.full_name} ({message.from_user.id}) выдал <code>{amount:,}</code> сыроежек пользователю {t_name} ({t_uid}) в чате {t_chat_id}")
 
 
 async def _resolve_user_target(chat_id, target_str: str, message: types.Message = None):
@@ -150,6 +164,11 @@ async def _resolve_user_target(chat_id, target_str: str, message: types.Message 
             uid = int(clean)
             data = await get_user_data(chat_id, uid)
             return chat_id, uid, data.get("full_name", f"User {uid}"), data.get("username", "")
+
+        from user_manager import get_user_by_username_or_id
+        fast_uid, fast_data = await get_user_by_username_or_id(chat_id, target_str.strip())
+        if fast_uid and fast_data:
+            return chat_id, int(fast_uid), fast_data.get("full_name", clean), fast_data.get("username", clean)
 
         # Поиск по username в текущем чате
         db = get_db()
@@ -337,7 +356,7 @@ async def cmd_dictors_catalog(message: types.Message):
         prev_p = max(0, page - 1) + 1
         next_p = min(total_pages - 1, page + 1) + 1
         builder.button(text="◀️ Назад", callback_data=f"cr_dictors_p_{prev_p}")
-        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="db_noop")
         builder.button(text="Вперед ▶️", callback_data=f"cr_dictors_p_{next_p}")
     builder.adjust(3)
 
@@ -373,7 +392,7 @@ async def cb_dictors_page(callback: types.CallbackQuery):
         prev_p = max(0, page - 1) + 1
         next_p = min(total_pages - 1, page + 1) + 1
         builder.button(text="◀️ Назад", callback_data=f"cr_dictors_p_{prev_p}")
-        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="db_noop")
         builder.button(text="Вперед ▶️", callback_data=f"cr_dictors_p_{next_p}")
     builder.adjust(3)
 
@@ -390,44 +409,57 @@ async def cmd_give_item(message: types.Message):
     # 1. Реплай: /giveitem <item_id> [count]
     # 2. По юзеру: /giveitem @username <item_id> [count]
     args = message.text.split()
-    if len(args) < 2:
+    if len(args) < 2 and not message.reply_to_message:
         return await message.answer(
             "<b>Использование команды выдачи:</b>\n\n"
-            "• По нику/ID: <code>/givedictor @username &lt;номер_1..70_или_id&gt; [кол-во]</code>\n"
+            "• По нику/ID: <code>/giveitem @username &lt;ID_или_название&gt; [кол-во]</code>\n"
+            "• По номеру диктора: <code>/givedictor @username &lt;1..70&gt; [кол-во]</code>\n"
             "• Выдать ВСЕХ 70 дикторов сразу: <code>/givedictor @username all</code>\n"
-            "• В ответ на сообщение: <code>/givedictor &lt;номер_или_id&gt; [кол-во]</code>\n\n"
+            "• В ответ на сообщение: <code>/giveitem &lt;ID_или_название&gt; [кол-во]</code>\n"
+            "• Список всех предметов и ID: <code>/items</code>\n\n"
             "<i>Примеры:</i>\n"
-            " • <code>/givedictor @Dictor_mladshu 70</code> (выдаст Антигравити-диктора)\n"
-            " • <code>/givedictor @Dictor_mladshu all</code> (выдаст по 1 шт каждого из 70 дикторов)\n"
-            " • <code>/givedictor @Dictor_mladshu 1 5</code> (выдаст 5 шт Обычных дикторов)"
+            " • <code>/giveitem @user бмв 1</code> (выдаст BMW M5)\n"
+            " • <code>/giveitem @user подземный бункер 1</code> (выдаст Подземный Бункер)\n"
+            " • <code>/giveitem @user аптечка 5</code> (выдаст 5 аптечек)\n"
+            " • <code>/givedictor @user 70</code> (выдаст #70 Антигравити-диктора)\n"
+            " • <code>/givedictor 70 5</code> (выдаст себе 5 дикторов #70)\n"
+            " • <code>/givedictor @user all</code> (выдаст по 1 шт каждого из 70 дикторов)"
         )
 
-    from user_manager import add_item_to_inventory, invalidate_user_cache
-    from shop import ITEMS
+    from user_manager import add_item_to_inventory, flush_user_cache_immediately
+    from shop import ITEMS, resolve_item_id
 
     target_str = ""
     raw_item = ""
     count = 1
 
-    # Умный разбор аргументов:
-    # 1. Если args[1] начинается с @ или len(args) >= 3 и args[1] не число:
-    if len(args) > 1 and args[1].startswith("@"):
-        target_str = args[1]
-        raw_item = args[2].lower() if len(args) > 2 else "70"
-        count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
-    elif message.reply_to_message:
+    # Умный разбор аргументов с поддержкой многословных названий
+    if message.reply_to_message:
         target_str = ""
-        raw_item = args[1].lower() if len(args) > 1 else "70"
-        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
-    elif len(args) >= 3:
+        if len(args) > 2 and args[-1].isdigit():
+            count = int(args[-1])
+            raw_item = " ".join(args[1:-1]).lower()
+        else:
+            raw_item = " ".join(args[1:]).lower() if len(args) > 1 else "70"
+            count = 1
+    elif len(args) > 1 and (args[1].startswith("@") or (args[1].isdigit() and len(args[1]) >= 8)):
+        # Явно указан юзер через @username или большой user_id
         target_str = args[1]
-        raw_item = args[2].lower()
-        count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
+        if len(args) > 3 and args[-1].isdigit():
+            count = int(args[-1])
+            raw_item = " ".join(args[2:-1]).lower()
+        else:
+            raw_item = " ".join(args[2:]).lower() if len(args) > 2 else "70"
+            count = 1
     else:
-        # Без реплая и без явного @user: если это номер/ID предмета, выдаём самому Создателю
+        # Выдача самому себе
         target_str = str(message.from_user.id)
-        raw_item = args[1].lower() if len(args) > 1 else "70"
-        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
+        if len(args) > 2 and args[-1].isdigit():
+            count = int(args[-1])
+            raw_item = " ".join(args[1:-1]).lower()
+        else:
+            raw_item = " ".join(args[1:]).lower() if len(args) > 1 else "70"
+            count = 1
 
     if not raw_item:
         raw_item = "70"
@@ -442,7 +474,6 @@ async def cmd_give_item(message: types.Message):
         for d_id, _ in DICTORS_LIST:
             if await add_item_to_inventory(t_chat_id, t_uid, d_id, count=count):
                 given_count += 1
-        from user_manager import flush_user_cache_immediately
         await flush_user_cache_immediately(t_chat_id, t_uid)
         from log_system import log_action
         log_action(f"👑 <b>Выдача ВСЕХ дикторов:</b> {message.from_user.full_name} выдал полный комплект из 70 дикторов x{count} для {t_name} ({t_uid})")
@@ -452,10 +483,18 @@ async def cmd_give_item(message: types.Message):
             f"🐰 Выдано: <b>все 70 рангов Дикторов</b> по <b>{count} шт.</b>!"
         )
 
-    item_id = resolve_dictor_id(raw_item)
+    item_id = resolve_item_id(raw_item)
+    if not item_id:
+        item_id = resolve_dictor_id(raw_item)
+
+    if not item_id or (item_id not in ITEMS and not item_id.startswith("dictor_")):
+        return await message.answer(
+            f"❌ Предмет <code>{escape_html(raw_item)}</code> не найден.\n"
+            f"Посмотрите список всех предметов: <code>/items</code>"
+        )
+
     success = await add_item_to_inventory(t_chat_id, t_uid, item_id, count=count)
     if success:
-        from user_manager import flush_user_cache_immediately
         await flush_user_cache_immediately(t_chat_id, t_uid)
         item_name = ITEMS.get(item_id, {}).get("name", item_id)
         await message.answer(
@@ -466,7 +505,7 @@ async def cmd_give_item(message: types.Message):
         from log_system import log_action
         log_action(f"🎁 <b>Выдача предмета Создателем:</b> {message.from_user.full_name} выдал {item_name} x{count} для {t_name} ({t_uid})")
     else:
-        await message.answer(f"❌ Ошибка: предмет <code>{item_id}</code> не найден в каталоге.")
+        await message.answer(f"❌ Ошибка при выдаче предмета <code>{item_id}</code>.")
 
 
 @router.message(Command("givetopdictor", "топдиктор", "выдать_топ_диктора", "лучший_диктор", "антигравити", "antigravity", "topdictor"))
@@ -577,12 +616,12 @@ async def cmd_set_prestige(message: types.Message):
         return
 
     args = message.text.split()
-    if len(args) < 2:
+    if len(args) < 2 and not message.reply_to_message:
         return await message.answer("<b>Использование:</b> <code>/setprestige @username &lt;0-6&gt;</code>")
 
     if message.reply_to_message:
         target_str = ""
-        lvl_str = args[1]
+        lvl_str = args[1] if len(args) > 1 else "0"
     else:
         target_str = args[1]
         lvl_str = args[2] if len(args) > 2 else "0"
@@ -606,40 +645,170 @@ async def cmd_set_prestige(message: types.Message):
         f"👤 Игрок: <b>{escape_html(t_name)}</b> (@{t_uname})\n"
         f"🌟 Новый ранг: <b>[{tier}/6] {p_info['badge']} {p_info['name']}</b>"
     )
+    from log_system import log_action
+    log_action(f"🎖 <b>Престиж изменён:</b> {message.from_user.full_name} установил Престиж {tier} для {t_name} ({t_uid})")
 
 
-@router.message(Command("delitem", "забрать_предмет"))
+@router.message(Command("delitem", "takeitem", "забрать_предмет", "удалить_предмет"))
 async def cmd_del_item(message: types.Message):
     if not is_creator(message):
         return
 
     args = message.text.split()
-    if len(args) < 2:
-        return await message.answer("Использование: <code>/delitem @username &lt;item_id&gt; [кол-во]</code>")
+    if len(args) < 2 and not message.reply_to_message:
+        return await message.answer("Использование: <code>/delitem @username &lt;ID_или_название&gt; [кол-во]</code>")
 
-    from user_manager import remove_item_from_inventory, invalidate_user_cache
-    from shop import ITEMS
+    from user_manager import remove_item_from_inventory, flush_user_cache_immediately
+    from shop import ITEMS, resolve_item_id
 
     if message.reply_to_message:
         target_str = ""
-        item_id = args[1].lower()
-        count = int(args[2]) if len(args) > 2 and args[2].isdigit() else 1
-    else:
+        if len(args) > 2 and args[-1].isdigit():
+            count = int(args[-1])
+            raw_item = " ".join(args[1:-1]).lower()
+        else:
+            raw_item = " ".join(args[1:]).lower() if len(args) > 1 else ""
+            count = 1
+    elif len(args) > 1 and (args[1].startswith("@") or (args[1].isdigit() and len(args[1]) >= 8)):
         target_str = args[1]
-        item_id = args[2].lower() if len(args) > 2 else ""
-        count = int(args[3]) if len(args) > 3 and args[3].isdigit() else 1
+        if len(args) > 3 and args[-1].isdigit():
+            count = int(args[-1])
+            raw_item = " ".join(args[2:-1]).lower()
+        else:
+            raw_item = " ".join(args[2:]).lower() if len(args) > 2 else ""
+            count = 1
+    else:
+        target_str = str(message.from_user.id)
+        if len(args) > 2 and args[-1].isdigit():
+            count = int(args[-1])
+            raw_item = " ".join(args[1:-1]).lower()
+        else:
+            raw_item = " ".join(args[1:]).lower() if len(args) > 1 else ""
+            count = 1
 
     t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
     if not t_uid:
         return await message.answer("❌ Пользователь не найден.")
 
+    item_id = resolve_item_id(raw_item) or resolve_dictor_id(raw_item)
+    if not item_id or (item_id not in ITEMS and not item_id.startswith("dictor_")):
+        return await message.answer(f"❌ Предмет <code>{escape_html(raw_item)}</code> не найден в каталоге.")
+
     success = await remove_item_from_inventory(t_chat_id, t_uid, item_id, count=count)
     if success:
-        invalidate_user_cache(t_chat_id, t_uid)
+        await flush_user_cache_immediately(t_chat_id, t_uid)
         item_name = ITEMS.get(item_id, {}).get("name", item_id)
-        await message.answer(f"✅ Изъято {count}x {item_name} у {escape_html(t_name)}.")
+        await message.answer(f"✅ Изъято {count}x <b>{item_name}</b> (<code>{item_id}</code>) у {escape_html(t_name)}.")
+        from log_system import log_action
+        log_action(f"🗑 <b>Изъятие предмета:</b> {message.from_user.full_name} изъял {item_name} x{count} у {t_name} ({t_uid})")
     else:
-        await message.answer("❌ У пользователя нет указанного предмета или количества.")
+        await message.answer(f"❌ У пользователя нет указанного предмета или количества.")
+
+
+@router.message(Command("items", "предметы", "каталог_вещей", "вещи"))
+async def cmd_items_catalog(message: types.Message):
+    """Каталог всех доступных предметов игры с ID для удобной выдачи."""
+    if not is_creator(message):
+        return
+
+    from shop import ITEMS, CATEGORY_NAMES
+    args = message.text.split()
+    cat = args[1].lower() if len(args) > 1 and args[1].lower() in CATEGORY_NAMES else "biz"
+    page = int(args[2]) - 1 if len(args) > 2 and args[2].isdigit() else 0
+
+    items_list = [(i_id, i_cfg) for i_id, i_cfg in ITEMS.items() if i_cfg.get("cat") == cat]
+    page_size = 10
+    total_pages = max(1, (len(items_list) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    page_items = items_list[start_idx:start_idx + page_size]
+
+    lines = []
+    for item_id, item_cfg in page_items:
+        lines.append(f"• <b>{item_cfg.get('name', item_id)}</b> — <code>{item_id}</code>")
+
+    cat_title = CATEGORY_NAMES.get(cat, cat)
+    text = (
+        f"📦 <b>КАТАЛОГ ПРЕДМЕТОВ КАЗИНО</b>\n"
+        f"📂 Категория: <b>{cat_title}</b> | Страница: <b>{page + 1}/{total_pages}</b>\n\n"
+        + "\n".join(lines) +
+        f"\n\n💡 <i>Чтобы выдать:</i> <code>/giveitem @user &lt;id_или_название&gt; [кол-во]</code>"
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+
+    # Категории
+    builder.button(text="🏢 Бизнесы", callback_data="cr_itc_biz_0")
+    builder.button(text="🚗 Машины", callback_data="cr_itc_cars_0")
+    builder.button(text="🌟 Престиж", callback_data="cr_itc_prestige_0")
+    builder.button(text="🎒 Прочее", callback_data="cr_itc_other_0")
+    builder.button(text="🐰 Дикторы", callback_data="cr_itc_tayniy_baniy_0")
+
+    # Пагинация
+    if total_pages > 1:
+        prev_p = max(0, page - 1)
+        next_p = min(total_pages - 1, page + 1)
+        builder.button(text="◀️ Назад", callback_data=f"cr_itc_{cat}_{prev_p}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="noop")
+        builder.button(text="Вперед ▶️", callback_data=f"cr_itc_{cat}_{next_p}")
+
+    builder.adjust(3, 2, 3) if total_pages > 1 else builder.adjust(3, 2)
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("cr_itc_"))
+async def cb_items_catalog_route(callback: types.CallbackQuery):
+    if not is_creator(callback):
+        return await callback.answer("❌ Доступ только для Создателя.")
+
+    payload = callback.data.removeprefix("cr_itc_")
+    parts = payload.rsplit("_", 1)
+    cat = parts[0] if len(parts) > 1 else "biz"
+    page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+
+    from shop import ITEMS, CATEGORY_NAMES
+    items_list = [(i_id, i_cfg) for i_id, i_cfg in ITEMS.items() if i_cfg.get("cat") == cat]
+    page_size = 10
+    total_pages = max(1, (len(items_list) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    page_items = items_list[start_idx:start_idx + page_size]
+
+    lines = []
+    for item_id, item_cfg in page_items:
+        lines.append(f"• <b>{item_cfg.get('name', item_id)}</b> — <code>{item_id}</code>")
+
+    cat_title = CATEGORY_NAMES.get(cat, cat)
+    text = (
+        f"📦 <b>КАТАЛОГ ПРЕДМЕТОВ КАЗИНО</b>\n"
+        f"📂 Категория: <b>{cat_title}</b> | Страница: <b>{page + 1}/{total_pages}</b>\n\n"
+        + "\n".join(lines) +
+        f"\n\n💡 <i>Чтобы выдать:</i> <code>/giveitem @user &lt;id_или_название&gt; [кол-во]</code>"
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="🏢 Бизнесы", callback_data="cr_itc_biz_0")
+    builder.button(text="🚗 Машины", callback_data="cr_itc_cars_0")
+    builder.button(text="🌟 Престиж", callback_data="cr_itc_prestige_0")
+    builder.button(text="🎒 Прочее", callback_data="cr_itc_other_0")
+    builder.button(text="🐰 Дикторы", callback_data="cr_itc_tayniy_baniy_0")
+
+    if total_pages > 1:
+        prev_p = max(0, page - 1)
+        next_p = min(total_pages - 1, page + 1)
+        builder.button(text="◀️ Назад", callback_data=f"cr_itc_{cat}_{prev_p}")
+        builder.button(text=f"Стр. {page + 1}/{total_pages}", callback_data="db_noop")
+        builder.button(text="Вперед ▶️", callback_data=f"cr_itc_{cat}_{next_p}")
+
+    builder.adjust(3, 2, 3) if total_pages > 1 else builder.adjust(3, 2)
+    try:
+        await callback.message.edit_text(text, reply_markup=builder.as_markup())
+    except Exception:
+        pass
+    await callback.answer()
 
 
 @router.message(Command("setmoney"))
@@ -647,29 +816,274 @@ async def cmd_setmoney(message: types.Message):
     if not is_creator(message):
         return
 
-    if not message.reply_to_message:
-        await message.answer("Ответьте на сообщение пользователя.")
+    args = message.text.split()
+    if len(args) < 2 and not message.reply_to_message:
+        return await message.answer("Использование: <code>/setmoney [@user/ID] <сумма></code> или ответом на сообщение: <code>/setmoney <сумма></code>")
+
+    target_str = ""
+    amount_str = ""
+
+    if message.reply_to_message:
+        amount_str = args[1] if len(args) > 1 else ""
+    elif len(args) >= 3:
+        target_str = args[1]
+        amount_str = args[2]
+    elif len(args) == 2:
+        if args[1].isdigit():
+            target_str = str(message.from_user.id)
+            amount_str = args[1]
+        else:
+            return await message.answer("Укажите сумму: <code>/setmoney [@user/ID] <сумма></code>")
+
+    try:
+        amount = int(amount_str)
+        if amount < 0:
+            return await message.answer("❌ Сумма должна быть неотрицательной.")
+    except ValueError:
+        return await message.answer("❌ Сумма должна быть целым числом.")
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from user_manager import update_user_field
+    await get_user_data(t_chat_id, t_uid, t_name)
+    await update_user_field(t_chat_id, t_uid, 'balance', amount)
+    await message.answer(f"✅ Баланс пользователя {escape_html(t_name)} установлен в {amount:,} сыроежек.")
+    from log_system import log_action
+    log_action(f"💵 <b>Установка баланса:</b> {message.from_user.full_name} ({message.from_user.id}) установил баланс {t_name} ({t_uid}) в <code>{amount:,}</code> сыроежек в чате {t_chat_id}")
+
+
+@router.message(Command("setbank", "установить_банк"))
+async def cmd_setbank(message: types.Message):
+    """Установка банковского депозита игрока."""
+    if not is_creator(message):
         return
 
     args = message.text.split()
-    if len(args) < 2:
-        await message.answer("Укажите сумму.")
-        return
+    if len(args) < 2 and not message.reply_to_message:
+        return await message.answer("Использование: <code>/setbank [@user/ID] <сумма_вклада></code> или ответом: <code>/setbank <сумма></code>")
+
+    target_str = ""
+    amount_str = ""
+
+    if message.reply_to_message:
+        amount_str = args[1] if len(args) > 1 else ""
+    elif len(args) >= 3:
+        target_str = args[1]
+        amount_str = args[2]
+    elif len(args) == 2:
+        if args[1].isdigit():
+            target_str = str(message.from_user.id)
+            amount_str = args[1]
+        else:
+            return await message.answer("Укажите сумму: <code>/setbank [@user/ID] <сумма></code>")
 
     try:
-        amount = int(args[1])
-        chat_id = message.chat.id
-        target_id = message.reply_to_message.from_user.id
-        target_name = escape_html(message.reply_to_message.from_user.full_name)
-
-        from user_manager import update_user_field
-        await get_user_data(chat_id, target_id, target_name)
-        await update_user_field(chat_id, target_id, 'balance', amount)
-        await message.answer(f"Баланс пользователя {target_name} установлен в {amount} сыроежек.")
-        from log_system import log_action
-        log_action(f"💵 <b>Установка баланса:</b> {message.from_user.full_name} ({message.from_user.id}) установил баланс {target_name} ({target_id}) в <code>{amount:,}</code> сыроежек в чате {chat_id}")
+        amount = int(amount_str)
+        if amount < 0:
+            return await message.answer("❌ Сумма должна быть неотрицательной.")
     except ValueError:
+        return await message.answer("❌ Сумма должна быть целым числом.")
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from user_manager import update_user_field
+    await get_user_data(t_chat_id, t_uid, t_name)
+    await update_user_field(t_chat_id, t_uid, 'bank_deposit', amount)
+    await message.answer(f"🏛 Банковский депозит {escape_html(t_name)} установлен в {amount:,} сыроежек.")
+    from log_system import log_action
+    log_action(f"🏛 <b>Установка депозита:</b> {message.from_user.full_name} установил депозит {t_name} ({t_uid}) в <code>{amount:,}</code> сыроежек в чате {t_chat_id}")
+
+
+@router.message(Command("givecard", "выдать_карту"))
+async def cmd_give_card(message: types.Message):
+    """Выдача коллекционной карточки игроку."""
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    if len(args) < 2 and not message.reply_to_message:
+        return await message.answer("Использование: <code>/givecard [@user/ID] <id_или_номер_карты> [кол-во]</code>")
+
+    from cards_system import CARDS
+
+    target_str = ""
+    card_query = ""
+    count = 1
+
+    if message.reply_to_message:
+        if len(args) > 2 and args[-1].isdigit():
+            count = int(args[-1])
+            card_query = " ".join(args[1:-1]).lower()
+        else:
+            card_query = " ".join(args[1:]).lower() if len(args) > 1 else ""
+            count = 1
+    elif len(args) > 1 and (args[1].startswith("@") or (args[1].isdigit() and len(args[1]) >= 8)):
+        target_str = args[1]
+        if len(args) > 3 and args[-1].isdigit():
+            count = int(args[-1])
+            card_query = " ".join(args[2:-1]).lower()
+        else:
+            card_query = " ".join(args[2:]).lower() if len(args) > 2 else ""
+            count = 1
+    else:
+        target_str = str(message.from_user.id)
+        if len(args) > 2 and args[-1].isdigit():
+            count = int(args[-1])
+            card_query = " ".join(args[1:-1]).lower()
+        else:
+            card_query = " ".join(args[1:]).lower() if len(args) > 1 else ""
+            count = 1
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    # Разрешаем card_id
+    card_id = None
+    if card_query.isdigit():
+        num = int(card_query)
+        if f"meme_{num}" in CARDS:
+            card_id = f"meme_{num}"
+        elif f"pig_{num:03d}" in CARDS:
+            card_id = f"pig_{num:03d}"
+        elif 1 <= num <= len(CARDS):
+            card_id = list(CARDS.keys())[num - 1]
+    elif card_query in CARDS:
+        card_id = card_query
+    else:
+        for cid, cinfo in CARDS.items():
+            if card_query in cid.lower() or card_query in cinfo.get("name", "").lower():
+                card_id = cid
+                break
+
+    if not card_id or card_id not in CARDS:
+        return await message.answer(f"❌ Карточка <code>{escape_html(card_query)}</code> не найдена (1..{len(CARDS)}).")
+
+    u_data = await get_user_data(t_chat_id, t_uid)
+    cards = dict(u_data.get("meme_cards") or {})
+    cards[card_id] = cards.get(card_id, 0) + count
+    from user_manager import update_user_field, flush_user_cache_immediately
+    await update_user_field(t_chat_id, t_uid, "meme_cards", cards)
+    await flush_user_cache_immediately(t_chat_id, t_uid)
+
+    cname = CARDS[card_id].get("name", card_id)
+    await message.answer(f"🃏 Карточка <b>{cname}</b> (<code>{card_id}</code>) x{count} выдана {escape_html(t_name)}!")
+    from log_system import log_action
+    log_action(f"🃏 <b>Выдача карточки:</b> {message.from_user.full_name} выдал {cname} x{count} для {t_name} ({t_uid})")
+
+
+@router.message(Command("giveallcards", "всекарты", "выдать_все_карты"))
+async def cmd_give_all_cards(message: types.Message):
+    """Выдача всех 200 коллекционных карточек."""
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    target_str = ""
+    count = 1
+
+    if message.reply_to_message:
+        if len(args) > 1 and args[1].isdigit():
+            count = int(args[1])
+    else:
+        if len(args) > 1:
+            target_str = args[1]
+            if len(args) > 2 and args[2].isdigit():
+                count = int(args[2])
+        else:
+            target_str = str(message.from_user.id)
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from cards_system import CARDS
+    from user_manager import update_user_field, flush_user_cache_immediately
+    u_data = await get_user_data(t_chat_id, t_uid)
+    cards = dict(u_data.get("meme_cards") or {})
+    for cid in CARDS.keys():
+        cards[cid] = max(cards.get(cid, 0), count)
+    await update_user_field(t_chat_id, t_uid, "meme_cards", cards)
+    await flush_user_cache_immediately(t_chat_id, t_uid)
+
+    await message.answer(f"🃏 Все <b>200 карточек свинок</b> x{count} выданы пользователю {escape_html(t_name)}!")
+    from log_system import log_action
+    log_action(f"🃏 <b>Выдача всех карточек:</b> {message.from_user.full_name} выдал полную коллекцию карт x{count} для {t_name} ({t_uid})")
+
+
+@router.message(Command("heal", "вылечить", "лечить", "админ_хил"))
+async def cmd_creator_heal(message: types.Message):
+    """Административное бесплатное снятие всех болезней."""
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    target_str = ""
+    if message.reply_to_message:
         pass
+    elif len(args) > 1:
+        target_str = args[1]
+    else:
+        target_str = str(message.from_user.id)
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from user_manager import update_user_field, flush_user_cache_immediately
+    await update_user_field(t_chat_id, t_uid, "diseases", {})
+    await flush_user_cache_immediately(t_chat_id, t_uid)
+    await message.answer(f"🧼 Пользователь {escape_html(t_name)} полностью исцелён от всех ЗППП!")
+    from log_system import log_action
+    log_action(f"🧼 <b>Исцеление:</b> {message.from_user.full_name} вылечил все болезни у {t_name} ({t_uid})")
+
+
+@router.message(Command("infect", "заразить"))
+async def cmd_creator_infect(message: types.Message):
+    """Административное заражение ЗППП."""
+    if not is_creator(message):
+        return
+
+    args = message.text.split()
+    if len(args) < 2 and not message.reply_to_message:
+        return await message.answer("Использование: <code>/infect [@user/ID] <id_болезни/fullhouse></code>")
+
+    target_str = ""
+    disease_str = ""
+
+    if message.reply_to_message:
+        disease_str = args[1].lower() if len(args) > 1 else "syphilis"
+    elif len(args) >= 3:
+        target_str = args[1]
+        disease_str = args[2].lower()
+    else:
+        target_str = str(message.from_user.id)
+        disease_str = args[1].lower() if len(args) > 1 else "syphilis"
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from diseases import infect_full_house, DISEASES
+    from user_manager import update_user_field, flush_user_cache_immediately
+
+    if disease_str in ("fullhouse", "all", "все", "букет"):
+        await infect_full_house(t_chat_id, t_uid)
+        await message.answer(f"🤮 Игрок {escape_html(t_name)} заражён полным букетом ЗППП!")
+    elif disease_str in DISEASES:
+        u_data = await get_user_data(t_chat_id, t_uid)
+        current = dict(u_data.get("diseases") or {})
+        current[disease_str] = time.time() + 3600
+        await update_user_field(t_chat_id, t_uid, "diseases", current)
+        await flush_user_cache_immediately(t_chat_id, t_uid)
+        d_name = DISEASES[disease_str]["name"]
+        await message.answer(f"🦠 Игрок {escape_html(t_name)} заражён: <b>{d_name}</b>!")
+    else:
+        return await message.answer(f"❌ Неизвестная болезнь: <code>{escape_html(disease_str)}</code>. Доступные: {', '.join(DISEASES.keys())} или <code>fullhouse</code>")
 
 @router.message(Command("ban"))
 async def cmd_ban(message: types.Message):

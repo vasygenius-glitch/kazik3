@@ -17,7 +17,9 @@ import copy
 import time
 import asyncio
 import logging
-from typing import Any, Dict, Optional, Set, Tuple
+from contextlib import asynccontextmanager
+from functools import wraps
+from typing import Any, Dict, Optional, Set, Tuple, AsyncIterator, Awaitable, Callable
 from collections import OrderedDict
 
 from db import get_db
@@ -373,22 +375,26 @@ async def flush_user_cache_immediately(chat_id, user_id) -> None:
     if not entry:
         _dirty_cache.discard(key)
         return
-    _dirty_cache.discard(key)
-    try:
-        await _flush_single_user(chat_id, user_id, entry["timestamp"])
-    except Exception as e:
-        logger.error("flush_user_cache_immediately error for %s: %s", key, e)
-        _dirty_cache.add(key)  # повторим позже
+    # A failed pre-transaction flush must abort the transaction, not let it
+    # read stale balances. Keep dirty markers until confirmed persistence.
+    await _flush_single_user(chat_id, user_id, entry["timestamp"])
 
 
 async def _flush_single_user(chat_id, user_id, expected_timestamp) -> None:
     lock = get_user_lock(chat_id, user_id)
     async with lock:
-        entry = _user_cache.get((chat_id, user_id))
-        if not entry or entry.get("timestamp") != expected_timestamp:
+        key = (chat_id, user_id)
+        entry = _user_cache.get(key)
+        if not entry:
             return
+        # Persist the newest entry under the lock, not an obsolete snapshot
+        # selected before waiting for another update to finish.
         ref = get_user_ref(chat_id, user_id)
-        await ref.set(entry["data"], merge=True)
+        await ref.set(copy.deepcopy(entry["data"]), merge=True)
+        # Some legacy cache writers do not acquire this lock. Never mark a
+        # replacement entry clean when only the previous one reached storage.
+        if _user_cache.get(key) is entry:
+            _dirty_cache.discard(key)
 
 
 # ============================================================
@@ -414,7 +420,7 @@ async def flush_user_data() -> bool:
             tasks, task_keys = [], []
 
             for key in batch:
-                _dirty_cache.discard(key)
+                # Cancellation during gather must not lose unsaved profiles.
                 entry = _user_cache.get(key)
                 if not entry:
                     continue
@@ -1008,11 +1014,19 @@ async def add_item_to_inventory(chat_id, user_id, item_name: str, count: int = 1
         return False
 
     lock = get_user_lock(chat_id, user_id)
+    item_info = ITEMS.get(item_name) or {}
     async with lock:
         data = await get_user_data(chat_id, user_id)
         inv = dict(data.get('inventory') or {})
         inv[item_name] = inv.get(item_name, 0) + count
         data['inventory'] = inv
+
+        if item_info.get('action') == 'business':
+            biz_levels = dict(data.get('biz_levels') or {})
+            if item_name not in biz_levels:
+                biz_levels[item_name] = 1
+                data['biz_levels'] = biz_levels
+
         full_name = data.get('full_name', 'Unknown')
         set_in_cache(chat_id, user_id, data)
         mark_dirty(chat_id, user_id)
@@ -1522,4 +1536,92 @@ async def open_free_case_tr(transaction, chat_id: int, user_id: int, card_id: st
             await ref.update(updates)
 
     return True, None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-user lock helpers (Designed by GPT-6 Astra)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def user_lock_context(chat_id: int, user_id: int) -> AsyncIterator[ReentrantLock]:
+    """
+    Async context manager that acquires the per-user ReentrantLock.
+
+    Usage:
+        async with user_lock_context(chat_id, user_id):
+            # critical section — safe from double-spend / rapid-click
+            ...
+    """
+    lock = get_user_lock(chat_id, user_id)
+    async with lock:
+        yield lock
+
+
+def _extract_chat_user_ids(args: tuple, kwargs: dict) -> tuple[int, int]:
+    """
+    Extract (chat_id, user_id) from handler arguments.
+
+    Supports three calling conventions (in priority order):
+      1. First positional arg is an aiogram Message
+      2. First positional arg is an aiogram CallbackQuery
+      3. First two positional args (or kwargs) are explicit int ids
+    """
+    if args:
+        first = args[0]
+        try:
+            from aiogram.types import Message, CallbackQuery
+            if isinstance(first, Message):
+                if first.from_user is None:
+                    raise ValueError("Message has no from_user (anonymous sender).")
+                return int(first.chat.id), int(first.from_user.id)
+            if isinstance(first, CallbackQuery):
+                if first.from_user is None or first.message is None:
+                    raise ValueError("CallbackQuery missing from_user or message.")
+                return int(first.message.chat.id), int(first.from_user.id)
+        except ImportError:
+            pass
+
+        # Duck typing fallback
+        if hasattr(first, "message") and hasattr(first, "from_user") and not hasattr(first, "chat"):
+            if first.from_user is None or first.message is None:
+                raise ValueError("CallbackQuery missing from_user or message.")
+            return int(first.message.chat.id), int(first.from_user.id)
+
+        if hasattr(first, "chat") and hasattr(first, "from_user"):
+            if first.from_user is None:
+                raise ValueError("Message has no from_user (anonymous sender).")
+            return int(first.chat.id), int(first.from_user.id)
+
+    if "message" in kwargs:
+        msg = kwargs["message"]
+        return int(msg.chat.id), int(msg.from_user.id)
+
+    if "callback" in kwargs:
+        cb = kwargs["callback"]
+        return int(cb.message.chat.id), int(cb.from_user.id)
+
+    if len(args) >= 2 and isinstance(args[0], (int, str)) and isinstance(args[1], (int, str)):
+        return int(args[0]), int(args[1])
+
+    if "chat_id" in kwargs and "user_id" in kwargs:
+        return int(kwargs["chat_id"]), int(kwargs["user_id"])
+
+    raise TypeError(
+        "user_action_locked: cannot extract (chat_id, user_id) from arguments. "
+        "Pass a Message, CallbackQuery, or explicit chat_id/user_id."
+    )
+
+
+def user_action_locked(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """
+    Decorator that acquires the per-user ReentrantLock for the duration of the
+    decorated async function, preventing double-spend and rapid-click races.
+    """
+    @wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        chat_id, user_id = _extract_chat_user_ids(args, kwargs)
+        async with user_lock_context(chat_id, user_id):
+            return await func(*args, **kwargs)
+
+    return wrapper
 

@@ -20,3 +20,20 @@ DISABLE_WHITELIST = os.getenv("DISABLE_WHITELIST", "False").lower() == "true"
 SUMMER_COURAGE_ENABLED = os.getenv("SUMMER_COURAGE_ENABLED", "True").lower() == "true"
 SUMMER_WIN_CHANCE_BOOST = int(os.getenv("SUMMER_WIN_CHANCE_BOOST", "15"))
 SUMMER_DEPOSIT_BOOST = float(os.getenv("SUMMER_DEPOSIT_BOOST", "0.20"))
+
+# --- СЕТЕВЫЕ НАСТРОЙКИ (Network & Timeouts) ---
+API_TIMEOUT_SECONDS = int(os.getenv("API_TIMEOUT_SECONDS", "30"))
+API_CONNECT_TIMEOUT_SECONDS = int(os.getenv("API_CONNECT_TIMEOUT_SECONDS", "12"))
+API_RETRY_DELAY_SECONDS = float(os.getenv("API_RETRY_DELAY_SECONDS", "1.5"))
+
+# --- PVP ДУЭЛИ (PvP Duels) ---
+DUEL_TIMEOUT_SECONDS = int(os.getenv("DUEL_TIMEOUT_SECONDS", "60"))
+DUEL_TAX_PERCENT = float(os.getenv("DUEL_TAX_PERCENT", "0.02"))  # 2% в джекпот чата
+MIN_DUEL_BET = int(os.getenv("MIN_DUEL_BET", "50"))
+
+# --- BATTLE PASS & DAILY QUESTS ---
+BATTLE_PASS_SEASON_DAYS = int(os.getenv("BATTLE_PASS_SEASON_DAYS", "30"))
+DAILY_QUESTS_COUNT = 3
+XP_PER_GAME = 5
+XP_PER_WIN = 10
+
