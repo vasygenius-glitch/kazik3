@@ -133,8 +133,8 @@ class MockCollection:
         class MockDocStream:
             def __init__(self, id, data):
                 self.id = id
-                self._data = data
-            def to_dict(self): return self._data
+                self._data = copy.deepcopy(data)
+            def to_dict(self): return copy.deepcopy(self._data)
 
         results = []
         for doc_id, doc_data in self.data.items():
@@ -146,8 +146,8 @@ class MockCollection:
         class MockDocStream:
             def __init__(self, id, data):
                 self.id = id
-                self._data = data
-            def to_dict(self): return self._data
+                self._data = copy.deepcopy(data)
+            def to_dict(self): return copy.deepcopy(self._data)
 
         for doc_id, doc_data in self.data.items():
             if '_data' in doc_data:
@@ -178,16 +178,16 @@ class MockDocument:
 
     async def set(self, data, merge=False):
         if merge and '_data' in self.doc_node:
-            self.doc_node['_data'].update(data)
+            self.doc_node['_data'].update(copy.deepcopy(data))
         else:
-            self.doc_node['_data'] = data
+            self.doc_node['_data'] = copy.deepcopy(data)
         self.db_instance.save()
 
     async def update(self, data):
         if '_data' in self.doc_node:
-            self.doc_node['_data'].update(data)
+            self.doc_node['_data'].update(copy.deepcopy(data))
         else:
-            self.doc_node['_data'] = data
+            self.doc_node['_data'] = copy.deepcopy(data)
         self.db_instance.save()
 
     async def delete(self):

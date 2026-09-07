@@ -1110,7 +1110,6 @@ async def _resolve_game(message: types.Message, game: CupsGame, chosen: int) -> 
     placeholder_winning = game.winning_cups
     await _animate_lift(message, game, header, chosen, placeholder_winning)
 
-    from config import CREATOR_ID
     is_creator = bool(CREATOR_ID) and int(user_id) == int(CREATOR_ID)
     if is_creator:
         forced_win = True

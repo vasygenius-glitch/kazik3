@@ -1,0 +1,5 @@
+target-version = "py311"
+extend-exclude = ["scratch", ".agents", "data", ".venv", "venv"]
+
+[lint]
+select = ["E9", "F821", "F822", "F823", "F601", "F602", "F811", "B006", "B008", "B012", "B904"]

@@ -380,7 +380,7 @@ def creator_only(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Awaita
             logger.error("Handler %s crashed: %s\n%s",
                          handler.__name__, exc, traceback.format_exc())
             if isinstance(event, types.CallbackQuery):
-                await safe_answer(event, f"⚠️ Внутренняя ошибка: {exc}", show_alert=True)
+                await safe_answer(event, "⚠️ Внутренняя ошибка. Подробности записаны в журнал.", show_alert=True)
             elif isinstance(event, types.Message):
                 await safe_delete(None)
                 try:
@@ -4696,7 +4696,6 @@ async def cb_extra_delbanker(callback: types.CallbackQuery, state: FSMContext):
     if target_chat_id is None or target_user_id is None:
         return await safe_answer(callback, "❌ Ошибка данных.", show_alert=True)
     
-    from user_manager import update_user_field, invalidate_user_cache
     await update_user_field(target_chat_id, target_user_id, 'is_banker', False)
     invalidate_user_cache(target_chat_id, target_user_id)
     
@@ -4758,6 +4757,10 @@ async def process_lock_chat_id_input(message: types.Message, state: FSMContext):
 @router.callback_query(F.data.startswith("db_ext_eval_"))
 @creator_only
 async def cb_extra_eval_prompt(callback: types.CallbackQuery, state: FSMContext):
+    from config import ENABLE_ADMIN_EVAL
+    if not ENABLE_ADMIN_EVAL:
+        await state.clear()
+        return await safe_answer(callback, "Выполнение кода отключено на сервере.", show_alert=True)
     chat_id = cb_int(split_cb(callback.data), 3, default=0)
     
     await state.set_state(AdminPanelState.waiting_for_eval_code)
@@ -4781,6 +4784,10 @@ async def cb_extra_eval_prompt(callback: types.CallbackQuery, state: FSMContext)
 @router.message(AdminPanelState.waiting_for_eval_code)
 @creator_only
 async def process_eval_code_input(message: types.Message, state: FSMContext):
+    from config import ENABLE_ADMIN_EVAL
+    if not ENABLE_ADMIN_EVAL:
+        await state.clear()
+        return await message.answer("Выполнение кода отключено на сервере.")
     data = await state.get_data()
     chat_id = data["chat_id"]
     code = message.text.strip()

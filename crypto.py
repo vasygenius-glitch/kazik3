@@ -1,3 +1,4 @@
+import math
 import io
 import asyncio
 import random
@@ -730,6 +731,9 @@ async def cb_trade_execute(callback: types.CallbackQuery):
     action = parts[2]
     qty_str = parts[3]
     cid = parts[4]
+    if action not in {"buy", "sell"} or (qty_str != "all" and
+            (not qty_str.isascii() or not qty_str.isdecimal() or len(qty_str) > 18 or int(qty_str) <= 0)):
+        return await callback.answer("Некорректные параметры сделки.", show_alert=True)
     
     # get_all_coins УЖЕ просимулировал рынок на текущую секунду.
     # Так что цена свежайшая, и действия игрока на нее не влияют.
@@ -738,8 +742,13 @@ async def cb_trade_execute(callback: types.CallbackQuery):
         return await callback.answer("❌ Монета не найдена.")
         
     coin = coins[cid]
-    price = coin["prices"][-1]
-    
+    prices = coin.get("prices") or []
+    if not prices or isinstance(prices[-1], bool) or not isinstance(prices[-1], (int, float)):
+        return await callback.answer("Курс временно недоступен.", show_alert=True)
+    price = prices[-1]
+    if not math.isfinite(price) or price <= 0:
+        return await callback.answer("Курс временно недоступен.", show_alert=True)
+
     from user_manager import get_user_lock, flush_user_cache_immediately, get_user_data, update_user_balance, update_user_field
     
     chat_id = callback.message.chat.id
@@ -754,17 +763,17 @@ async def cb_trade_execute(callback: types.CallbackQuery):
         user_balance = ud.get('balance', 0)
         
         if action == "buy":
-            amount = user_balance // price if qty_str == "all" else int(qty_str)
+            amount = int(user_balance // price) if qty_str == "all" else int(qty_str)
             if amount <= 0:
                 return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
                 
-            res = await update_user_balance(chat_id, user_id, -(price * amount), min_balance=0)
+            res = await update_user_balance(chat_id, user_id, -math.ceil(price * amount), min_balance=0)
             if res is None:
                 return await callback.answer("❌ Недостаточно средств для покупки.", show_alert=True)
                 
             port[cid] = port.get(cid, 0) + amount
             
-            await callback.answer(f"✅ Успешно куплено {amount} шт. {coin['ticker']}!")
+            result_text = f"✅ Успешно куплено {amount} шт. {coin['ticker']}!"
             
         elif action == "sell":
             amount = port.get(cid, 0) if qty_str == "all" else int(qty_str)
@@ -789,21 +798,16 @@ async def cb_trade_execute(callback: types.CallbackQuery):
             if port[cid] <= 0: 
                 del port[cid]
                 
-            await callback.answer(f"✅ Успешно продано {amount} шт. {coin['ticker']}!")
+            result_text = f"✅ Успешно продано {amount} шт. {coin['ticker']}!"
             
         else: 
             return
         
         await update_user_field(chat_id, user_id, 'crypto_portfolio', port)
+    await callback.answer(result_text[:200])
     
     # Возвращаемся в cb_coin_view, чтобы картинка обновилась БЕСШОВНО (edit_media)
-    class PseudoCallback:
-        def __init__(self, cb, new_data):
-            self.data = new_data
-            self.message = cb.message
-        async def answer(self, *args, **kwargs):
-            return await cb.answer(*args, **kwargs)
-    await cb_coin_view(PseudoCallback(callback, f"cr_view_{cid}"))
+    await cb_coin_view(callback.model_copy(update={"data": f"cr_view_{cid}"}))
 
 @router.callback_query(F.data == "crypto_portfolio")
 async def cb_portfolio(callback: types.CallbackQuery):

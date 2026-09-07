@@ -229,9 +229,7 @@ async def rp_and_karma(message: types.Message):
         await message.answer(f"📈 Уважение пользователя <b>{target_name}</b> повышено! (Репутация: {new_rep})")
 
 # ================= ДУЭЛИ =================
-import time
 import asyncio
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 active_duels = {}
 

@@ -1,18 +1,58 @@
-name: Sync to Hugging Face hub
+name: Test and deploy to Hugging Face
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
-
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
-  sync-to-hub:
+  verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip check
+      - run: python -m ruff check .
+      - run: python -m pytest -q --tb=short
+  deploy:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           lfs: true
-      - name: Push to hub
+          persist-credentials: false
+      - name: Fast-forward the tested commit to the Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: git push --force https://dICTORTAniBani:$HF_TOKEN@huggingface.co/spaces/dICTORTAniBani/dicasdf main
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$HF_TOKEN" || { echo 'HF_TOKEN secret is missing'; exit 1; }
+          cat > "$RUNNER_TEMP/hf-askpass" <<'ASKPASS'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' dICTORTAniBani ;;
+            *) printf '%s\n' "$HF_TOKEN" ;;
+          esac
+          ASKPASS
+          chmod 700 "$RUNNER_TEMP/hf-askpass"
+          trap 'rm -f "$RUNNER_TEMP/hf-askpass"' EXIT
+          export GIT_ASKPASS="$RUNNER_TEMP/hf-askpass" GIT_TERMINAL_PROMPT=0
+          git push https://huggingface.co/spaces/dICTORTAniBani/dicasdf HEAD:main

@@ -35,7 +35,6 @@ async def cmd_buypet(message: types.Message):
     pet_id = args[1].lower()
     if pet_id not in PETS_SHOP: return await message.answer("Такого питомца нет в магазине.")
 
-    from db import get_db
     from user_manager import get_user_ref, safe_get_snapshot, update_user_balance, invalidate_user_cache
     from firebase_admin import firestore_async
     

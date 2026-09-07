@@ -1,6 +1,9 @@
 # battle_pass.py
 from __future__ import annotations
 
+import copy
+import os
+from user_manager import get_user_lock, resolve_chat_id
 import asyncio
 import json
 import logging
@@ -27,7 +30,7 @@ router = Router(name="battle_pass")
 
 # ─────────────────────────── Constants ────────────────────────────────────────
 
-BP_FILE = Path("data/battle_pass.json")
+BP_FILE = Path(os.getenv("BATTLE_PASS_PATH", "data/battle_pass.json"))
 PREMIUM_PRICE = 25_000
 MAX_LEVEL = 20
 XP_PER_LEVEL = 1_000
@@ -131,9 +134,12 @@ def _load_bp_data_sync() -> dict:
     if BP_FILE.exists():
         try:
             with BP_FILE.open("r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("Battle Pass storage root must be an object")
+                return data
         except (json.JSONDecodeError, OSError) as exc:
-            logger.error("Не удалось загрузить battle_pass.json: %s", exc)
+            raise RuntimeError("Battle Pass storage could not be loaded; refusing to overwrite it") from exc
     return {}
 
 
@@ -143,16 +149,19 @@ async def _save_bp_data() -> None:
         try:
             tmp = BP_FILE.with_suffix(".tmp")
             loop = asyncio.get_event_loop()
-            data_snapshot = dict(_bp_data)
+            data_snapshot = copy.deepcopy(_bp_data)
             await loop.run_in_executor(None, _write_json_sync, tmp, data_snapshot)
             await loop.run_in_executor(None, tmp.replace, BP_FILE)
         except OSError as exc:
-            logger.error("Не удалось сохранить battle_pass.json: %s", exc)
+            logger.error("Не удалось сохранить battle_pass.json (%s)", type(exc).__name__)
+            raise
 
 
 def _write_json_sync(path: Path, data: dict) -> None:
     with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, ensure_ascii=False, indent=2, allow_nan=False)
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def _init_bp_data() -> None:
@@ -165,7 +174,7 @@ _init_bp_data()
 # ─────────────────────────── User BP record helpers ───────────────────────────
 
 def _user_key(chat_id: int, user_id: int) -> str:
-    return f"{chat_id}:{user_id}"
+    return f"{resolve_chat_id(chat_id, user_id)}:{user_id}"
 
 
 def _get_user_bp(chat_id: int, user_id: int) -> dict:
@@ -512,6 +521,13 @@ async def cb_bp_main(call: CallbackQuery) -> None:
 @router.callback_query(F.data == "bp:claim_all")
 async def cb_claim_all(call: CallbackQuery) -> None:
     if not call.from_user or not call.message:
+        return
+    async with get_user_lock(call.message.chat.id, call.from_user.id):
+        return await _claim_all_locked(call)
+
+
+async def _claim_all_locked(call: CallbackQuery) -> None:
+    if not call.from_user or not call.message:
         await call.answer()
         return
     chat_id = call.message.chat.id
@@ -535,7 +551,6 @@ async def cb_claim_all(call: CallbackQuery) -> None:
         total_xp_boost_gained += r["xp_boost"]
         if r["perk"]:
             perks_gained.append(r["perk"])
-        bp.setdefault("claimed_free", []).append(idx)
 
     for idx in premium_levels:
         r = PREMIUM_REWARDS[idx]
@@ -543,7 +558,6 @@ async def cb_claim_all(call: CallbackQuery) -> None:
         total_xp_boost_gained += r["xp_boost"]
         if r["perk"]:
             perks_gained.append(r["perk"])
-        bp.setdefault("claimed_premium", []).append(idx)
 
     if total_coins > 0:
         new_balance = await update_user_balance(
@@ -552,6 +566,8 @@ async def cb_claim_all(call: CallbackQuery) -> None:
     else:
         new_balance = None
 
+    bp.setdefault("claimed_free", []).extend(free_levels)
+    bp.setdefault("claimed_premium", []).extend(premium_levels)
     await _save_bp_data()
 
     lines = [
@@ -566,7 +582,8 @@ async def cb_claim_all(call: CallbackQuery) -> None:
     for perk in perks_gained:
         lines.append(f"✨ Статус: {perk}")
 
-    await call.answer("\n".join(lines), show_alert=True)
+    plain_alert = "\n".join(lines).replace("<b>", "").replace("</b>", "")
+    await call.answer(plain_alert[:200], show_alert=True)
 
     # Refresh the main BP panel
     has_claimable = bool(
@@ -588,7 +605,13 @@ async def cb_buy_premium(call: CallbackQuery) -> None:
     await _process_buy_premium(call.message, chat_id, user_id, call=call)
 
 
-async def _process_buy_premium(
+async def _process_buy_premium(message: Message, chat_id: int, user_id: int,
+                               call: Optional[CallbackQuery] = None) -> None:
+    async with get_user_lock(chat_id, user_id):
+        return await _buy_premium_locked(message, chat_id, user_id, call=call)
+
+
+async def _buy_premium_locked(
     message: Message,
     chat_id: int,
     user_id: int,
@@ -608,7 +631,7 @@ async def _process_buy_premium(
         chat_id,
         user_id,
         -PREMIUM_PRICE,
-        min_balance=PREMIUM_PRICE,
+        min_balance=0,
         action="Покупка Premium Боевого пропуска",
     )
 
@@ -672,6 +695,13 @@ async def cb_levels_table(call: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("bp:claim_quest:"))
 async def cb_claim_quest(call: CallbackQuery) -> None:
     if not call.from_user or not call.message:
+        return
+    async with get_user_lock(call.message.chat.id, call.from_user.id):
+        return await _claim_quest_locked(call)
+
+
+async def _claim_quest_locked(call: CallbackQuery) -> None:
+    if not call.from_user or not call.message:
         await call.answer()
         return
 
@@ -708,10 +738,10 @@ async def cb_claim_quest(call: CallbackQuery) -> None:
         action=f"Квест: {quest_def['name']}",
     )
 
+    entry["claimed"] = True
     # Award XP
     new_level, leveled_up = await add_bp_xp(chat_id, user_id, quest_def["xp"])
 
-    entry["claimed"] = True
     await _save_bp_data()
 
     lines = [

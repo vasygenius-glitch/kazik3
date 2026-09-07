@@ -51,7 +51,7 @@ from diseases import get_active_diseases
 from aiogram import Router
 from aiogram.types import Message
 from logger import log_message
-from utils import is_valid_command
+from utils import is_valid_command, fire_and_forget
 
 catch_all_router = Router()
 @catch_all_router.message()
@@ -78,7 +78,7 @@ async def catch_all(message: Message, u_data: dict = None):
             from_user_name = message.from_user.full_name if message.from_user else "Unknown"
 
             if from_user_id:
-                asyncio.create_task(increment_message_count(message.chat.id, from_user_id, from_user_name))
+                fire_and_forget(increment_message_count(message.chat.id, from_user_id, from_user_name))
 
             # Проверка является ли сообщение командой ПЕРЕД запросом к БД
             if not is_valid_command(text) and not getattr(message, "reply_to_message", None):
@@ -127,6 +127,7 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(admin_debts_router)
     dp.include_router(log_system_router)
     dp.include_router(chat_stats_router)
+    dp.include_router(duels_router)
     dp.include_router(rp_clans_router)
     dp.include_router(profile_bank_router)
     dp.include_router(group_management_router)
@@ -146,6 +147,5 @@ def register_all_handlers(dp: Dispatcher):
     dp.include_router(court_router)
     dp.include_router(cards_system_router)
     dp.include_router(pm_sync_router)
-    dp.include_router(duels_router)
     dp.include_router(battle_pass_router)
     dp.include_router(catch_all_router)

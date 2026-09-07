@@ -1,3 +1,4 @@
+import time
 from aiogram import Router, types, Bot, F
 from aiogram.filters import Command, or_f
 
@@ -9,6 +10,8 @@ from escape import escape_html
 router = Router()
 
 def is_creator(message: types.Message):
+    if message.from_user is None:
+        return False
     user_id = message.from_user.id
     if int(user_id) in CREATOR_IDS:
         return True

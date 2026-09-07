@@ -1,25 +1,13 @@
 FROM python:3.11-slim
-
-# Устанавливаем необходимые пакеты для сети и сертификатов,
-# чтобы улучшить связь с api.telegram.org на Hugging Face
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
-
-# Устанавливаем рабочую папку
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 bot
 WORKDIR /app
-
-# Копируем список зависимостей
 COPY requirements.txt .
-
-# Ставим либы (Firebase, Flask, aiogram и т.д.)
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Копируем все файлы бота
-COPY . .
-
-# Открываем порт для Flask (стандарт HF)
+RUN python -m pip install -r requirements.txt
+COPY --chown=1000:1000 . .
+RUN mkdir -p /app/data && chown -R 1000:1000 /app
+USER 1000
 EXPOSE 7860
-
-# Запуск
 CMD ["python", "main.py"]

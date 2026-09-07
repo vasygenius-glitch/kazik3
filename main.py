@@ -28,6 +28,8 @@ from whitelist_middleware import WhitelistMiddleware
 
 warnings.filterwarnings("ignore", category=UserWarning, message="Detected filter.*positional arguments")
 logging.basicConfig(level=logging.INFO)
+from security_logging import install_secret_redaction
+install_secret_redaction()
 logger = logging.getLogger(__name__)
 
 
@@ -87,16 +89,15 @@ async def create_storage():
         client = None
         try:
             from aiogram.fsm.storage.redis import RedisStorage
-            from redis.asyncio import Redis, ConnectionPool
+            from redis.asyncio import Redis
             max_conn = int(os.environ.get("REDIS_MAX_CONNECTIONS", "8"))
-            pool = ConnectionPool.from_url(
+            client = Redis.from_url(
                 redis_url,
                 max_connections=max_conn,
                 socket_timeout=3,
                 socket_connect_timeout=3,
                 health_check_interval=30,
             )
-            client = Redis(connection_pool=pool)
             await asyncio.wait_for(client.ping(), timeout=3)
             logger.info("RedisStorage подключен (max_connections=%s).", max_conn)
             return RedisStorage(redis=client)

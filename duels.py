@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
 from aiogram.types import (
     CallbackQuery,
@@ -53,6 +53,9 @@ class DuelSession:
     target_roll: Optional[int] = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     timeout_task: Optional[asyncio.Task] = field(default=None, repr=False)
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+    state: str = "pending"
+    target_debited: bool = False
 
     @property
     def is_expired(self) -> bool:
@@ -71,11 +74,36 @@ def _session_key(chat_id: int, challenger_id: int) -> tuple[int, int]:
 
 def _cleanup_session(session: DuelSession) -> None:
     key = _session_key(session.chat_id, session.challenger_id)
-    active_duels.pop(key, None)
-    target_key = (session.chat_id, session.target_id)
-    pending_for_target.pop(target_key, None)
-    if session.timeout_task and not session.timeout_task.done():
-        session.timeout_task.cancel()
+    if active_duels.get(key) is session:
+        active_duels.pop(key, None)
+        target_key = (session.chat_id, session.target_id)
+        if pending_for_target.get(target_key) == key:
+            pending_for_target.pop(target_key, None)
+    try:
+        current = asyncio.current_task()
+    except RuntimeError:
+        current = None
+    task = session.timeout_task
+    if task and task is not current and not task.done():
+        task.cancel()
+
+
+async def _refund_stakes(session: DuelSession, action: str) -> None:
+    # Once settlement begins, never automatically retry an ambiguous credit.
+    session.state = "settling"
+    await update_user_balance(session.chat_id, session.challenger_id, session.bet, action=action)
+    if session.target_debited:
+        await update_user_balance(session.chat_id, session.target_id, session.bet, action=action)
+    session.state = "settled"
+    _cleanup_session(session)
+
+
+def _observe_timeout(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception() is not None:
+        logger.error("Duel timeout/refund failed (%s); manual review required", type(task.exception()).__name__)
+
+
+_creation_lock = asyncio.Lock()
 
 
 def _accept_keyboard(challenger_id: int) -> InlineKeyboardMarkup:
@@ -107,6 +135,11 @@ router = Router(name="duels")
 
 @router.message(Command("duel", "дуэль"))
 async def cmd_duel(message: Message, bot: Bot) -> None:
+    async with _creation_lock:
+        return await _cmd_duel_locked(message, bot)
+
+
+async def _cmd_duel_locked(message: Message, bot: Bot) -> None:
     """
     Создание дуэли:
     /duel [ставка] (в ответ на сообщение)
@@ -136,7 +169,7 @@ async def cmd_duel(message: Message, bot: Bot) -> None:
     parts = (message.text or "").split()
     for token in parts[1:]:
         cleaned = token.replace(",", "").replace("_", "")
-        if cleaned.isdigit():
+        if cleaned.isascii() and cleaned.isdecimal() and len(cleaned) <= 18:
             val = int(cleaned)
             if val > 0:
                 bet = val
@@ -146,7 +179,7 @@ async def cmd_duel(message: Message, bot: Bot) -> None:
         await message.reply(
             "⚔️ <b>Как вызвать на дуэль:</b>\n\n"
             "• Ответьте на сообщение игрока командой <code>/duel 1000</code>\n"
-            "• Либо напишите: <code>/duel @username 1000</code>",
+            "• Или используйте встроенное упоминание игрока с командой <code>/duel 1000</code>",
             parse_mode="HTML",
         )
         return
@@ -165,12 +198,12 @@ async def cmd_duel(message: Message, bot: Bot) -> None:
 
     # Проверка активных дуэлей
     c_key = _session_key(message.chat.id, challenger.id)
-    if c_key in active_duels:
+    if c_key in active_duels or c_key in pending_for_target:
         await message.reply("⏳ У вас уже есть активный дуэльный вызов. Дождитесь его завершения.")
         return
 
     t_key = (message.chat.id, target.id)
-    if t_key in pending_for_target:
+    if t_key in pending_for_target or t_key in active_duels:
         await message.reply(f"⚠️ {_mention(target.id, target.full_name)} уже ожидает ответа в другой дуэли.", parse_mode="HTML")
         return
 
@@ -217,30 +250,33 @@ async def cmd_duel(message: Message, bot: Bot) -> None:
         f"⏰ Вызов действителен: <b>{DUEL_TIMEOUT_SECONDS}с</b>"
     )
 
-    sent = await message.answer(
-        text,
-        reply_markup=_accept_keyboard(challenger.id),
-        parse_mode="HTML",
-    )
-    session.message_id = sent.message_id
+    try:
+        sent = await message.answer(
+            text,
+            reply_markup=_accept_keyboard(challenger.id),
+            parse_mode="HTML",
+        )
+        session.message_id = sent.message_id
 
-    # Фоновая задача авто-отмены по таймауту
-    session.timeout_task = asyncio.create_task(
-        _auto_cancel_duel(bot, session, sent.message_id)
-    )
+        # Фоновая задача авто-отмены по таймауту
+        session.timeout_task = asyncio.create_task(
+            _auto_cancel_duel(bot, session, sent.message_id)
+        )
+
+    except (Exception, asyncio.CancelledError):
+        await _refund_stakes(session, "Duel Delivery Refund")
+        raise
+    session.timeout_task.add_done_callback(_observe_timeout)
 
 
 async def _auto_cancel_duel(bot: Bot, session: DuelSession, message_id: int) -> None:
     await asyncio.sleep(DUEL_TIMEOUT_SECONDS)
 
-    key = _session_key(session.chat_id, session.challenger_id)
-    if key not in active_duels:
-        return
-
-    _cleanup_session(session)
-
-    # Возврат ставки создателю
-    await update_user_balance(session.chat_id, session.challenger_id, session.bet, action="Duel Timeout Refund")
+    async with session.lock:
+        key = _session_key(session.chat_id, session.challenger_id)
+        if active_duels.get(key) is not session or session.state != "pending":
+            return
+        await _refund_stakes(session, "Duel Timeout Refund")
 
     text = (
         f"⏰ <b>Время вызова истекло!</b>\n\n"
@@ -255,12 +291,30 @@ async def _auto_cancel_duel(bot: Bot, session: DuelSession, message_id: int) -> 
             reply_markup=None,
             parse_mode="HTML",
         )
-    except TelegramBadRequest:
+    except TelegramAPIError:
         pass
 
 
 @router.callback_query(F.data.startswith("duel_accept:"))
 async def cb_duel_accept(callback: CallbackQuery, bot: Bot) -> None:
+    if callback.message is None or not callback.data:
+        return await callback.answer("Некорректный вызов.")
+    try:
+        challenger_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await callback.answer("Некорректный вызов.")
+    key = _session_key(callback.message.chat.id, challenger_id)
+    session = active_duels.get(key)
+    if session is None:
+        return await callback.answer("Дуэль уже завершена.", show_alert=True)
+    async with session.lock:
+        if (active_duels.get(key) is not session or session.state != "pending" or
+                (session.message_id is not None and session.message_id != callback.message.message_id)):
+            return await callback.answer("Этот вызов больше не активен.", show_alert=True)
+        return await _duel_accept_locked(callback, bot)
+
+
+async def _duel_accept_locked(callback: CallbackQuery, bot: Bot) -> None:
     challenger_id = int(callback.data.split(":")[1])
     key = _session_key(callback.message.chat.id, challenger_id)
     session = active_duels.get(key)
@@ -274,8 +328,7 @@ async def cb_duel_accept(callback: CallbackQuery, bot: Bot) -> None:
         return
 
     if session.is_expired:
-        _cleanup_session(session)
-        await update_user_balance(session.chat_id, session.challenger_id, session.bet, action="Duel Expired Refund")
+        await _refund_stakes(session, "Duel Expired Refund")
         await callback.answer("⏰ Время вызова истекло.", show_alert=True)
         return
 
@@ -301,15 +354,21 @@ async def cb_duel_accept(callback: CallbackQuery, bot: Bot) -> None:
         await callback.answer("❌ Ошибка списания ставки.", show_alert=True)
         return
 
+    session.state = "running"
+    session.target_debited = True
+
     # Отменяем таймаут
     if session.timeout_task and not session.timeout_task.done():
         session.timeout_task.cancel()
 
-    await callback.answer("⚔️ Вызов принят! Кубики брошены!")
+    try:
+        await callback.answer("⚔️ Вызов принят! Кубики брошены!")
+    except TelegramAPIError:
+        pass
 
     try:
         await callback.message.edit_reply_markup(reply_markup=None)
-    except TelegramBadRequest:
+    except TelegramAPIError:
         pass
 
     await _run_duel(bot, session)
@@ -317,6 +376,24 @@ async def cb_duel_accept(callback: CallbackQuery, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith("duel_decline:"))
 async def cb_duel_decline(callback: CallbackQuery, bot: Bot) -> None:
+    if callback.message is None or not callback.data:
+        return await callback.answer("Некорректный вызов.")
+    try:
+        challenger_id = int(callback.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        return await callback.answer("Некорректный вызов.")
+    key = _session_key(callback.message.chat.id, challenger_id)
+    session = active_duels.get(key)
+    if session is None:
+        return await callback.answer("Дуэль уже завершена.", show_alert=True)
+    async with session.lock:
+        if (active_duels.get(key) is not session or session.state != "pending" or
+                (session.message_id is not None and session.message_id != callback.message.message_id)):
+            return await callback.answer("Этот вызов больше не активен.", show_alert=True)
+        return await _duel_decline_locked(callback, bot)
+
+
+async def _duel_decline_locked(callback: CallbackQuery, bot: Bot) -> None:
     challenger_id = int(callback.data.split(":")[1])
     key = _session_key(callback.message.chat.id, challenger_id)
     session = active_duels.get(key)
@@ -329,10 +406,7 @@ async def cb_duel_decline(callback: CallbackQuery, bot: Bot) -> None:
         await callback.answer("🚫 Вы не участник этой дуэли.", show_alert=True)
         return
 
-    _cleanup_session(session)
-
-    # Возврат ставки инициатору
-    await update_user_balance(session.chat_id, session.challenger_id, session.bet, action="Duel Decline Refund")
+    await _refund_stakes(session, "Duel Decline Refund")
 
     decliner_name = callback.from_user.full_name
     text = (
@@ -341,13 +415,25 @@ async def cb_duel_decline(callback: CallbackQuery, bot: Bot) -> None:
     )
     try:
         await callback.message.edit_text(text, reply_markup=None, parse_mode="HTML")
-    except TelegramBadRequest:
+    except TelegramAPIError:
         pass
 
     await callback.answer("Дуэль отменена.")
 
 
 async def _run_duel(bot: Bot, session: DuelSession) -> None:
+    try:
+        await _run_duel_impl(bot, session)
+    except (Exception, asyncio.CancelledError):
+        if session.state == "running":
+            await _refund_stakes(session, "Duel Interrupted Refund")
+        elif session.state == "settling":
+            logger.error("Duel settlement interrupted: chat=%s challenger=%s; manual review required",
+                         session.chat_id, session.challenger_id)
+        raise
+
+
+async def _run_duel_impl(bot: Bot, session: DuelSession) -> None:
     chat_id = session.chat_id
 
     intro = (
@@ -398,6 +484,7 @@ async def _run_duel(bot: Bot, session: DuelSession) -> None:
         f"🔵 {t_mention}: <b>{t_roll}</b> 🎲"
     )
 
+    session.state = "settling"
     if c_roll > t_roll:
         await update_user_balance(chat_id, session.challenger_id, win_prize, action="Duel Win Prize")
         result = (
@@ -421,5 +508,6 @@ async def _run_duel(bot: Bot, session: DuelSession) -> None:
             f"Оба выбросили <b>{c_roll}</b>! Ставки полностью возвращены игрокам."
         )
 
+    session.state = "settled"
     _cleanup_session(session)
     await bot.send_message(chat_id, f"⚔️ <b>ИТОГ ДУЭЛИ</b>{scores}\n\n{result}", parse_mode="HTML")

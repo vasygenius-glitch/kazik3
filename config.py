@@ -9,8 +9,8 @@ FIREBASE_KEY_PATH = os.getenv("FIREBASE_KEY_PATH", "firebase-key.json")
 CREATOR_USERNAME = os.getenv("CREATOR_USERNAME", "z_1l1")
 try:
     CREATOR_ID = int(os.getenv("CREATOR_ID", "5416583030"))
-except ValueError:
-    CREATOR_ID = 5416583030
+except ValueError as exc:
+    raise ValueError("CREATOR_ID must be your numeric Telegram administrator ID") from exc
 
 CREATOR_IDS = {CREATOR_ID}
 
@@ -37,3 +37,5 @@ DAILY_QUESTS_COUNT = 3
 XP_PER_GAME = 5
 XP_PER_WIN = 10
 
+# Dangerous administration is disabled unless explicitly enabled by the operator.
+ENABLE_ADMIN_EVAL = os.getenv("ENABLE_ADMIN_EVAL", "false").strip().lower() == "true"

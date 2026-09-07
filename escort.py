@@ -197,6 +197,7 @@ async def callback_escort(callback: types.CallbackQuery):
         result_msg += "\n\n⚠️ <b>ОХ НЕПРИЯТНОСТЬ...</b> Кто-то пренебрег защитой!\n"
 
         if new_infections_client:
+            client_data = await get_user_data(chat_id, client_id)
             penalty_client = int(max(0, client_data.get('balance', 0)) * 0.1) # теряет 10% на врачей (только положительный баланс)
             await update_user_balance(chat_id, client_id, -penalty_client, min_balance=0)
             result_msg += f"👨‍💼 Клиент подцепил: {', '.join(new_infections_client)}. (Потерял {penalty_client} сыр. на лечение)\n"

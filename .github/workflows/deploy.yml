@@ -1,17 +1,12 @@
-name: Deploy to Glitch
-
+name: Container build check
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
-
+permissions:
+  contents: read
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Deploy Check
-        run: echo "Deployment check completed successfully."
+      - uses: actions/checkout@v4
+      - run: docker build --tag kazik-bot:check .

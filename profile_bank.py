@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import time
 import random
 import traceback

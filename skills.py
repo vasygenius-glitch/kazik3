@@ -1,3 +1,4 @@
+from user_manager import user_action_locked
 from aiogram import Router, types
 from aiogram.filters import Command
 from user_manager import get_user_data, update_user_balance, update_user_field
@@ -12,6 +13,7 @@ SKILLS = {
 }
 
 @router.message(Command("skills"))
+@user_action_locked
 async def cmd_skills(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -56,9 +58,10 @@ async def cmd_skills(message: types.Message):
         await message.answer(f"Недостаточно средств. Нужно {price} сыроежек.")
         return
 
-    await update_user_balance(chat_id, user_id, -price)
+    new_balance = await update_user_balance(chat_id, user_id, -price, min_balance=0)
+    if new_balance is None:
+        return await message.answer("Недостаточно средств.")
     skills[sk_id] = level + 1
-    from user_manager import update_user_field
     await update_user_field(chat_id, user_id, 'skills', skills)
 
     await message.answer(f"🎉 Вы успешно прокачали навык <b>{SKILLS[sk_id]['name']}</b> до {level+1} уровня!")
