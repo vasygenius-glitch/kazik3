@@ -8,19 +8,22 @@ from profile_bank import get_bank_info, create_or_update_bank
 router = Router()
 
 def is_creator(message: types.Message):
-    return int(message.from_user.id) in CREATOR_IDS
+    return message.from_user is not None and int(message.from_user.id) in CREATOR_IDS
 
 # 1. Добавить долг банку
 @router.message(Command("add_bank_debt"))
 async def cmd_add_bank_debt(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
     if len(args) < 3: return await message.answer("Использование: /add_bank_debt [Сумма] [Название Банка или ID]")
 
     try:
         amount = int(args[1])
     except Exception: return await message.answer("Сумма должна быть числом.")
+
+    if not 1 <= amount <= 2**63 - 1:
+        return await message.answer("Недопустимая сумма долга.")
 
     bank_identifier = " ".join(args[2:])
     chat_id = message.chat.id
@@ -43,13 +46,16 @@ async def cmd_add_bank_debt(message: types.Message):
 @router.message(Command("add_user_debt"))
 async def cmd_add_user_debt(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
     if len(args) < 3: return await message.answer("Использование: /add_user_debt [ID_Игрока_Кредитора] [Сумма]")
     try:
         creditor_id = str(int(args[1]))
         amount = int(args[2])
     except Exception: return
+
+    if not 1 <= amount <= 2**63 - 1:
+        return await message.answer("Недопустимая сумма долга.")
 
     target_id = message.reply_to_message.from_user.id
     chat_id = message.chat.id
@@ -64,7 +70,7 @@ async def cmd_add_user_debt(message: types.Message):
 @router.message(Command("clear_debts"))
 async def cmd_clear_debts(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
 
     target_id = message.reply_to_message.from_user.id
     chat_id = message.chat.id
@@ -75,7 +81,7 @@ async def cmd_clear_debts(message: types.Message):
 @router.message(Command("del_bank_debt"))
 async def cmd_del_bank_debt(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
     if len(args) < 2: return await message.answer("Использование: /del_bank_debt [Название Банка или ID]")
 
@@ -102,7 +108,7 @@ async def cmd_del_bank_debt(message: types.Message):
 @router.message(Command("del_user_debt"))
 async def cmd_del_user_debt(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
     if len(args) < 2: return await message.answer("Использование: /del_user_debt [ID_Игрока_Кредитора]")
     try:
@@ -124,13 +130,16 @@ async def cmd_del_user_debt(message: types.Message):
 @router.message(Command("set_bank_debt"))
 async def cmd_set_bank_debt(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
     if len(args) < 3: return await message.answer("Использование: /set_bank_debt [Новая_Сумма] [Название Банка или ID]")
 
     try:
         new_amount = int(args[1])
     except Exception: return await message.answer("Сумма должна быть числом.")
+
+    if not 0 <= new_amount <= 2**63 - 1:
+        return await message.answer("Недопустимая сумма долга.")
 
     bank_identifier = " ".join(args[2:])
     chat_id = message.chat.id
@@ -162,13 +171,16 @@ async def cmd_set_bank_debt(message: types.Message):
 @router.message(Command("set_user_debt"))
 async def cmd_set_user_debt(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
     args = message.text.split()
     if len(args) < 3: return await message.answer("Использование: /set_user_debt [ID_Игрока_Кредитора] [Новая_Сумма]")
     try:
         creditor_id = str(int(args[1]))
         new_amount = int(args[2])
     except Exception: return
+
+    if not 0 <= new_amount <= 2**63 - 1:
+        return await message.answer("Недопустимая сумма долга.")
 
     target_id = message.reply_to_message.from_user.id
     chat_id = message.chat.id
@@ -199,14 +211,16 @@ async def cmd_add_bank_cap(message: types.Message):
 
     banker_id = bank_data['banker_id']
     new_cap = bank_data.get('capital', 0) + amount
-    await create_or_update_bank(chat_id, banker_id, {'capital': new_cap})
+    if not 0 <= new_cap <= 2**63 - 1:
+        return await message.answer("Капитал не может быть отрицательным или превышать лимит.")
+    await create_or_update_bank(chat_id, banker_id, {"capital": new_cap})
     await message.answer(f"✅ Капитал банка <b>{escape_html(bank_data.get('name'))}</b> изменен. Текущий: {new_cap}.")
 
 # 9. Узнать список всех долгов (Дебаг)
 @router.message(Command("view_debts"))
 async def cmd_view_debts(message: types.Message):
     if not is_creator(message): return
-    if not message.reply_to_message: return await message.answer("Сделайте реплай на пользователя.")
+    if not message.reply_to_message or not message.reply_to_message.from_user: return await message.answer("Сделайте реплай на пользователя.")
 
     target_id = message.reply_to_message.from_user.id
     chat_id = message.chat.id

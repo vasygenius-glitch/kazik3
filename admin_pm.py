@@ -4,7 +4,7 @@ import asyncio
 from aiogram import Router, F, types
 from aiogram.filters import Command
 from config import CREATOR_ID, CREATOR_IDS
-from user_manager import update_user_field, get_user_data, update_user_balance
+from user_manager import update_user_field, get_user_data, update_user_balance, flush_user_cache_immediately
 from escape import escape_html
 from db import get_db
 from whitelist import get_whitelist
@@ -112,7 +112,9 @@ async def creator_maintenance(message: types.Message):
         return await message.answer("❌ <code>creator maintenance [on/off]</code>")
     
     status = parts[2].lower()
-    is_on = True if status == "on" else False
+    if status not in {"on", "off"}:
+        return await message.answer("Допустимые значения: on / off.")
+    is_on = status == "on"
     
     db = get_db()
     await db.collection('bot_settings').document('maintenance').set({"active": is_on})
@@ -125,6 +127,8 @@ async def creator_setbal(message: types.Message):
     if len(parts) < 5: return await message.answer("❌ <code>creator setbal [chat] [user] [val]</code>")
     try:
         cid, uid, val = int(parts[2]), int(parts[3]), int(parts[4])
+        if uid <= 0 or val < 0 or val > 2**63 - 1:
+            return await message.answer("Нужны положительный ID и неотрицательный баланс в пределах лимита.")
         await update_user_field(cid, uid, "balance", val)
         await message.answer(f"✅ Установлен баланс <b>{val}</b> для <code>{uid}</code> в <code>{cid}</code>.")
     except Exception as e: await message.answer(f"❌ Ошибка: {e}")
@@ -135,7 +139,12 @@ async def creator_givebal(message: types.Message):
     if len(parts) < 5: return await message.answer("❌ <code>creator givebal [chat] [user] [val]</code>")
     try:
         cid, uid, val = int(parts[2]), int(parts[3]), int(parts[4])
-        await update_user_balance(cid, uid, val)
+        if uid <= 0 or abs(val) > 2**63 - 1:
+            return await message.answer("Неверный ID или сумма.")
+        result = await update_user_balance(cid, uid, val, min_balance=0)
+        if result is None:
+            return await message.answer("Недостаточно средств для списания.")
+        await flush_user_cache_immediately(cid, uid)
         await message.answer(f"✅ Добавлено <b>{val}</b> сыр. юзеру <code>{uid}</code> в <code>{cid}</code>.")
     except Exception as e: await message.answer(f"❌ Ошибка: {e}")
 
@@ -145,8 +154,10 @@ async def creator_self_bal(message: types.Message):
     if len(parts) < 4: return await message.answer("❌ <code>creator self [chat] [val]</code>")
     try:
         cid, val = int(parts[2]), int(parts[3])
+        if not 0 <= val <= 2**63 - 1:
+            return await message.answer("Баланс должен быть неотрицательным числом в пределах лимита.")
         await update_user_field(cid, CREATOR_ID, "balance", val)
-        await message.answer(f"👑 Баланс <b>{val}</b> начислен вам в чате <code>{cid}</code>.")
+        await message.answer(f"👑 Баланс <b>{val}</b> установлен вам в чате <code>{cid}</code>.")
     except Exception as e: await message.answer(f"❌ Ошибка: {e}")
 
 @router.message(F.text.lower().startswith("creator vip"))
@@ -155,18 +166,20 @@ async def creator_vip(message: types.Message):
     if len(parts) < 5: return await message.answer("❌ <code>creator vip [chat] [user] [1/0]</code>")
     try:
         cid, uid, status = int(parts[2]), int(parts[3]), int(parts[4])
+        if uid <= 0 or status not in {0, 1}:
+            return await message.answer("Нужны положительный ID и статус 0 или 1.")
         is_vip = (status == 1)
         await update_user_field(cid, uid, "is_vip", is_vip)
         await message.answer(f"✅ VIP для <code>{uid}</code> в <code>{cid}</code> -> <b>{is_vip}</b>.")
     except Exception as e: await message.answer(f"❌ Ошибка: {e}")
 
 @router.message(Command("reset_game"))
-async def cmd_reset_game(message: types.Message):
-    if not CREATOR_IDS or message.from_user.id not in CREATOR_IDS:
+async def cmd_reset_game(message: types.Message, state: FSMContext):
+    if not CREATOR_IDS or not message.from_user or message.from_user.id not in CREATOR_IDS:
         return await message.answer("Эта команда доступна только Создателю.")
 
     target_id = None
-    if message.reply_to_message:
+    if message.reply_to_message and message.reply_to_message.from_user:
         target_id = message.reply_to_message.from_user.id
     else:
         args = message.text.split()
@@ -178,9 +191,17 @@ async def cmd_reset_game(message: types.Message):
         else:
             return await message.answer("Сделайте реплай или укажите ID: /reset_game [ID]")
 
+    args = (message.text or "").split()
+    if len(args) < 3:
+        return await message.answer("Укажите целевой чат: /reset_game USER_ID CHAT_ID")
+    try:
+        target_chat_id = int(args[2])
+    except ValueError:
+        return await message.answer("Неверный ID чата.")
+
     try:
          # Нужен доступ к диспетчеру для FSM
-        state = FSMContext(storage=message.bot.dispatcher.storage, key=StorageKey(bot_id=message.bot.id, chat_id=message.chat.id, user_id=target_id))
+        state = FSMContext(storage=state.storage, key=StorageKey(bot_id=message.bot.id, chat_id=target_chat_id, user_id=target_id))
         await state.clear()
 
         await message.answer(f"✅ FSM стейт (включая зависший блэкджек) для пользователя <code>{target_id}</code> успешно сброшен.")

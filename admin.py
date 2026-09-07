@@ -1,3 +1,4 @@
+from admin_safety import default_chat_permissions
 import re
 import time
 from config import CREATOR_ID, CREATOR_IDS
@@ -21,10 +22,10 @@ def is_creator(user_id: int):
 
 @router.message(F.text.startswith("!!!ban"))
 async def cmd_ban_only_creator(message: types.Message, bot: Bot):
-    if not is_creator(message.from_user.id):
+    if not message.from_user or not is_creator(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Ответьте на сообщение пользователя для бана.")
 
     chat_id = message.chat.id
@@ -55,10 +56,10 @@ async def cmd_ban_only_creator(message: types.Message, bot: Bot):
 
 @router.message(F.text.startswith("!!!wipe"))
 async def cmd_wipe_only_creator(message: types.Message, bot: Bot):
-    if not is_creator(message.from_user.id):
+    if not message.from_user or not is_creator(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Ответьте на сообщение пользователя для вайпа.")
 
     chat_id = message.chat.id
@@ -79,10 +80,10 @@ async def cmd_wipe_only_creator(message: types.Message, bot: Bot):
 # Изменяем фильтры на более строгие, чтобы не реагировать на обычную речь
 @router.message(F.text.regexp(r"^[!/]+мут(\s|$)"))
 async def cmd_mute(message: types.Message, bot: Bot):
-    if not is_creator(message.from_user.id):
+    if not message.from_user or not is_creator(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Ответьте на сообщение пользователя для мута.")
 
     target = message.reply_to_message.from_user
@@ -95,8 +96,10 @@ async def cmd_mute(message: types.Message, bot: Bot):
         try:
             minutes = int(args[1])
         except ValueError:
-            pass
+            return await message.answer("Длительность должна быть целым числом минут.")
 
+    if not 1 <= minutes <= 525600:
+        return await message.answer("Укажите от 1 до 525600 минут.")
     until_date = int(time.time()) + (minutes * 60)
     try:
         await bot.restrict_chat_member(
@@ -113,10 +116,10 @@ async def cmd_mute(message: types.Message, bot: Bot):
 
 @router.message(F.text.regexp(r"^[!/]+размут(\s|$)"))
 async def cmd_unmute(message: types.Message, bot: Bot):
-    if not is_creator(message.from_user.id):
+    if not message.from_user or not is_creator(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Ответьте на сообщение пользователя для размута.")
 
     target = message.reply_to_message.from_user
@@ -124,12 +127,7 @@ async def cmd_unmute(message: types.Message, bot: Bot):
         await bot.restrict_chat_member(
             chat_id=message.chat.id,
             user_id=target.id,
-            permissions=types.ChatPermissions(
-                can_send_messages=True,
-                can_send_media_messages=True,
-                can_send_other_messages=True,
-                can_add_web_page_previews=True
-            )
+            permissions=await default_chat_permissions(bot, message.chat.id)
         )
         await message.answer(f"🔊 С пользователя <b>{escape_html(target.full_name)}</b> сняты ограничения.")
         from log_system import log_action
@@ -139,10 +137,10 @@ async def cmd_unmute(message: types.Message, bot: Bot):
 
 @router.message(F.text.regexp(r"^[!/]+варн(\s|$)"))
 async def cmd_warn(message: types.Message, bot: Bot):
-    if not is_creator(message.from_user.id):
+    if not message.from_user or not is_creator(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Ответьте на сообщение пользователя для варрна.")
 
     target = message.reply_to_message.from_user
@@ -176,10 +174,10 @@ async def cmd_warn(message: types.Message, bot: Bot):
 
 @router.message(F.text.regexp(r"^[!/]+снять варн(\s|$)"))
 async def cmd_unwarn(message: types.Message):
-    if not is_creator(message.from_user.id):
+    if not message.from_user or not is_creator(message.from_user.id):
         return
 
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         return await message.answer("Ответьте на сообщение пользователя для снятия варна.")
 
     target = message.reply_to_message.from_user

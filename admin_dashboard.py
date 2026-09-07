@@ -12,6 +12,10 @@
 
 from __future__ import annotations
 
+import math
+import html
+import re
+from admin_safety import protect_admin_handler, arm_confirmation, default_chat_permissions
 import os
 import time
 import random
@@ -187,6 +191,8 @@ async def safe_edit(
         await message.edit_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
         return True
     except Exception as exc:  # noqa: BLE001
+        if "message is not modified" in str(exc).lower():
+            return True
         logger.debug("safe_edit failed: %s", exc)
         return False
 
@@ -206,6 +212,8 @@ async def safe_delete(message: Optional[types.Message]) -> bool:
 async def safe_answer(callback: types.CallbackQuery, text: Optional[str] = None,
                       show_alert: bool = False) -> None:
     """Безопасно отвечает на callback (не падает, если истёк)."""
+    if text is not None:
+        text = html.unescape(re.sub(r"<[^>]*>", "", str(text)))[:200]
     try:
         await callback.answer(text=text, show_alert=show_alert)
     except Exception as exc:  # noqa: BLE001
@@ -234,12 +242,14 @@ def parse_int(raw: str, *, allow_negative: bool = True,
     Аккуратно парсит целое из пользовательского ввода.
     Поддерживает пробелы и запятые. Возвращает None при ошибке/выходе за границы.
     """
-    if raw is None:
+    if not isinstance(raw, str):
         return None
     cleaned = raw.replace(" ", "").replace(",", "").replace("\u00a0", "")
     try:
         value = int(cleaned)
     except (ValueError, TypeError):
+        return None
+    if abs(value) > 2**63 - 1:
         return None
     if not allow_negative and value < 0:
         return None
@@ -253,12 +263,14 @@ def parse_int(raw: str, *, allow_negative: bool = True,
 def parse_float(raw: str, *, minimum: Optional[float] = None,
                 maximum: Optional[float] = None) -> Optional[float]:
     """Парсит дробное число (запятая = точка)."""
-    if raw is None:
+    if not isinstance(raw, str):
         return None
     cleaned = raw.replace(",", ".").replace(" ", "").strip()
     try:
         value = float(cleaned)
     except (ValueError, TypeError):
+        return None
+    if not math.isfinite(value):
         return None
     if minimum is not None and value < minimum:
         return None
@@ -362,34 +374,10 @@ def is_creator(event: Union[types.Message, types.CallbackQuery, MockCallback]) -
         return False
 
 
+_ADMIN_INPUT_STATES = {'process_bank_capital_input': 'AdminPanelState:waiting_for_bank_capital', 'process_bank_rate_input': 'AdminPanelState:waiting_for_bank_rate', 'process_bank_owner_input': 'AdminPanelState:waiting_for_bank_new_owner', 'process_bank_create_user_input': 'AdminPanelState:waiting_for_bank_create_user', 'process_bank_create_name_input': 'AdminPanelState:waiting_for_bank_create_name', 'process_player_search_input': 'AdminPanelState:waiting_for_player_search', 'process_player_money_add': 'AdminPanelState:waiting_for_player_money_add', 'process_player_money_set': 'AdminPanelState:waiting_for_player_money_set', 'process_group_say_text': 'AdminPanelState:waiting_for_say_text', 'process_global_tax_input': 'AdminPanelState:waiting_for_global_tax', 'process_game_chance_input': 'AdminPanelState:waiting_for_chance_val', 'process_whitelist_id_input': 'AdminPanelState:waiting_for_whitelist_id', 'process_whitelist_title_input': 'AdminPanelState:waiting_for_whitelist_title', 'process_admin_give_item_query': 'AdminPanelState:waiting_for_admin_give_item_query', 'process_admin_give_item_qty': 'AdminPanelState:waiting_for_admin_give_item_qty', 'process_player_inv_qty_input': 'AdminPanelState:waiting_for_player_inv_qty', 'process_player_reputation_input': 'AdminPanelState:waiting_for_player_reputation', 'process_player_escort_input': 'AdminPanelState:waiting_for_player_escort', 'process_player_role_input': 'AdminPanelState:waiting_for_player_role', 'process_debt_creditor_input': 'AdminPanelState:waiting_for_debt_creditor', 'process_debt_amount_input': 'AdminPanelState:waiting_for_debt_amount', 'process_global_broadcast_input': 'AdminPanelState:waiting_for_global_broadcast', 'process_clan_treasury_input': 'AdminPanelState:waiting_for_clan_treasury', 'process_clan_leader_input': 'AdminPanelState:waiting_for_clan_leader', 'process_promo_code_input': 'AdminPanelState:waiting_for_promo_code', 'process_promo_reward_input': 'AdminPanelState:waiting_for_promo_reward', 'process_promo_max_uses_input': 'AdminPanelState:waiting_for_promo_max_uses', 'process_coin_ticker_input': 'AdminPanelState:waiting_for_coin_ticker', 'process_coin_name_input': 'AdminPanelState:waiting_for_coin_name', 'process_coin_price_input': 'AdminPanelState:waiting_for_coin_price', 'process_coin_crash_input': 'AdminPanelState:waiting_for_coin_crash', 'process_lock_chat_id_input': 'AdminPanelState:waiting_for_lock_chat_id', 'process_eval_code_input': 'AdminPanelState:waiting_for_eval_code'}
+
 def creator_only(handler: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
-    """
-    Декоратор: пускает только Создателя.
-    Работает и для message-хендлеров, и для callback-хендлеров.
-    """
-
-    @functools.wraps(handler)
-    async def wrapper(event, *args, **kwargs):
-        if not is_creator(event):
-            if isinstance(event, types.CallbackQuery):
-                await safe_answer(event, "❌ У вас нет доступа.", show_alert=True)
-            return None
-        try:
-            return await handler(event, *args, **kwargs)
-        except Exception as exc:  # noqa: BLE001
-            logger.error("Handler %s crashed: %s\n%s",
-                         handler.__name__, exc, traceback.format_exc())
-            if isinstance(event, types.CallbackQuery):
-                await safe_answer(event, "⚠️ Внутренняя ошибка. Подробности записаны в журнал.", show_alert=True)
-            elif isinstance(event, types.Message):
-                await safe_delete(None)
-                try:
-                    await event.answer(f"⚠️ Произошла ошибка: <code>{escape_html(str(exc))}</code>")
-                except Exception:
-                    pass
-            return None
-
-    return wrapper
+    return protect_admin_handler(handler, is_creator, safe_answer, logger, _ADMIN_INPUT_STATES)
 
 
 # ==============================================================================
@@ -447,8 +435,9 @@ def cb_int(parts: list[str], index: int, default: Optional[int] = None) -> Optio
 async def cmd_cancel(message: types.Message, state: FSMContext):
     """Прерывает текущий ввод FSM и возвращает меню (если возможно)."""
     current_state = await state.get_state()
-    if current_state is None:
-        return
+    if not is_creator(message) or not str(current_state or "").startswith("AdminPanelState:"):
+        from aiogram.dispatcher.event.bases import SkipHandler
+        raise SkipHandler()
 
     state_data = await state.get_data()
     msg_id = state_data.get("menu_message_id")
@@ -911,8 +900,33 @@ async def cb_bank_delete_confirm_screen(callback: types.CallbackQuery, state: FS
     builder.button(text="🔥 Списать без возврата (Вайп)", callback_data=f"db_bdc_{chat_id}_{banker_id}_norefund")
     builder.button(text="❌ Отмена", callback_data=f"db_bv_{chat_id}_{banker_id}")
     builder.adjust(1)
-    await safe_edit(callback.message, text, builder.as_markup())
+    if await safe_edit(callback.message, text, builder.as_markup()):
+        await arm_confirmation(state, callback, builder.as_markup())
     await safe_answer(callback)
+
+
+async def _settle_bank_deposit(chat_id, banker_id, user_id, refund):
+    from user_manager import get_user_lock
+    async with get_user_lock(chat_id, user_id):
+        await flush_user_cache_immediately(chat_id, user_id)
+        ref = get_user_ref(chat_id, user_id)
+        snapshot = await ref.get()
+        data = snapshot.to_dict() or {}
+        if str(data.get("bank_name")) != str(banker_id):
+            return 0, False
+        deposit = data.get("bank_deposit", 0)
+        balance = data.get("balance", 0)
+        if (not isinstance(deposit, (int, float)) or not math.isfinite(deposit) or deposit < 0
+                or not isinstance(balance, (int, float)) or not math.isfinite(balance)):
+            raise ValueError("Invalid depositor balance")
+        credited = int(deposit) if refund else 0
+        try:
+            await ref.set({"balance": int(balance) + credited, "bank_deposit": 0,
+                           "bank_name": None, "deposit_start_time": 0}, merge=True)
+        finally:
+            # Also drop the pre-write CLEAN snapshot after an ambiguous response.
+            invalidate_user_cache(chat_id, user_id)
+        return credited, True
 
 
 @router.callback_query(F.data.startswith("db_bdc_"))
@@ -926,23 +940,18 @@ async def cb_perform_bank_delete(callback: types.CallbackQuery, state: FSMContex
     if not bank_data:
         return await safe_answer(callback, "Банк не найден.", show_alert=True)
 
-    dep_docs = await _collect_docs(
-        await users_collection(chat_id).where("bank_name", "==", banker_id).get()
-    )
+    if mode not in {"refund", "norefund"}:
+        return await safe_answer(callback, "Некорректный режим удаления.", show_alert=True)
+    from user_manager import flush_all_user_data
+    await flush_all_user_data()
+    dep_docs = await users_collection(chat_id).get()
     total_refunded, depositors = 0, 0
-
     for doc in dep_docs:
-        u_data = doc.to_dict() or {}
-        uid = int(doc.id) if str(doc.id).isdigit() else doc.id
-        dep_amt = u_data.get("bank_deposit", 0)
-        if mode == "refund" and dep_amt > 0:
-            await update_user_balance(chat_id, uid, dep_amt, action="Bank Delete Refund")
-            total_refunded += dep_amt
-        await update_user_field(chat_id, uid, "bank_deposit", 0)
-        await update_user_field(chat_id, uid, "bank_name", None)
-        await update_user_field(chat_id, uid, "deposit_start_time", 0)
-        await flush_user_cache_immediately(chat_id, uid)
-        depositors += 1
+        if str((doc.to_dict() or {}).get("bank_name")) != str(banker_id):
+            continue
+        credited, settled = await _settle_bank_deposit(chat_id, banker_id, int(doc.id), mode == "refund")
+        total_refunded += credited
+        depositors += int(settled)
 
     await update_user_field(chat_id, banker_id, "is_banker", False)
     await flush_user_cache_immediately(chat_id, banker_id)
@@ -1347,7 +1356,8 @@ async def cb_confirm_player_wipe_screen(callback: types.CallbackQuery, state: FS
     builder.button(text="🧹 Подтвердить полный сброс", callback_data=f"db_pwic_{chat_id}_{target_id}")
     builder.button(text="❌ Отмена", callback_data=f"db_pv_{chat_id}_{target_id}")
     builder.adjust(1)
-    await safe_edit(callback.message, text, builder.as_markup())
+    if await safe_edit(callback.message, text, builder.as_markup()):
+        await arm_confirmation(state, callback, builder.as_markup())
     await safe_answer(callback)
 
 
@@ -1398,7 +1408,9 @@ async def process_player_money_add(message: types.Message, state: FSMContext):
     if val is None:
         await message.answer("❌ Сумма должна быть целым числом. Попробуйте ещё раз:")
         return
-    await update_user_balance(chat_id, target_id, val, action="Creator Panel Give")
+    result = await update_user_balance(chat_id, target_id, val, min_balance=0, action="Creator Panel Give")
+    if result is None:
+        return await message.answer("Недостаточно средств для такого списания. Баланс не изменён.")
     await flush_user_cache_immediately(chat_id, target_id)
     await message.answer(f"✅ Баланс изменён на {val:+,} сыроежек.")
     await state.clear()
@@ -1914,6 +1926,9 @@ async def cb_global_wipe_action(callback: types.CallbackQuery, state: FSMContext
     chat_id = cb_int(parts, 2)
     wipe_type = parts[3] if len(parts) > 3 else ""
 
+    if chat_id is None or wipe_type not in {"balances", "mid", "economy"}:
+        return await safe_answer(callback, "Некорректный тип сброса.", show_alert=True)
+
     # Двойное подтверждение
     if len(parts) < 5 or parts[4] != "confirmed":
         type_names = {
@@ -1930,11 +1945,20 @@ async def cb_global_wipe_action(callback: types.CallbackQuery, state: FSMContext
         builder.button(text="💥 ПОДТВЕРДИТЬ СБРОС", callback_data=f"db_gwc_{chat_id}_{wipe_type}_confirmed")
         builder.button(text="❌ Отмена", callback_data=f"db_gwipes_{chat_id}")
         builder.adjust(1)
-        await safe_edit(callback.message, text, builder.as_markup())
+        if await safe_edit(callback.message, text, builder.as_markup()):
+            await arm_confirmation(state, callback, builder.as_markup())
         return await safe_answer(callback)
 
+    maintenance = await get_db().collection("bot_settings").document("maintenance").get()
+    if not (maintenance.to_dict() or {}).get("active"):
+        return await safe_answer(callback, "Сначала включите техрежим и завершите активные игры.", show_alert=True)
+    from backup_system import backup_database
+    backup_ok, _ = await backup_database()
+    if not backup_ok:
+        return await safe_answer(callback, "Сброс отменён: резервная копия не создана.", show_alert=True)
     status_msg = await callback.message.answer("🔄 <i>Начинаю сброс экономики. Подождите...</i>")
-    _user_cache.clear()
+    from user_manager import clear_user_cache_safely
+    await clear_user_cache_safely()
     whitelist = await get_whitelist()
     db = get_db()
 
@@ -1970,7 +1994,8 @@ async def cb_global_wipe_action(callback: types.CallbackQuery, state: FSMContext
         logger.warning("Global wipe '%s' executed by %s", wipe_type, callback.from_user.id)
     except Exception as exc:  # noqa: BLE001
         logger.error("Global wipe failed: %s", exc)
-        await safe_edit(status_msg, f"❌ Ошибка вайпа: {exc}")
+        await safe_edit(status_msg, "❌ Сброс не завершён. Проверьте журнал и данные перед повтором.")
+        return await safe_answer(callback, "Сброс завершился ошибкой.", show_alert=True)
 
     await safe_answer(callback, "Экономика сброшена!", show_alert=True)
     await asyncio.sleep(Cfg.WIPE_RESULT_HOLD)
@@ -3189,7 +3214,8 @@ async def cb_player_execute_ask(callback: types.CallbackQuery, state: FSMContext
     builder.button(text="🚨 Казнить + Забанить везде", callback_data=f"db_pexecute_do_{chat_id}_{target_id}_fullban")
     builder.button(text="❌ Отмена", callback_data=f"db_pv_{chat_id}_{target_id}")
     builder.adjust(1)
-    await safe_edit(callback.message, text, builder.as_markup())
+    if await safe_edit(callback.message, text, builder.as_markup()):
+        await arm_confirmation(state, callback, builder.as_markup())
     await safe_answer(callback)
 
 
@@ -3248,11 +3274,11 @@ async def cb_player_fsm_reset(callback: types.CallbackQuery, state: FSMContext):
     try:
         from aiogram.fsm.storage.base import StorageKey
         state_to_clear = FSMContext(
-            storage=callback.bot.dispatcher.storage,
+            storage=state.storage,
             key=StorageKey(bot_id=callback.bot.id, chat_id=chat_id, user_id=target_id),
         )
         await state_to_clear.clear()
-        await safe_answer(callback, "🔄 Все FSM-состояния игрока сброшены!", show_alert=True)
+        await safe_answer(callback, "🔄 FSM игрока в выбранном чате сброшено!", show_alert=True)
     except Exception as exc:  # noqa: BLE001
         await safe_answer(callback, f"❌ Ошибка сброса: {exc}", show_alert=True)
     await show_player_details_screen(callback, state, chat_id, target_id, edit=True)
@@ -3419,14 +3445,13 @@ async def cb_pmute_act(callback: types.CallbackQuery, state: FSMContext):
         if duration == "unmute":
             await bot.restrict_chat_member(
                 chat_id=chat_id, user_id=target_id,
-                permissions=types.ChatPermissions(
-                    can_send_messages=True, can_send_media_messages=True,
-                    can_send_other_messages=True, can_add_web_page_previews=True,
-                ),
+                permissions=await default_chat_permissions(bot, chat_id),
             )
             await safe_answer(callback, "🔊 Мут снят!", show_alert=True)
         else:
-            minutes = int(duration)
+            minutes = parse_int(duration, minimum=1, maximum=525600)
+            if minutes is None:
+                return await safe_answer(callback, "Укажите от 1 до 525600 минут.", show_alert=True)
             until_date = int(time.time()) + minutes * 60
             await bot.restrict_chat_member(
                 chat_id=chat_id, user_id=target_id,
@@ -3737,7 +3762,8 @@ async def cb_clan_del_ask_screen(callback: types.CallbackQuery, state: FSMContex
     builder.button(text="💥 Да, распустить клан", callback_data=f"db_clan_dconf_{chat_id}_{c_hash}")
     builder.button(text="❌ Отмена", callback_data=f"db_clan_view_{chat_id}_{c_hash}")
     builder.adjust(1)
-    await safe_edit(callback.message, text, builder.as_markup())
+    if await safe_edit(callback.message, text, builder.as_markup()):
+        await arm_confirmation(state, callback, builder.as_markup())
     await safe_answer(callback)
 
 
@@ -3998,6 +4024,8 @@ async def process_promo_code_input(message: types.Message, state: FSMContext):
     data = await state.get_data()
     chat_id = data["chat_id"]
     code = message.text.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9_-]{1,24}", code):
+        return await message.answer("Код: 1–24 латинских буквы, цифры, дефис или подчёркивание.")
     if (await promocodes_collection().document(code).get()).exists:
         await message.answer("❌ Такой промокод уже существует. Введите другое имя:")
         return
@@ -4078,13 +4106,17 @@ async def cb_backups_menu(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="➕ Создать новый бэкап", callback_data=f"db_backup_create_{chat_id}")
     
     try:
-        docs = await db.collection('backups').order_by('timestamp', direction='DESCENDING').limit(15).get()
+        ref = db.collection('backups')
+        if callable(getattr(ref, 'select', None)):
+            ref = ref.select(['timestamp', 'datetime'])
+        docs = await ref.get()
+        docs = sorted(docs, key=lambda doc: (doc.to_dict() or {}).get('timestamp', 0), reverse=True)[:15]
         for doc in docs:
             d = doc.to_dict()
             dt_str = d.get('datetime', 'Unknown')
             builder.button(text=f"📅 {doc.id} ({dt_str})", callback_data=f"db_backup_view_{chat_id}_{doc.id}")
     except Exception as e:
-        text += f"\n\n❌ <i>Ошибка загрузки бэкапов: {e}</i>"
+        text += "\n\n❌ <i>Не удалось загрузить список копий.</i>"
         
     builder.button(text="⬅️ Назад в глобальные", callback_data=f"db_glob_{chat_id}")
     builder.adjust(1)
@@ -4117,10 +4149,6 @@ async def cb_backup_view(callback: types.CallbackQuery, state: FSMContext):
     chat_id = cb_int(parts, 3, default=0)
     backup_id = "_".join(parts[4:])
     
-    import gzip
-    import json
-    import base64
-    
     db = get_db()
     doc = await db.collection('backups').document(backup_id).get()
     
@@ -4135,9 +4163,8 @@ async def cb_backup_view(callback: types.CallbackQuery, state: FSMContext):
     info_str = "❌ Нет данных"
     if payload:
         try:
-            compressed_bytes = base64.b64decode(payload)
-            json_bytes = gzip.decompress(compressed_bytes)
-            backup_data = json.loads(json_bytes.decode('utf-8'))
+            from backup_system import decode_backup
+            backup_data = decode_backup(payload)
             chats = backup_data.get("chats", {})
             num_chats = len(chats)
             num_users = sum(len(c.get("users", {})) for c in chats.values())
@@ -4150,14 +4177,14 @@ async def cb_backup_view(callback: types.CallbackQuery, state: FSMContext):
                 f"🛡 Кланов: {num_clans}"
             )
         except Exception as e:
-            info_str = f"⚠️ Ошибка разбора: {e}"
+            info_str = "⚠️ Копия повреждена или превышает допустимый размер."
             
     text = (
         f"📄 <b>Информация о бэкапе:</b> <code>{backup_id}</code>\n\n"
         f"📅 Дата создания: <b>{dt_str} UTC</b>\n"
         f"🔑 Timestamp: <code>{ts}</code>\n\n"
         f"📊 <b>Содержимое бэкапа:</b>\n{info_str}\n\n"
-        f"⚠️ Восстановление сотрет текущие данные в чатах!"
+        f"⚠️ Восстановление заменит users/banks/clans в чатах этой копии. Требуется техрежим."
     )
     
     builder = InlineKeyboardBuilder()
@@ -4180,10 +4207,12 @@ async def cb_backup_restore_confirm(callback: types.CallbackQuery, state: FSMCon
         f"⚠️⚠️⚠️ <b>ВНИМАНИЕ! ПОЛНЫЙ ОТКАТ БАЗЫ ДАННЫХ</b> ⚠️⚠️⚠️\n\n"
         f"Вы действительно хотите восстановить базу данных из копии <code>{backup_id}</code>?\n\n"
         f"<b>ЭТО ДЕЙСТВИЕ:</b>\n"
-        f"1. Полностью сотрет всех игроков, банки и кланы в чатах.\n"
-        f"2. Запишет данные из выбранного бэкапа.\n"
+        f"1. Проверит копию и создаст защитный снимок текущих данных.\n"
+        f"2. Заменит игроков, банки и кланы только в чатах этой копии.\n"
         f"3. Сбросит кэш.\n\n"
-        f"Убедитесь, что бот остановлен на время восстановления во избежание сбоев кэша!"
+        f"Включите техрежим и завершите активные игры. Не меняйте данные параллельно. "
+        f"Это не атомарная операция: при сбое используйте защитный снимок. "
+        f"Глобальные настройки и Battle Pass в копию не входят."
     )
     
     builder = InlineKeyboardBuilder()
@@ -4191,7 +4220,8 @@ async def cb_backup_restore_confirm(callback: types.CallbackQuery, state: FSMCon
     builder.button(text="❌ Отмена", callback_data=f"db_backup_view_{chat_id}_{backup_id}")
     builder.adjust(1)
     
-    await safe_edit(callback.message, text, builder.as_markup())
+    if await safe_edit(callback.message, text, builder.as_markup()):
+        await arm_confirmation(state, callback, builder.as_markup())
     await safe_answer(callback)
 
 
@@ -4517,7 +4547,8 @@ async def cb_crypto_del_confirm(callback: types.CallbackQuery, state: FSMContext
     builder.button(text="❌ Отмена", callback_data=f"db_crypto_cview_{chat_id}_{ticker}")
     builder.adjust(1)
     
-    await safe_edit(callback.message, text, builder.as_markup())
+    if await safe_edit(callback.message, text, builder.as_markup()):
+        await arm_confirmation(state, callback, builder.as_markup())
     await safe_answer(callback)
 
 
@@ -4633,10 +4664,11 @@ async def cb_extra_cmds_menu(callback: types.CallbackQuery, state: FSMContext):
 async def cb_extra_clear_cache(callback: types.CallbackQuery, state: FSMContext):
     chat_id = cb_int(split_cb(callback.data), 3, default=0)
     
-    from user_manager import _user_cache, _username_to_id_cache
+    from user_manager import _username_to_id_cache
     from profile_bank import _bank_cache
     
-    _user_cache.clear()
+    from user_manager import clear_user_cache_safely
+    await clear_user_cache_safely()
     _username_to_id_cache.clear()
     _bank_cache.clear()
     

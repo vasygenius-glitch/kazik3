@@ -1637,3 +1637,17 @@ def user_action_locked(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awa
 
     return wrapper
 
+
+
+async def clear_user_cache_safely() -> None:
+    """Flush and evict each user under their lock; failed writes remain cached."""
+    for chat_id, user_id in list(_user_cache):
+        async with get_user_lock(chat_id, user_id):
+            await flush_user_cache_immediately(chat_id, user_id)
+            _drop_cache_entry((chat_id, user_id))
+
+
+async def flush_all_user_data() -> None:
+    for chat_id, user_id in list(_dirty_cache):
+        async with get_user_lock(chat_id, user_id):
+            await flush_user_cache_immediately(chat_id, user_id)
