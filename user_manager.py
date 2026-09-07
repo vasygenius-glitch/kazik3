@@ -321,6 +321,24 @@ def set_in_cache(chat_id, user_id, data: dict) -> None:
         _username_to_id_cache[(chat_id, str(new_uname).lower())] = user_id
 
 
+_sync_redis_client = None
+
+def _get_sync_redis_client():
+    global _sync_redis_client
+    redis_url = os.environ.get("REDIS_URL")
+    if not redis_url:
+        return None
+    if _sync_redis_client is None:
+        try:
+            import redis as _redis
+            pool = _redis.ConnectionPool.from_url(redis_url, max_connections=4, socket_timeout=3)
+            _sync_redis_client = _redis.Redis(connection_pool=pool)
+        except Exception as e:
+            logger.error("Failed to initialize pooled Redis client: %s", e)
+            return None
+    return _sync_redis_client
+
+
 def invalidate_user_cache(chat_id, user_id) -> None:
     """Полная инвалидация: кэш + dirty + FSM-состояния в Redis.
 
@@ -337,18 +355,12 @@ def invalidate_user_cache(chat_id, user_id) -> None:
 
     def _cleanup() -> None:
         try:
-            import redis as _redis
-            r = _redis.from_url(redis_url, socket_timeout=5)
-            try:
+            r = _get_sync_redis_client()
+            if r is not None:
                 r.delete(
                     f"fsm:{chat_id}:{user_id}:state",
                     f"fsm:{chat_id}:{user_id}:data",
                 )
-            finally:
-                try:
-                    r.close()
-                except Exception:
-                    pass
         except Exception as e:
             logger.error("Redis cleanup error for %s:%s — %s", chat_id, user_id, e)
 

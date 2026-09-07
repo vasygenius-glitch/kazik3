@@ -87,11 +87,18 @@ async def create_storage():
         client = None
         try:
             from aiogram.fsm.storage.redis import RedisStorage
-            from redis.asyncio import Redis
-            client = Redis.from_url(redis_url, socket_timeout=3, socket_connect_timeout=3,
-                                    health_check_interval=30)
+            from redis.asyncio import Redis, ConnectionPool
+            max_conn = int(os.environ.get("REDIS_MAX_CONNECTIONS", "8"))
+            pool = ConnectionPool.from_url(
+                redis_url,
+                max_connections=max_conn,
+                socket_timeout=3,
+                socket_connect_timeout=3,
+                health_check_interval=30,
+            )
+            client = Redis(connection_pool=pool)
             await asyncio.wait_for(client.ping(), timeout=3)
-            logger.info("RedisStorage подключен.")
+            logger.info("RedisStorage подключен (max_connections=%s).", max_conn)
             return RedisStorage(redis=client)
         except BaseException as exc:
             if client is not None:
