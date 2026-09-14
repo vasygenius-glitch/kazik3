@@ -19,17 +19,17 @@ try:
 except Exception as _e:
     logger.warning("Could not auto-extract shabby bank image: %s", _e)
 
-# Стоимость ликвидации аварийных ситуаций
-COST_EXTINGUISH = 250_000         # Тушение проводки / огнетушитель ОП-5
-COST_PATCH_ROOF = 350_000         # Рубероид и фанера для крыши
-COST_POISON_RATS = 200_000        # Дихлофос и мышеловки
-COST_CALM_BABKI = 150_000         # Валидол, барбариски и чай «Принцесса Нури»
-COST_BRIBE_INSPECTOR = 600_000    # Конверт майору Сидоренко (Пожнадзор Алмазной)
-COST_PAY_RENT = 500_000           # Суточная аренда ларька местным авторитетам
-DAILY_RENT_SECONDS = 86_400       # 24 часа
+# Стоимость ликвидации аварийных ситуаций (сбалансированная для комфортной дневной игры)
+COST_EXTINGUISH = 35_000         # Тушение проводки / огнетушитель ОП-5
+COST_PATCH_ROOF = 45_000         # Рубероид и саморезы для крыши
+COST_POISON_RATS = 25_000        # Дихлофос и мышеловки
+COST_CALM_BABKI = 20_000         # Валидол, барбариски и чай «Принцесса Нури»
+COST_BRIBE_INSPECTOR = 75_000    # Конверт майору Сидоренко (Пожнадзор)
+COST_PAY_RENT = 50_000           # Суточная аренда ларька (24 часа)
+DAILY_RENT_SECONDS = 86_400      # 24 часа
 
 # Интервал между спонтанными бедствиями
-INCIDENT_COOLDOWN = 600           # 10 минут
+INCIDENT_COOLDOWN = 900          # 15 минут
 
 def is_shabby_bank(bank_data: Optional[Dict[str, Any]], banker_id: Optional[int] = None) -> bool:
     """Проверяет, является ли банк хардкорным банком на Алмазной 33."""
@@ -104,11 +104,11 @@ def check_and_apply_shabby_decay(bank_data: Dict[str, Any]) -> Tuple[Dict[str, A
         rent_until = bank_data.get("rent_paid_until", 0)
         rent_warning = ""
         if now > rent_until:
-            rent_penalty = 300_000
+            rent_penalty = 50_000
             capital = max(0, capital - rent_penalty)
-            durability = max(0, durability - 10)
+            durability = max(0, durability - 8)
             rent_warning = (
-                f"\n⚠️ <b>БРАТКИ С АЛМАЗНОЙ:</b> Срок аренды ларька истек! "
+                f"\n⚠️ <b>АРЕНДОДАТЕЛЬ:</b> Срок аренды ларька истек! "
                 f"Выбито стекло и вычтено <b>{rent_penalty:,}</b> сыр. штрафа!"
             )
 
@@ -117,44 +117,44 @@ def check_and_apply_shabby_decay(bank_data: Dict[str, Any]) -> Tuple[Dict[str, A
         survived = int(bank_data.get("total_disasters_survived", 0))
 
         if fire_risk >= 60 and roll < 0.35:
-            # ПОЖАР НА АЛМАЗНОЙ 33!
-            burned = min(capital, random.randint(500_000, 1_800_000))
+            # ПОЖАР В БАНКЕ
+            burned = min(capital, random.randint(30_000, 90_000))
             capital = max(0, capital - burned)
-            durability = max(0, durability - random.randint(10, 20))
+            durability = max(0, durability - random.randint(5, 12))
             fire_risk = min(100, fire_risk + 15)
-            anger = min(100, anger + 25)
+            anger = min(100, anger + 15)
             survived += 1
             incident_text = (
-                "🚨 <b>ПОЖАР НА АЛМАЗНОЙ 33!</b>\n"
+                "🚨 <b>ПОЖАР В ДОИСТОРИЧЕСКОМ БАНКЕ!</b>\n"
                 "<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит...»</i>\n"
-                f"🔥 Замкнуло скрутку на крыше! Загорелся рубероид и фанера кассы!\n"
+                "🔥 Замкнуло проводку на крыше! Загорелся рубероид и фанера кассы!\n"
                 f"💸 Сгорело <b>{burned:,}</b> сыр. из капитала!\n"
                 f"🧱 Прочность здания упала до <b>{durability}%</b>!"
             )
         elif rats >= 60 and roll < 0.65:
             # АТАКА КРЫС
-            eaten = min(capital, random.randint(300_000, 900_000))
+            eaten = min(capital, random.randint(15_000, 45_000))
             capital = max(0, capital - eaten)
             survived += 1
             incident_text = (
                 "🐀 <b>НАШЕСТВИЕ КРЫС!</b>\n"
-                f"Подвальные крысы Алмазной прогрызли мешок с сыроежками под диваном!\n"
-                f"💸 Сожрано <b>{eaten:,}</b> сыр. капитала! Запах стоит на всю улицу."
+                "Подвальные крысы прогрызли мешок с сыроежками под диваном кассира!\n"
+                f"💸 Сожрано <b>{eaten:,}</b> сыр. капитала!"
             )
         elif anger >= 75 and roll < 0.85:
             # РЕЙД ПОЖНАДЗОРА
-            fine = min(capital, random.randint(800_000, 2_000_000))
+            fine = min(capital, random.randint(50_000, 120_000))
             capital = max(0, capital - fine)
-            anger = 40  # Взяли штраф, временно успокоились
+            anger = 30  # Взяли штраф, временно успокоились
             survived += 1
             incident_text = (
                 "🚒 <b>ВНЕЗАПНАЯ ПРОВЕРКА ПОЖНАДЗОРА!</b>\n"
-                "Майор Сидоренко с Алмазной 33 обнаружил скрутки на изоленте и отсутствие огнетушителя!\n"
+                "Майор Сидоренко обнаружил скрутки на изоленте и отсутствие огнетушителя!\n"
                 f"💸 Выписан штраф <b>{fine:,}</b> сыр.! Нарушения требуют срочного устранения!"
             )
         elif durability <= 20 and roll < 0.95:
             # ОБВАЛ КРЫШИ
-            repair_hit = min(capital, 400_000)
+            repair_hit = min(capital, random.randint(25_000, 60_000))
             capital = max(0, capital - repair_hit)
             durability = max(0, durability - 10)
             incident_text = (
@@ -186,6 +186,44 @@ def check_and_apply_shabby_decay(bank_data: Dict[str, Any]) -> Tuple[Dict[str, A
 
     return updates, incident_text
 
+async def collect_depositor_maintenance(chat_id: int, banker_id: int, max_total_fee: int = 15_000) -> int:
+    """
+    Символический сбор на капремонт с активных вкладчиков (до 0.2%, не более 2,000 сыр. с человека).
+    Собранная сумма частично компенсирует расходы на ремонт.
+    """
+    try:
+        from db import get_db
+        from user_manager import update_user_field
+        db = get_db()
+        users_ref = db.collection('chats').document(str(chat_id)).collection('users')
+        dep_docs_raw = await users_ref.where('bank_name', '==', banker_id).get()
+        dep_docs = []
+        if hasattr(dep_docs_raw, '__aiter__'):
+            async for d in dep_docs_raw:
+                dep_docs.append(d)
+        else:
+            for d in dep_docs_raw:
+                dep_docs.append(d)
+
+        total_collected = 0
+        for doc in dep_docs:
+            if total_collected >= max_total_fee:
+                break
+            d = doc.to_dict() or {}
+            dep = int(d.get('bank_deposit', 0))
+            if dep >= 1_000:
+                fee = min(2000, max(1, int(dep * 0.002)))
+                new_dep = dep - fee
+                try:
+                    await update_user_field(chat_id, int(doc.id), 'bank_deposit', new_dep)
+                    total_collected += fee
+                except Exception:
+                    pass
+        return total_collected
+    except Exception as e:
+        logger.warning("Error collecting depositor maintenance: %s", e)
+        return 0
+
 def format_shabby_bank_stats(
     chat_id: int,
     user_id: int,
@@ -197,10 +235,10 @@ def format_shabby_bank_stats(
     audit_warning: str = "",
     incident_text: Optional[str] = None
 ) -> str:
-    """Форматирует главную панель хардкорного банка на Алмазной 33."""
+    """Форматирует главную панель Доисторического банка."""
     capital = bank_data.get("capital", 0)
     rate = bank_data.get("deposit_rate", 13.0)
-    name = bank_data.get("name", "🏚 Госбанк на Алмазной 33")
+    name = bank_data.get("name", "Доисторический банк")
 
     durability = int(bank_data.get("durability", 35))
     fire_risk = int(bank_data.get("fire_risk", 65))
@@ -240,9 +278,9 @@ def format_shabby_bank_stats(
         owners_line = f"🏛 <b>Владелец:</b> {escape_html(bank_data.get('banker_name', '🦖'))}\n"
 
     text = (
-        f"🏚 <b>{escape_html(name)}</b>\n"
+        f"🏛 <b>{escape_html(name)}</b>\n"
         f"{owners_line}"
-        f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит... Дом на Алмазной 33...»</i>\n\n"
+        f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит...»</i>\n\n"
         f"💰 <b>Капитал банка:</b> {capital:,} сыр.\n"
         f"📈 <b>Ставка:</b> <b>{rate}%</b> в день <i>(макс. % для нищенок 👉👈)</i>\n\n"
         f"🛠 <b>СВОДКА АВАРИЙНОГО СОСТОЯНИЯ:</b>\n"
@@ -263,7 +301,7 @@ def format_shabby_bank_stats(
     return text
 
 def get_shabby_bank_kb(banker_id: int, bank_data: Dict[str, Any]):
-    """Формирует клавиатуру управления хардкорным банком на Алмазной 33."""
+    """Формирует клавиатуру управления Доисторическим банком."""
     builder = InlineKeyboardBuilder()
 
     power = bank_data.get("power_grid", True)
@@ -292,8 +330,9 @@ def get_shabby_bank_kb(banker_id: int, bank_data: Dict[str, Any]):
     if now >= bank_data.get("rent_paid_until", 0):
         builder.button(text=f"📜 Оплатить аренду ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
 
-    # Стандартные банковские вкладки
+    # Стандартные банковские вкладки + Гайд
     builder.button(text="🔄 Обновить", callback_data=f"bstat_main_{banker_id}")
+    builder.button(text="📖 Гайд банкира", callback_data=f"bshabby_guide_{banker_id}")
     builder.button(text="👥 Вкладчики", callback_data=f"bstat_deps_{banker_id}")
     builder.button(text="🤝 Должники", callback_data=f"bstat_loans_{banker_id}")
     builder.button(text="⚙️ Настройки", callback_data=f"bstat_settings_{banker_id}")
@@ -301,6 +340,40 @@ def get_shabby_bank_kb(banker_id: int, bank_data: Dict[str, Any]):
     builder.button(text="💼 Схемы", callback_data=f"bstat_schemes_{banker_id}")
 
     builder.adjust(2, 2, 2, 2)
+    return builder.as_markup()
+
+def get_shabby_guide_text() -> str:
+    """Возвращает подробный гайд по выживанию в Доисторическом банке."""
+    return (
+        "📖 <b>ГАЙД ПО ВЫЖИВАНИЮ В «ДОИСТОРИЧЕСКОМ БАНКЕ»</b>\n\n"
+        "🏛 <b>Особенности банка:</b>\n"
+        "Вы управляете банком с <b>максимальной ставкой 13.0% в день</b> — это делает ваш банк "
+        "самым привлекательным для вкладчиков во всем чате!\n"
+        "Однако банк находится в ветхом здании с древней проводкой, крысами и очередью бабок.\n\n"
+        "🛠 <b>Аварийные показатели:</b>\n"
+        "🧱 <b>Прочность здания:</b> Падает от времени и дождей. Если прочность опустится ниже <b>15%</b>, "
+        "потолок обвалится на кассу и прием новых вкладов заблокируется! <i>(Чинка: «Латать крышу»)</i>\n\n"
+        "🔥 <b>Пожароопасность:</b> Растет из-за старой проводки. При риске выше <b>60%</b> "
+        "может начаться пожар и сжечь сыр из капитала! <i>(Сбивайте огнетушителем)</i>\n\n"
+        "🐀 <b>Заражение крысами:</b> При уровне выше <b>60%</b> крысы прогрызают мешки с сыроежками. "
+        "<i>(Травите дихлофосом)</i>\n\n"
+        "👵 <b>Очередь бабок:</b> Бабки скандалят и копят гнев. При уровне выше <b>85%</b> они берут "
+        "кассу штурмом и блокируют прием вкладов! <i>(Успокаивайте барбарисками и валидолом)</i>\n\n"
+        "👮 <b>Гнев Пожнадзора:</b> Растет пассивно. При уровне выше <b>75%</b> майор Сидоренко "
+        "выписывает крупный штраф. <i>(Давайте вовремя взятку)</i>\n\n"
+        "⚡ <b>Электрощиток:</b> Если выбило пробки — компьютеры обесточены, все операции заморожены! "
+        "<i>(Жмите «Врубить рубильник»)</i>\n\n"
+        "📜 <b>Аренда земли:</b> Оплачивается раз в 24 часа (50k сыр.). При просрочке накладывается штраф.\n\n"
+        "👥 <b>Сбор на капремонт:</b> При каждом ремонте с баланса вкладчиков удерживается символический сбор "
+        "(до 0.2%), частично покрывающий ваши расходы на хознужды!\n\n"
+        "💡 <b>Совет:</b> Заглядывайте в <code>банк стат</code> 2–3 раза в день, поддерживайте сарай в порядке, "
+        "и ваш капитал будет стремительно расти!"
+    )
+
+def get_shabby_guide_kb(banker_id: int):
+    """Клавиатура возврата из гайда."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Назад в банк", callback_data=f"bstat_main_{banker_id}")
     return builder.as_markup()
 
 async def execute_shabby_repair(
@@ -318,9 +391,12 @@ async def execute_shabby_repair(
     if action == "extinguish":
         if capital < COST_EXTINGUISH:
             return False, f"❌ Нужно {COST_EXTINGUISH:,} сыр. в капитале для покупки огнетушителей и изоленты!", {}
-        new_capital = capital - COST_EXTINGUISH
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_EXTINGUISH - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
         fire = max(5, int(bank_data.get("fire_risk", 65)) - random.randint(35, 55))
-        return True, f"🧯 <b>Огнетушитель сработал!</b>\nПроводка перемотана синей изолентой. Риск пожара снижен до <b>{fire}%</b>!", {
+        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🧯 <b>Огнетушитель сработал!</b>\nПроводка перемотана синей изолентой. Риск пожара снижен до <b>{fire}%</b>!{dep_note}", {
             "capital": new_capital,
             "fire_risk": fire
         }
@@ -328,9 +404,12 @@ async def execute_shabby_repair(
     elif action == "patch":
         if capital < COST_PATCH_ROOF:
             return False, f"❌ Нужно {COST_PATCH_ROOF:,} сыр. в капитале для покупки рубероида и саморезов!", {}
-        new_capital = capital - COST_PATCH_ROOF
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_PATCH_ROOF - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
         durability = min(100, int(bank_data.get("durability", 35)) + random.randint(25, 40))
-        return True, f"🧱 <b>Крыша залатана!</b>\nРубероид прибит кирпичами, щели запенены. Прочность сарая: <b>{durability}%</b>!", {
+        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🧱 <b>Крыша залатана!</b>\nРубероид прибит кирпичами, щели запенены. Прочность сарая: <b>{durability}%</b>!{dep_note}", {
             "capital": new_capital,
             "durability": durability
         }
@@ -338,9 +417,12 @@ async def execute_shabby_repair(
     elif action == "poison":
         if capital < COST_POISON_RATS:
             return False, f"❌ Нужно {COST_POISON_RATS:,} сыр. в капитале на дихлофос и приманки!", {}
-        new_capital = capital - COST_POISON_RATS
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_POISON_RATS - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
         rats = max(5, int(bank_data.get("rats_infestation", 55)) - random.randint(35, 60))
-        return True, f"☠️ <b>Газовая атака завершена!</b>\nКрысы временно бежали на соседнюю помойку. Уровень крыс снижен до <b>{rats}%</b>!", {
+        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"☠️ <b>Газовая атака завершена!</b>\nКрысы временно бежали на соседнюю помойку. Уровень крыс снижен до <b>{rats}%</b>!{dep_note}", {
             "capital": new_capital,
             "rats_infestation": rats
         }
@@ -348,9 +430,12 @@ async def execute_shabby_repair(
     elif action == "calm":
         if capital < COST_CALM_BABKI:
             return False, f"❌ Нужно {COST_CALM_BABKI:,} сыр. в капитале на корвалол, валидол и барбариски!", {}
-        new_capital = capital - COST_CALM_BABKI
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_CALM_BABKI - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
         babki = max(10, int(bank_data.get("babki_queue", 75)) - random.randint(35, 55))
-        return True, f"🍬 <b>Бабки подкуплены чаем и конфетами!</b>\nОчередь поутихла и обсуждает цены на пшено. Напряжение упало до <b>{babki}%</b>!", {
+        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🍬 <b>Бабки подкуплены чаем и конфетами!</b>\nОчередь поутихла и обсуждает цены на пшено. Напряжение упало до <b>{babki}%</b>!{dep_note}", {
             "capital": new_capital,
             "babki_queue": babki
         }
@@ -358,8 +443,11 @@ async def execute_shabby_repair(
     elif action == "bribe":
         if capital < COST_BRIBE_INSPECTOR:
             return False, f"❌ Нужно {COST_BRIBE_INSPECTOR:,} сыр. в капитале для конверта майору Сидоренко!", {}
-        new_capital = capital - COST_BRIBE_INSPECTOR
-        return True, "💸 <b>Майор Сидоренко взял пухлый конверт!</b>\n«Нарушений не выявлено, только лампочку вкрутите». Гнев Пожнадзора сброшен в 0!", {
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_BRIBE_INSPECTOR - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
+        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"💸 <b>Майор Сидоренко взял пухлый конверт!</b>\n«Нарушений не выявлено, только лампочку вкрутите». Гнев Пожнадзора сброшен в 0!{dep_note}", {
             "capital": new_capital,
             "inspection_anger": 0
         }
@@ -370,7 +458,7 @@ async def execute_shabby_repair(
         new_capital = capital - COST_PAY_RENT
         now = int(time.time())
         rent_until = max(now, bank_data.get("rent_paid_until", 0)) + DAILY_RENT_SECONDS
-        return True, "📜 <b>Аренда земли на Алмазной 33 продлена на 24 часа!</b>\nМестные авторитеты оставили ларек в покое.", {
+        return True, "📜 <b>Аренда земли продлена на 24 часа!</b>\nАрендодатель оставил ларек в покое.", {
             "capital": new_capital,
             "rent_paid_until": rent_until
         }
@@ -383,8 +471,8 @@ async def execute_shabby_repair(
                 "power_grid": True
             }
         else:
-            shock = min(capital, 100_000)
-            return True, f"⚡ <b>ЕБ... ТОКОМ!</b>\nВас тряхануло 220 вольтами! Сгорел удлинитель (-{shock:,} сыр.), но свет так и не зажегся. Попробуйте снова!", {
+            shock = min(capital, 15_000)
+            return True, f"⚡ <b>ЕБ... ТОКОМ!</b>\nВас тряхануло током! Сгорел удлинитель (-{shock:,} сыр.), но свет так и не зажегся. Попробуйте снова!", {
                 "capital": max(0, capital - shock),
                 "power_grid": False
             }

@@ -23,6 +23,8 @@ from shabby_bank import (
     format_shabby_bank_stats,
     get_shabby_bank_kb,
     execute_shabby_repair,
+    get_shabby_guide_text,
+    get_shabby_guide_kb,
 )
 
 router = Router()
@@ -425,9 +427,9 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
 
     if is_shabby_bank(bank_data, target_banker_id):
         if not bank_data.get('power_grid', True):
-            raise ValueError("❌ В «Банке на Алмазной 33» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
+            raise ValueError("❌ В «Доисторическом банке» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
         if bank_data.get('durability', 35) <= 10:
-            raise ValueError("❌ В здании банка на Алмазной 33 обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
+            raise ValueError("❌ В здании «Доисторического банка» обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
         if bank_data.get('babki_queue', 75) >= 85:
             raise ValueError("❌ Вход в банк наглухо перекрыт орущими бабками с квитанциями за 1998 год! Банкир должен сначала разогнать очередь!")
 
@@ -552,9 +554,9 @@ async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id
 
     if is_shabby_bank(bank_data, target_banker_id):
         if not bank_data.get('power_grid', True):
-            raise ValueError("❌ В «Банке на Алмазной 33» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
+            raise ValueError("❌ В «Доисторическом банке» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
         if bank_data.get('durability', 35) <= 10:
-            raise ValueError("❌ В здании банка на Алмазной 33 обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
+            raise ValueError("❌ В здании «Доисторического банка» обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
         if bank_data.get('babki_queue', 75) >= 85:
             raise ValueError("❌ Вход в банк наглухо перекрыт орущими бабками с квитанциями за 1998 год! Банкир должен сначала разогнать очередь!")
 
@@ -713,16 +715,15 @@ async def cmd_bank(message: types.Message):
                 babki = bank_data.get('babki_queue', 75)
                 photo = FSInputFile(SHABBY_BANK_IMG_PATH)
                 text = (
-                    f"🏚 <b>{escape_html(bank_data.get('name', 'Банк'))}</b>\n"
-                    f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит... Дом на Алмазной 33...»</i>\n\n"
+                    f"🏛 <b>{escape_html(bank_data.get('name', 'Доисторический банк'))}</b>\n"
+                    f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит...»</i>\n\n"
                     f"🏛 Владелец: <code>{escape_html(bank_data.get('banker_name', '🦖'))}</code> (ID: <code>{bank_data.get('banker_id', '?')}</code>)\n"
                     f"📈 Ставка по вкладу: <b>{rate}%</b> в день <i>(макс. % для нищенок 👉👈)</i>\n"
                     f"💰 Капитал банка: <b>{bank_data.get('capital', 0):,}</b> сыр.\n\n"
                     f"🏚 <i>Состояние здания:</i>\n"
                     f"🧱 Прочность сарая: <b>{durability}%</b> (крыша течет)\n"
                     f"🔥 Пожароопасность: <b>{fire_risk}%</b> (проводка искрит)\n"
-                    f"👵 Очередь у входа: <b>{babki}%</b> (орут за коммуналку 1998 года)\n\n"
-                    f"📍 Адрес: <i>г. Самара, ул. Алмазная, д. 33 (за ржавыми гаражами)</i>"
+                    f"👵 Очередь у входа: <b>{babki}%</b> (орут за коммуналку 1998 года)"
                 )
                 return await message.answer_photo(photo=photo, caption=text)
 
@@ -1108,6 +1109,7 @@ def get_bank_stats_kb(banker_id: int):
 
 # ===================== ГЛАВНАЯ СТАТИСТИКА БАНКА =====================
 async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
+    actual_banker_id = bank_data.get('banker_id', user_id)
     current_time = int(time.time())
     audit_risk = bank_data.get('audit_risk_until', 0)
     audit_warning = ""
@@ -1115,7 +1117,7 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
         audit_warning = "\n⚠️ <b>ВНИМАНИЕ: ЦБ ведет проверку ваших счетов!</b>"
         if random.random() < FORGE_AUDIT_FINE_CHANCE:
             new_capital = max(0, bank_data.get('capital', 0) - FORGE_AUDIT_FINE)
-            await create_or_update_bank(chat_id, user_id, {
+            await create_or_update_bank(chat_id, actual_banker_id, {
                 'capital': new_capital,
                 'audit_risk_until': 0,
             })
@@ -1130,7 +1132,7 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
 
     # --- Вкладчики ---
-    dep_docs_raw = await users_ref.where('bank_name', '==', user_id).get()
+    dep_docs_raw = await users_ref.where('bank_name', '==', actual_banker_id).get()
     dep_docs = await _collect_docs(dep_docs_raw)
     total_deposits = 0
     total_depositors = 0
@@ -1144,7 +1146,7 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
     debt_docs = await _collect_docs(debt_docs_raw)
     total_loans_given = 0
     overdue_loans = 0
-    bank_debt_prefix = f"bank_{user_id}_"
+    bank_debt_prefix = f"bank_{actual_banker_id}_"
     for doc in debt_docs:
         d = doc.to_dict() or {}
         debts = d.get('debts', {}) or {}
@@ -1166,14 +1168,14 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
     rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
     capital = bank_data.get('capital', 0)
 
-    if is_shabby_bank(bank_data, user_id):
+    if is_shabby_bank(bank_data, actual_banker_id):
         updates, incident_text = check_and_apply_shabby_decay(bank_data)
         if updates:
             bank_data.update(updates)
-            await create_or_update_bank(chat_id, user_id, updates)
+            await create_or_update_bank(chat_id, actual_banker_id, updates)
         return format_shabby_bank_stats(
             chat_id=chat_id,
-            user_id=user_id,
+            user_id=actual_banker_id,
             bank_data=bank_data,
             total_depositors=total_depositors,
             total_deposits=total_deposits,
@@ -1228,6 +1230,16 @@ async def cmd_bank_stats(message: types.Message):
         await message.answer(text, reply_markup=get_bank_stats_kb(actual_banker_id))
 
 
+@router.message(or_f(
+    Command("bank_guide", "bankguide", "банкгайд", "банк_гайд", prefix="!/"),
+    F.text.lower().in_({"банк гайд", "гайд банкира", "гайд банк", "банкгайд"})
+))
+async def cmd_bank_guide(message: types.Message):
+    bank_data = await get_bank_info(message.chat.id, message.from_user.id)
+    actual_banker_id = bank_data.get('banker_id', message.from_user.id) if bank_data else message.from_user.id
+    await message.answer(get_shabby_guide_text(), reply_markup=get_shabby_guide_kb(actual_banker_id))
+
+
 async def _safe_edit_bank_msg(message: types.Message, text: str, reply_markup=None):
     try:
         if message.photo:
@@ -1250,6 +1262,10 @@ async def cb_shabby_bank(callback: types.CallbackQuery):
     except ValueError:
         return await callback.answer("❌ Ошибка данных.", show_alert=True)
 
+    if action == "guide":
+        await _safe_edit_bank_msg(callback.message, get_shabby_guide_text(), reply_markup=get_shabby_guide_kb(banker_id))
+        return await callback.answer()
+
     chat_id = callback.message.chat.id
     bank_data = await get_bank_info(chat_id, banker_id)
     if not bank_data:
@@ -1257,7 +1273,7 @@ async def cb_shabby_bank(callback: types.CallbackQuery):
 
     co_bankers = [int(x) for x in bank_data.get('co_bankers', []) if str(x).isdigit()]
     if callback.from_user.id != banker_id and callback.from_user.id not in co_bankers:
-        return await callback.answer("❌ Это не ваш ларек на Алмазной!", show_alert=True)
+        return await callback.answer("❌ Это не ваш банк!", show_alert=True)
 
     success, msg, updates = await execute_shabby_repair(chat_id, banker_id, action, bank_data)
     if updates:
