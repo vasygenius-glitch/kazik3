@@ -23,15 +23,29 @@ def is_creator(message: types.Message):
 async def cmd_setbanker(message: types.Message):
     if not is_creator(message):
         return
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение будущего Банкира.")
+    target_id = None
+    target_name = ""
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+    else:
+        args = message.text.split()
+        if len(args) > 1:
+            try:
+                target_id = int(args[1])
+                target_name = f"ID: {target_id}"
+            except ValueError:
+                pass
+
+    if not target_id:
+        return await message.answer("Ответьте на сообщение будущего Банкира или укажите ID: <code>/setbanker [ID]</code>")
 
     chat_id = message.chat.id
-    target_id = message.reply_to_message.from_user.id
-    target_name = escape_html(message.reply_to_message.from_user.full_name)
 
     from user_manager import update_user_field
-    await get_user_data(chat_id, target_id, target_name)
+    target_data = await get_user_data(chat_id, target_id, target_name)
+    if target_data and target_data.get('full_name'):
+        target_name = escape_html(target_data.get('full_name'))
     await update_user_field(chat_id, target_id, 'is_banker', True)
     
     await message.answer(f"💼 Пользователь <b>{target_name}</b> назначен официальным <b>Банкиром</b>!\nТеперь у него нет доступа к казино и работам, но он получает 50.000.000 в день и может кредитовать игроков.")
@@ -42,15 +56,29 @@ async def cmd_setbanker(message: types.Message):
 async def cmd_delbanker(message: types.Message):
     if not is_creator(message):
         return
-    if not message.reply_to_message:
-        return await message.answer("Ответьте на сообщение Банкира.")
+    target_id = None
+    target_name = ""
+    if message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+        target_name = escape_html(message.reply_to_message.from_user.full_name)
+    else:
+        args = message.text.split()
+        if len(args) > 1:
+            try:
+                target_id = int(args[1])
+                target_name = f"ID: {target_id}"
+            except ValueError:
+                pass
+
+    if not target_id:
+        return await message.answer("Ответьте на сообщение Банкира или укажите ID: <code>/delbanker [ID]</code>")
 
     chat_id = message.chat.id
-    target_id = message.reply_to_message.from_user.id
-    target_name = escape_html(message.reply_to_message.from_user.full_name)
 
     from user_manager import update_user_field
-    await get_user_data(chat_id, target_id, target_name)
+    target_data = await get_user_data(chat_id, target_id, target_name)
+    if target_data and target_data.get('full_name'):
+        target_name = escape_html(target_data.get('full_name'))
     await update_user_field(chat_id, target_id, 'is_banker', False)
     
     await message.answer(f"❌ Пользователь <b>{target_name}</b> снят с должности Банкира и возвращен к обычной жизни.")

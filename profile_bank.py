@@ -1,3 +1,4 @@
+import os
 import logging
 logger = logging.getLogger(__name__)
 import time
@@ -5,7 +6,8 @@ import random
 import traceback
 from firebase_admin import firestore_async
 from aiogram import Router, types, F, Bot
-from aiogram.filters import Command
+from aiogram.filters import Command, or_f
+from aiogram.types import FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import get_db
 from escape import escape_html
@@ -14,6 +16,14 @@ from shop import ITEMS
 from utils import fire_and_forget
 from seasons import get_season_string
 from config import CREATOR_ID, CREATOR_IDS
+from shabby_bank import (
+    is_shabby_bank,
+    SHABBY_BANK_IMG_PATH,
+    check_and_apply_shabby_decay,
+    format_shabby_bank_stats,
+    get_shabby_bank_kb,
+    execute_shabby_repair,
+)
 
 router = Router()
 
@@ -303,11 +313,24 @@ async def get_bank_info(chat_id: int, identifier):
             b_data = entry["data"]
             b_name = b_data.get('name') or ''
             b_id = str(b_data.get('banker_id', ''))
+            co_bankers = [str(x).lower() for x in b_data.get('co_bankers', [])]
             if (search_str.lower() == b_id or 
+                search_str.lower() in co_bankers or
                 _is_name_match(search_str, b_name) or 
                 _is_name_match(search_str, b_id)):
                 return b_data
 
+    # Проверяем, не привязан ли юзер как собанкир
+    try:
+        user_id_int = int(search_str)
+        u_data = await get_user_data(chat_id, user_id_int)
+        if u_data and u_data.get('co_banker_of'):
+            parent_bid = u_data.get('co_banker_of')
+            parent_bank = await get_bank_info(chat_id, parent_bid)
+            if parent_bank:
+                return parent_bank
+    except Exception:
+        pass
 
     db = get_db()
     banks_ref = db.collection('chats').document(str(chat_id)).collection('banks')
@@ -338,6 +361,16 @@ async def get_bank_info(chat_id: int, identifier):
             b_name = b_data.get('name') or ''
             if b_name:
                 set_bank_in_cache(chat_id, b_name, b_data)
+
+        for doc in docs:
+            b_data = doc.to_dict() or {}
+            co_bankers = [str(x).lower() for x in b_data.get('co_bankers', [])]
+            if str(search_str).lower() in co_bankers:
+                try:
+                    b_data['banker_id'] = int(doc.id)
+                except ValueError:
+                    b_data['banker_id'] = doc.id
+                return b_data
 
         for doc in docs:
             b_data = doc.to_dict() or {}
@@ -389,6 +422,14 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
     if not doc_snapshot.exists:
         raise ValueError("Банк не найден.")
     bank_data = doc_snapshot.to_dict() or {}
+
+    if is_shabby_bank(bank_data, target_banker_id):
+        if not bank_data.get('power_grid', True):
+            raise ValueError("❌ В «Банке на Алмазной 33» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
+        if bank_data.get('durability', 35) <= 10:
+            raise ValueError("❌ В здании банка на Алмазной 33 обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
+        if bank_data.get('babki_queue', 75) >= 85:
+            raise ValueError("❌ Вход в банк наглухо перекрыт орущими бабками с квитанциями за 1998 год! Банкир должен сначала разогнать очередь!")
 
     user_snapshot = await safe_get_snapshot(transaction, user_ref)
     user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
@@ -508,6 +549,14 @@ async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id
     bank_data = await get_bank_info(chat_id, target_banker_id)
     if not bank_data:
         raise ValueError("Банк не найден.")
+
+    if is_shabby_bank(bank_data, target_banker_id):
+        if not bank_data.get('power_grid', True):
+            raise ValueError("❌ В «Банке на Алмазной 33» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
+        if bank_data.get('durability', 35) <= 10:
+            raise ValueError("❌ В здании банка на Алмазной 33 обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
+        if bank_data.get('babki_queue', 75) >= 85:
+            raise ValueError("❌ Вход в банк наглухо перекрыт орущими бабками с квитанциями за 1998 год! Банкир должен сначала разогнать очередь!")
 
     user_data = await get_user_data(chat_id, user_id)
     current_balance = int(user_data.get('balance', 0) or 0)
@@ -657,6 +706,26 @@ async def cmd_bank(message: types.Message):
                 return await message.answer("🏦 Банк не найден.")
 
             rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
+
+            if is_shabby_bank(bank_data, bank_data.get('banker_id')) and os.path.exists(SHABBY_BANK_IMG_PATH):
+                durability = bank_data.get('durability', 35)
+                fire_risk = bank_data.get('fire_risk', 65)
+                babki = bank_data.get('babki_queue', 75)
+                photo = FSInputFile(SHABBY_BANK_IMG_PATH)
+                text = (
+                    f"🏚 <b>{escape_html(bank_data.get('name', 'Банк'))}</b>\n"
+                    f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит... Дом на Алмазной 33...»</i>\n\n"
+                    f"🏛 Владелец: <code>{escape_html(bank_data.get('banker_name', '🦖'))}</code> (ID: <code>{bank_data.get('banker_id', '?')}</code>)\n"
+                    f"📈 Ставка по вкладу: <b>{rate}%</b> в день <i>(макс. % для нищенок 👉👈)</i>\n"
+                    f"💰 Капитал банка: <b>{bank_data.get('capital', 0):,}</b> сыр.\n\n"
+                    f"🏚 <i>Состояние здания:</i>\n"
+                    f"🧱 Прочность сарая: <b>{durability}%</b> (крыша течет)\n"
+                    f"🔥 Пожароопасность: <b>{fire_risk}%</b> (проводка искрит)\n"
+                    f"👵 Очередь у входа: <b>{babki}%</b> (орут за коммуналку 1998 года)\n\n"
+                    f"📍 Адрес: <i>г. Самара, ул. Алмазная, д. 33 (за ржавыми гаражами)</i>"
+                )
+                return await message.answer_photo(photo=photo, caption=text)
+
             text = (
                 f"🏛 <b>{escape_html(bank_data.get('name', 'Банк'))}</b>\n\n"
                 f"Владелец (ID): <code>{bank_data.get('banker_id', '?')}</code>\n"
@@ -897,7 +966,7 @@ async def cmd_bank(message: types.Message):
         except Exception as e:
             print(f"Error in /bank withdraw block: {e}\n{traceback.format_exc()}")
             await message.answer(f"❌ Непредвиденная ошибка при снятии вклада:\n<code>{escape_html(str(e))}</code>")
-    elif action in ("upgrade", "upgrades", "улучшить", "улучшения"):
+    elif action in ("upgrade", "upgrades", "улучшить", "улучшения", "stat", "stats", "стат", "статистика"):
         return await cmd_bank_stats(message)
     else:
         await message.answer("Неизвестное действие. Используйте /bank без аргументов для справки.")
@@ -1097,6 +1166,23 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
     rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
     capital = bank_data.get('capital', 0)
 
+    if is_shabby_bank(bank_data, user_id):
+        updates, incident_text = check_and_apply_shabby_decay(bank_data)
+        if updates:
+            bank_data.update(updates)
+            await create_or_update_bank(chat_id, user_id, updates)
+        return format_shabby_bank_stats(
+            chat_id=chat_id,
+            user_id=user_id,
+            bank_data=bank_data,
+            total_depositors=total_depositors,
+            total_deposits=total_deposits,
+            total_loans_given=total_loans_given,
+            overdue_loans=overdue_loans,
+            audit_warning=audit_warning,
+            incident_text=incident_text
+        )
+
     return (
         f"📊 <b>Панель управления банком: {escape_html(bank_data.get('name', 'Банк'))}</b>\n\n"
         f"💰 <b>Ликвидность (Капитал):</b> {capital} сыр.\n"
@@ -1110,7 +1196,11 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
 
 
 # ===================== /bank_stats =====================
-@router.message(Command("bank_stats"))
+@router.message(or_f(
+    Command("bank_stats", "bankstats", "банкстат", "банк_стат", prefix="!/"),
+    F.text.lower().in_({"банк стат", "банкстат", "банк статистика", "банк статы", "мой банк стат"}),
+    F.text.lower().startswith("банк стат ")
+))
 async def cmd_bank_stats(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
@@ -1129,7 +1219,57 @@ async def cmd_bank_stats(message: types.Message):
         return await message.answer("❌ У вас нет открытого банка.")
 
     text = await generate_bank_main_stats(chat_id, user_id, bank_data)
-    await message.answer(text, reply_markup=get_bank_stats_kb(user_id))
+
+    actual_banker_id = bank_data.get('banker_id', user_id)
+    if is_shabby_bank(bank_data, user_id) and os.path.exists(SHABBY_BANK_IMG_PATH):
+        photo = FSInputFile(SHABBY_BANK_IMG_PATH)
+        await message.answer_photo(photo=photo, caption=text, reply_markup=get_shabby_bank_kb(actual_banker_id, bank_data))
+    else:
+        await message.answer(text, reply_markup=get_bank_stats_kb(actual_banker_id))
+
+
+async def _safe_edit_bank_msg(message: types.Message, text: str, reply_markup=None):
+    try:
+        if message.photo:
+            await message.edit_caption(caption=text, reply_markup=reply_markup)
+        else:
+            await message.edit_text(text, reply_markup=reply_markup)
+    except Exception as e:
+        logger.debug(f"Failed to edit bank message: {e}")
+
+
+@router.callback_query(F.data.startswith("bshabby_"))
+async def cb_shabby_bank(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) < 3:
+        return await callback.answer()
+
+    action = parts[1]
+    try:
+        banker_id = int(parts[2])
+    except ValueError:
+        return await callback.answer("❌ Ошибка данных.", show_alert=True)
+
+    chat_id = callback.message.chat.id
+    bank_data = await get_bank_info(chat_id, banker_id)
+    if not bank_data:
+        return await callback.answer("❌ Банк не найден.", show_alert=True)
+
+    co_bankers = [int(x) for x in bank_data.get('co_bankers', []) if str(x).isdigit()]
+    if callback.from_user.id != banker_id and callback.from_user.id not in co_bankers:
+        return await callback.answer("❌ Это не ваш ларек на Алмазной!", show_alert=True)
+
+    success, msg, updates = await execute_shabby_repair(chat_id, banker_id, action, bank_data)
+    if updates:
+        await create_or_update_bank(chat_id, banker_id, updates)
+        bank_data.update(updates)
+
+    clean_msg = msg.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+    await callback.answer(clean_msg[:190], show_alert=True)
+
+    text = await generate_bank_main_stats(chat_id, banker_id, bank_data)
+    kb = get_shabby_bank_kb(banker_id, bank_data)
+    await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
 
 
 # ===================== CALLBACK МЕНЮ БАНКА =====================
@@ -1155,13 +1295,14 @@ async def cb_bank_stats(callback: types.CallbackQuery):
     except ValueError:
         return await callback.answer("❌ Некорректные данные.", show_alert=True)
 
-    if callback.from_user.id != banker_id:
-        return await callback.answer("❌ Это не ваш банк!", show_alert=True)
-
     chat_id = callback.message.chat.id
     bank_data = await get_bank_info(chat_id, banker_id)
     if not bank_data:
         return await callback.answer("❌ Банк не найден.", show_alert=True)
+
+    co_bankers = [int(x) for x in bank_data.get('co_bankers', []) if str(x).isdigit()]
+    if callback.from_user.id != banker_id and callback.from_user.id not in co_bankers:
+        return await callback.answer("❌ Это не ваш банк!", show_alert=True)
 
     db = get_db()
     users_ref = db.collection('chats').document(str(chat_id)).collection('users')
@@ -1169,10 +1310,8 @@ async def cb_bank_stats(callback: types.CallbackQuery):
     # ---------- MAIN ----------
     if action == "main":
         text = await generate_bank_main_stats(chat_id, banker_id, bank_data)
-        try:
-            await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
-        except Exception:
-            pass
+        kb = get_shabby_bank_kb(banker_id, bank_data) if is_shabby_bank(bank_data, banker_id) else get_bank_stats_kb(banker_id)
+        await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
         return await callback.answer()
 
     # ---------- DEPOSITS ----------
@@ -1195,10 +1334,8 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             for i, dep in enumerate(depositors[:10], 1):
                 text += f"{i}. <b>{escape_html(dep['name'])}</b>: {dep['deposit']} сыр.\n"
 
-        try:
-            await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
-        except Exception:
-            pass
+        kb = get_shabby_bank_kb(banker_id, bank_data) if is_shabby_bank(bank_data, banker_id) else get_bank_stats_kb(banker_id)
+        await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
         return await callback.answer()
 
     # ---------- LOANS ----------
@@ -1225,10 +1362,8 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             for i, deb in enumerate(debtors[:10], 1):
                 text += f"{i}. <b>{escape_html(deb['name'])}</b>: {deb['debt']} сыр.\n"
 
-        try:
-            await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
-        except Exception:
-            pass
+        kb = get_shabby_bank_kb(banker_id, bank_data) if is_shabby_bank(bank_data, banker_id) else get_bank_stats_kb(banker_id)
+        await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
         return await callback.answer()
 
     # ---------- SETTINGS ----------
@@ -1243,10 +1378,8 @@ async def cb_bank_stats(callback: types.CallbackQuery):
             f"<code>/incass</code> - Запустить рейс инкассаторов.\n"
             f"Выдавать кредиты можно реплаем: <code>кредит [сумма] [%] [срок]</code>"
         )
-        try:
-            await callback.message.edit_text(text, reply_markup=get_bank_stats_kb(banker_id))
-        except Exception:
-            pass
+        kb = get_shabby_bank_kb(banker_id, bank_data) if is_shabby_bank(bank_data, banker_id) else get_bank_stats_kb(banker_id)
+        await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
         return await callback.answer()
 
     # ---------- SCHEMES ----------
@@ -1292,6 +1425,24 @@ async def cb_bank_stats(callback: types.CallbackQuery):
 
         new_capital = bank_data.get('capital', 0) + FORGE_AMOUNT
         audit_time = current_time + FORGE_AUDIT_DURATION
+
+        if is_shabby_bank(bank_data, banker_id):
+            fire = min(100, int(bank_data.get('fire_risk', 65)) + 30)
+            anger = min(100, int(bank_data.get('inspection_anger', 50)) + 20)
+            await create_or_update_bank(chat_id, banker_id, {
+                'capital': new_capital,
+                'last_forge_time': current_time,
+                'audit_risk_until': audit_time,
+                'fire_risk': fire,
+                'inspection_anger': anger
+            })
+            await callback.answer(
+                f"🖨 ДР-Р-Р... Старый советский станок задымил на всю Алмазную!\n"
+                f"+{FORGE_AMOUNT:,} сыр. напечатано!\n"
+                f"🔥 Риск пожара взлетел до {fire}%! Срочно тушите!", show_alert=True
+            )
+            return await show_bank_schemes(callback, chat_id, banker_id)
+
         await create_or_update_bank(chat_id, banker_id, {
             'capital': new_capital,
             'last_forge_time': current_time,
@@ -1441,10 +1592,7 @@ async def show_bank_upgrades(callback: types.CallbackQuery, chat_id: int, banker
     builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
     builder.adjust(2, 2, 1, 1)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
-    except Exception:
-        pass
+    await _safe_edit_bank_msg(callback.message, text, reply_markup=builder.as_markup())
 
 
 # ===================== UI: СХЕМЫ =====================
@@ -1493,10 +1641,7 @@ async def show_bank_schemes(callback: types.CallbackQuery, chat_id: int, banker_
     builder.button(text="⬅️ Назад", callback_data=f"bstat_main_{banker_id}")
     builder.adjust(2, 1, 1)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
-    except Exception:
-        pass
+    await _safe_edit_bank_msg(callback.message, text, reply_markup=builder.as_markup())
 
 
 async def show_lobbying_menu(callback: types.CallbackQuery, banker_id: int):
@@ -1524,10 +1669,7 @@ async def show_lobbying_menu(callback: types.CallbackQuery, banker_id: int):
     builder.button(text="⬅️ К схемам", callback_data=f"bstat_schemes_{banker_id}")
     builder.adjust(2, 2, 1)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
-    except Exception:
-        pass
+    await _safe_edit_bank_msg(callback.message, text, reply_markup=builder.as_markup())
 
 
 async def show_investment_menu(callback: types.CallbackQuery, banker_id: int):
@@ -1551,10 +1693,7 @@ async def show_investment_menu(callback: types.CallbackQuery, banker_id: int):
     builder.button(text="⬅️ К схемам", callback_data=f"bstat_schemes_{banker_id}")
     builder.adjust(1)
 
-    try:
-        await callback.message.edit_text(text, reply_markup=builder.as_markup())
-    except Exception:
-        pass
+    await _safe_edit_bank_msg(callback.message, text, reply_markup=builder.as_markup())
 
 
 # ===================== ИНКАССАЦИЯ =====================
@@ -1645,10 +1784,12 @@ async def cb_incass(callback: types.CallbackQuery):
     except ValueError:
         return await callback.answer()
 
-    if callback.from_user.id != banker_id:
+    chat_id = callback.message.chat.id
+    bank_data = await get_bank_info(chat_id, banker_id)
+    co_bankers = [int(x) for x in (bank_data.get('co_bankers', []) if bank_data else []) if str(x).isdigit()]
+    if callback.from_user.id != banker_id and callback.from_user.id not in co_bankers:
         return await callback.answer("Это не ваш рейс!", show_alert=True)
 
-    chat_id = callback.message.chat.id
     incass_id = f"incass_{chat_id}_{banker_id}"
 
     if incass_id not in active_incass:
