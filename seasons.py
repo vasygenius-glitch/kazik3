@@ -198,6 +198,60 @@ SEASON_TEMPLATES = {
             {"chance": 0.08, "msg": "\n\n⚙️ <b>АРХЕОТЕХ МЕХАНИКУС:</b> Вы сдали древнюю деталь техножрецам за +{value} сыр.", "range": (2000, 8000)},
             {"chance": 0.04, "msg": "\n\n📜 <b>ИНДУЛЬГЕНЦИЯ ЭККЛЕЗИАРХИИ:</b> Премия за ревностную службу +{value} сыр.", "range": (10000, 25000)},
         ]
+    },
+    "cozy_autumn": {
+        "id": "cozy_autumn",
+        "name": "СЕЗОН 5: УЮТНАЯ ОСЕНЬ (COZY AUTUMN)",
+        "emoji": "🍂☕🌧️",
+        "description": (
+            "За окном моросит осенний дождь, шумит листва и пахнет сыростью.\n"
+            "Самое время завернуться в тёплый плед, налить кружку горячего чая и крутить слоты!\n\n"
+            "☕ <b>ТЕПЛО И УЮТ:</b> Базовый заработок на работе увеличен на 15%, "
+            "а ежедневный бонус приносит на 25% больше сыроежек!\n\n"
+            "📊 <b>ВЛИЯНИЕ НА МИР:</b>\n"
+            "📈 Базовый заработок: +15%\n"
+            "🍀 Осенний фарт в играх: +10% к шансу выигрыша!\n"
+            "🍂 Доступны новые команды: /autumn_spin, /cozy_case, /tea"
+        ),
+        "multiplier": 1.15,
+        "game_win_chance_boost": 10,
+        "glitch_chance": 0.0,
+        "strings": {
+            "tax": "🍂 Листопадный сбор (Налог)",
+            "balance": "🍁 Осенние сыроежки (Баланс)",
+            "shop": "☕ Уютная Лавка",
+            "shop_biz": "🧣 Осенние кофейни",
+            "shop_cars": "🚗 Тёплый автотранспорт",
+            "work": "🍂 Прогулка под осенним дождём",
+            "crime": "🥷 Сбор чужих тыкв в огороде",
+            "bonus": "☕ Горячий чай с корицей",
+            "profile": "ЛИЧНОЕ ДЕЛО ОТДЫХАЮЩЕГО ПОД ПЛЕДОМ",
+            "bank_label": "☕ Банка с заначкой",
+            "bank_title": "🏦 УЮТНЫЙ ОСЕННИЙ БАНК",
+            "top_winner": "ГЛАВНЫЙ ЛЮБИТЕЛЬ УЮТА",
+            "bj_start": "🎰 КАЗИНО 'ОСЕННИЙ ВЕЧЕР'",
+            "bj_win": "🎉 СОГРЕВАЮЩИЙ ДЖЕКПОТ!",
+            "roulette_start": "🌀 ВИХРЬ КЛЕНОВЫХ ЛИСТЬЕВ...",
+            "job_list": [
+                "собирал букет из кленовых листьев",
+                "заваривал пряный тыквенный латте",
+                "гулял в желтом дождевике по лужам",
+                "грелся у камина под теплым пледом",
+                "искал крепкие сыроежки под мокрыми березами",
+                "слушал стук дождя по подоконнику"
+            ],
+            "stocks": {
+                "TEA": {"name": "CozyTea Inc (TEA)", "ticker": "TEA", "desc": "Крупнейший поставщик согревающего чая и кофе."},
+                "PLD": {"name": "WarmPled Corp (PLD)", "ticker": "PLD", "desc": "Фабрика мягких шерстяных пледов и свитеров с оленями."},
+            }
+        },
+        "seasonal_disease": {"id": "autumn_blues", "name": "Осенняя Хандра", "desc": "Хочется спать и пить какао. Вы иногда тихо вздыхаете в чат..."},
+        "events": [
+            {"chance": 0.15, "msg": "\n\n☕ <b>ВЫ НАШЛИ ТЕРМОС С ГОРЯЧИМ ЧАЕМ!</b> Стало теплее! Получено +{value} сыр.", "range": (5000, 15000)},
+            {"chance": 0.05, "msg": "\n\n🌧️ <b>ВЫ ПРОМОКЛИ ПОД ЛИВНЕМ!</b> Пришлось купить сухие носки за -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
+            {"chance": 0.08, "msg": "\n\n🍁 <b>ЗОЛОТОЙ КЛЕНОВЫЙ ЛИСТ:</b> Вы нашли красивый листок и продали коллекционеру за +{value} сыр.", "range": (2000, 8000)},
+            {"chance": 0.04, "msg": "\n\n🥧 <b>ТЫКВЕННЫЙ ПИРОГ:</b> Сосед угостил вас домашним пирогом! Получено +{value} сыр.", "range": (10000, 25000)},
+        ]
     }
 }
 
@@ -219,24 +273,21 @@ def _default_crypto_coins():
                    "prices": [random.randint(100, 500)], "creator": 0},
     }
 
-async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int, int, int]:
+async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: bool = True) -> tuple[int, int, int]:
     """
-    Выполняет ПОЛНЫЙ ТОТАЛЬНЫЙ вайп экономики во всех чатах:
+    Выполняет вайп экономики:
     1. Игроки:
        - Балансы сбрасываются до 500 сыр.
-       - Банковские вклады обнуляются (0)
-       - Статус банкира и привязка к банку сбрасываются (is_banker=False, bank_name=None)
-       - Бизнесы (biz_levels), портфель акций (stocks_portfolio) очищаются
-       - Долги, навыки, питомцы, престиж и карты сбрасываются
        - ИНВЕНТАРЬ: сохраняются ТОЛЬКО коллекционные дикторы (dictor_*), все остальные предметы удаляются!
+       - Если wipe_banks=True (полный вайп): банковские вклады обнуляются, статус банкира сбрасывается,
+         бизнесы, акции, навыки, питомцы сбрасываются.
+       - Если wipe_banks=False (средний вайп): банки, вклады, бизнесы НЕ трогаются!
     2. Банки:
-       - Полное удаление / сброс всех документов в коллекции 'banks' каждого чата
-       - Очистка кэша банков (_bank_cache)
+       - Если wipe_banks=True: удаление всех банков в коллекции 'banks'. Если False: банки остаются!
     3. Кланы:
-       - Казна кланов обнуляется (0)
+       - Если wipe_banks=True: обнуление казны.
     4. Криптовалюта и акции:
-       - Сброс биржи криптовалют к начальным значениям
-       - Сброс котировок акций к базовым ценам
+       - Сброс биржи криптовалют и котировок акций к базовым ценам.
     """
     db = get_db()
     if db is None:
@@ -247,7 +298,8 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int,
     from profile_bank import _bank_cache
     
     _user_cache.clear()
-    _bank_cache.clear()
+    if wipe_banks:
+        _bank_cache.clear()
     
     whitelist = await get_whitelist()
     users_wiped, banks_wiped, clans_wiped = 0, 0, 0
@@ -290,32 +342,34 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int,
             chat_doc_ref = db.collection("chats").document(str(cid))
 
             # --- А. ВАЙП БАНКОВ ЧАТА ---
-            banks_ref = chat_doc_ref.collection("banks")
-            for bdoc in await banks_ref.get():
-                if not bdoc.id:
-                    continue
-                try:
-                    await banks_ref.document(bdoc.id).delete()
-                    banks_wiped += 1
-                except Exception:
-                    pass
+            if wipe_banks:
+                banks_ref = chat_doc_ref.collection("banks")
+                for bdoc in await banks_ref.get():
+                    if not bdoc.id:
+                        continue
+                    try:
+                        await banks_ref.document(bdoc.id).delete()
+                        banks_wiped += 1
+                    except Exception:
+                        pass
 
             # --- Б. ВАЙП КЛАНОВ ЧАТА ---
-            clans_ref = chat_doc_ref.collection("clans")
-            c_batch = db.batch()
-            c_count = 0
-            for cdoc in await clans_ref.get():
-                if not cdoc.id:
-                    continue
-                c_batch.set(clans_ref.document(cdoc.id), {"treasury": 0}, merge=True)
-                clans_wiped += 1
-                c_count += 1
-                if c_count >= batch_size:
+            if wipe_banks:
+                clans_ref = chat_doc_ref.collection("clans")
+                c_batch = db.batch()
+                c_count = 0
+                for cdoc in await clans_ref.get():
+                    if not cdoc.id:
+                        continue
+                    c_batch.set(clans_ref.document(cdoc.id), {"treasury": 0}, merge=True)
+                    clans_wiped += 1
+                    c_count += 1
+                    if c_count >= batch_size:
+                        await c_batch.commit()
+                        c_batch = db.batch()
+                        c_count = 0
+                if c_count > 0:
                     await c_batch.commit()
-                    c_batch = db.batch()
-                    c_count = 0
-            if c_count > 0:
-                await c_batch.commit()
 
             # --- В. ВАЙП ПОЛЬЗОВАТЕЛЕЙ ЧАТА ---
             users_ref = chat_doc_ref.collection("users")
@@ -335,26 +389,35 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int,
                 else:
                     preserved = {}
 
-                doc_fields = {
-                    "balance": 500,
-                    "bank_deposit": 0,
-                    "bank_name": None,
-                    "is_banker": False,
-                    "inventory": preserved,
-                    "biz_levels": {},
-                    "stocks_portfolio": {},
-                    "debts": {},
-                    "skills": {},
-                    "pet": None,
-                    "escort_count": 0,
-                    "meme_cards": {},
-                    "opened_cases_count": 0,
-                    "prestige_level": 0,
-                    "prestige_coins": 0,
-                    "prestige_inventory": {},
-                    "prestige_biz_levels": {},
-                    "unsettled_transfers": [],
-                }
+                if wipe_banks:
+                    doc_fields = {
+                        "balance": 500,
+                        "bank_deposit": 0,
+                        "bank_name": None,
+                        "is_banker": False,
+                        "inventory": preserved,
+                        "biz_levels": {},
+                        "stocks_portfolio": {},
+                        "debts": {},
+                        "skills": {},
+                        "pet": None,
+                        "escort_count": 0,
+                        "meme_cards": {},
+                        "opened_cases_count": 0,
+                        "prestige_level": 0,
+                        "prestige_coins": 0,
+                        "prestige_inventory": {},
+                        "prestige_biz_levels": {},
+                        "unsettled_transfers": [],
+                    }
+                else:
+                    # Средний вайп: только балансы до 500 и инвентарь (дикторы сохранены). Банки и вклады не трогаются!
+                    doc_fields = {
+                        "balance": 500,
+                        "inventory": preserved,
+                        "debts": {},
+                        "unsettled_transfers": [],
+                    }
 
                 u_batch.set(users_ref.document(doc.id), doc_fields, merge=True)
                 users_wiped += 1
@@ -371,20 +434,25 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True) -> tuple[int,
             logger.error("Ошибка вайпа чата %s: %s", cid, err)
 
     _user_cache.clear()
-    _bank_cache.clear()
-    logger.info("Глобальный ТОТАЛЬНЫЙ вайп завершен: обнулено игроков: %s, банков: %s, кланов: %s (дикторы сохранены: %s)",
-                users_wiped, banks_wiped, clans_wiped, preserve_dictors)
+    if wipe_banks:
+        _bank_cache.clear()
+    logger.info("Вайп завершен (wipe_banks=%s): обнулено игроков: %s, банков: %s, кланов: %s (дикторы сохранены: %s)",
+                wipe_banks, users_wiped, banks_wiped, clans_wiped, preserve_dictors)
     return users_wiped, banks_wiped, clans_wiped
 
-async def perform_season_transition(bot: Bot = None, new_season_id: str = "warhammer",
-                                    do_wipe: bool = True, duration_days: int = 30) -> dict:
+async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_autumn",
+                                    do_wipe: bool = True, wipe_banks: bool = None,
+                                    duration_days: int = 30) -> dict:
     """
     Выполняет атомарный переход на новый сезон:
     1. Проверяет однократность выполнения вайпа через last_wiped_season
     2. Устанавливает конфигурацию нового сезона в БД
-    3. Выполняет полный вайп экономики (если do_wipe=True)
+    3. Выполняет вайп экономики (если do_wipe=True; для cozy_autumn по умолчанию wipe_banks=False)
     4. Рассылает торжественный анонс во все чаты белого списка
     """
+    if wipe_banks is None:
+        wipe_banks = False if new_season_id == "cozy_autumn" else True
+
     async with _season_transition_lock:
         if new_season_id not in SEASON_TEMPLATES:
             raise ValueError(f"Неизвестный шаблон сезона: {new_season_id}")
@@ -414,21 +482,50 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "warha
 
         users_wiped, banks_wiped, clans_wiped = 0, 0, 0
         if do_wipe:
-            users_wiped, banks_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True)
+            users_wiped, banks_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True, wipe_banks=wipe_banks)
 
-        announce_text = (
-            f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"⚔️ <b>ЭПОХА ВАРХАММЕРА НАСТАЛА!</b> ⚔️\n\n"
-            f"💥 <b>ГЛОБАЛЬНЫЙ ВАЙП ЭКОНОМИКИ ЗАВЕРШЕН:</b>\n"
-            f"• Балансы всех игроков сброшены до <b>500 сыр.</b>\n"
-            f"• Вклады, банки, долги и казна кланов обнулены\n"
-            f"• 🖤🐇 Коллекционные Дикторы из Сезона 3 сохранены в вашем /inventory!\n\n"
-            f"🦅 <b>БОНУС СЕЗОНА:</b>\n"
-            f"🍀 <b>+15% к шансу выигрыша</b> во всех играх казино (Благословение Императора)!\n\n"
-            f"👉 Подробнее: <code>/season</code>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
-        )
+        if new_season_id == "cozy_autumn":
+            wipe_info = (
+                "🧹 <b>СЕЗОННЫЙ СБРОС (СРЕДНИЙ ВАЙП):</b>\n"
+                "• Наличные балансы сброшены до <b>500 сыр.</b>\n"
+                "• Инвентарь очищен (🖤🐇 <b>Коллекционные Дикторы сохранены!</b>)\n"
+                "• 🏦 <b>Банки, вклады и счета НЕ тронуты и работают в обычном режиме!</b>\n\n"
+            ) if do_wipe else "✨ <b>Балансы и имущество игроков сохранены!</b>\n\n"
+            announce_text = (
+                f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🍂☕🌧️ <b>УЮТНАЯ ОСЕНЬ НАСТАЛА!</b> 🍂☕🌧️\n\n"
+                f"{wipe_info}"
+                f"☕ <b>БОНУСЫ СЕЗОНА:</b>\n"
+                f"📈 <b>+15%</b> к заработку на обычной работе\n"
+                f"🍀 <b>+10% к шансу выигрыша</b> во всех играх казино!\n"
+                f"☕ <b>+25%</b> к ежедневному бонусу /bonus\n"
+                f"🧣 Доступны новые команды: <code>/autumn_spin</code>, <code>/cozy_case</code>, <code>/tea</code>\n\n"
+                f"👉 Подробнее: <code>/season</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+        elif new_season_id == "warhammer":
+            announce_text = (
+                f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚔️ <b>ЭПОХА ВАРХАММЕРА НАСТАЛА!</b> ⚔️\n\n"
+                f"💥 <b>ГЛОБАЛЬНЫЙ ВАЙП ЭКОНОМИКИ ЗАВЕРШЕН:</b>\n"
+                f"• Балансы всех игроков сброшены до <b>500 сыр.</b>\n"
+                f"• Вклады, банки, долги и казна кланов обнулены\n"
+                f"• 🖤🐇 Коллекционные Дикторы из Сезона 3 сохранены в вашем /inventory!\n\n"
+                f"🦅 <b>БОНУС СЕЗОНА:</b>\n"
+                f"🍀 <b>+15% к шансу выигрыша</b> во всех играх казино (Благословение Императора)!\n\n"
+                f"👉 Подробнее: <code>/season</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+        else:
+            announce_text = (
+                f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"{new_cfg['description']}\n\n"
+                f"👉 Подробнее: <code>/season</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
 
         if bot:
             from whitelist import get_whitelist
@@ -469,7 +566,7 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "warha
 async def season_rotator_task(bot: Bot):
     """
     Фоновый воркер автоматической ротации сезонов.
-    Проверяет истечение срока текущего сезона (end_time) и запускает переход на Warhammer с вайпом.
+    Проверяет истечение срока текущего сезона (end_time) и запускает переход на следующий сезон.
     """
     logger.info("🛡️ Фоновый воркер ротации сезонов запущен.")
     while True:
@@ -484,20 +581,24 @@ async def season_rotator_task(bot: Bot):
 
             if end_time > 0 and now >= end_time:
                 current_id = cfg.get("id", "")
-                if current_id != "warhammer":
-                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Warhammer...",
-                                current_id, now, end_time)
+                if current_id == "tayniy_baniy":
+                    logger.info("⏳ Время сезона '%s' истекло. Запуск перехода на Warhammer...", current_id)
                     await perform_season_transition(bot, new_season_id="warhammer", do_wipe=True)
+                elif current_id != "cozy_autumn":
+                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Cozy Autumn...",
+                                current_id, now, end_time)
+                    await perform_season_transition(bot, new_season_id="cozy_autumn", do_wipe=True)
                 else:
-                    if cfg.get("last_wiped_season") != "warhammer":
-                        logger.info("⏳ Сезон warhammer активен, но вайп еще не был зафиксирован. Запуск вайпа...")
-                        await perform_season_transition(bot, new_season_id="warhammer", do_wipe=True)
+                    if cfg.get("last_wiped_season") != "cozy_autumn":
+                        logger.info("⏳ Сезон cozy_autumn активен, но вайп еще не был зафиксирован. Запуск вайпа...")
+                        await perform_season_transition(bot, new_season_id="cozy_autumn", do_wipe=True)
         except asyncio.CancelledError:
             logger.info("Фоновый воркер ротации сезонов остановлен.")
             break
         except Exception as e:
             logger.error("Ошибка в фоновом воркере ротации сезонов: %s", e)
             await asyncio.sleep(10)
+
 
 async def get_season_config():
     cached = global_cache.get("current_season")
@@ -557,11 +658,11 @@ async def cmd_season(message: types.Message):
 
 @router.message(Command("force_season_rotate"))
 async def cmd_force_season_rotate(message: types.Message):
-    """Принудительная ротация на сезон Warhammer с вайпом (только для создателя)."""
+    """Принудительная ротация на сезон Cozy Autumn со средним вайпом (только для создателя)."""
     if message.from_user.id != CREATOR_ID:
         return
-    res = await perform_season_transition(message.bot, new_season_id="warhammer", do_wipe=True)
-    await message.answer(f"✅ Принудительная ротация выполнена: {res}")
+    res = await perform_season_transition(message.bot, new_season_id="cozy_autumn", do_wipe=True, wipe_banks=False)
+    await message.answer(f"✅ Принудительная ротация на Cozy Autumn выполнена: {res}")
 
 @router.message(Command("hard_wipe"))
 async def cmd_hard_wipe(message: types.Message):
@@ -597,9 +698,10 @@ async def cmd_set_season(message: types.Message):
     if len(args) >= 3 and args[2].lower() in ("wipe", "yes", "true", "1"):
         do_wipe = True
 
-    if season_id == "warhammer" and do_wipe:
-        res = await perform_season_transition(message.bot, new_season_id="warhammer", do_wipe=True)
-        return await message.answer(f"✅ <b>Сезон 'warhammer' активирован с вайпом!</b>\nРезультат: {res}")
+    if do_wipe:
+        wipe_banks = False if season_id == "cozy_autumn" else True
+        res = await perform_season_transition(message.bot, new_season_id=season_id, do_wipe=True, wipe_banks=wipe_banks)
+        return await message.answer(f"✅ <b>Сезон '{season_id}' активирован с вайпом (сохранение банков: {not wipe_banks})!</b>\nРезультат: {res}")
     
     new_cfg = SEASON_TEMPLATES[season_id].copy()
     new_cfg["active"] = True
@@ -977,7 +1079,173 @@ async def cmd_resort_invest(message: types.Message):
     )
 
 
+# --- НОВЫЕ ОСЕННИЕ КОМАНДЫ (Сезон 5: Cozy Autumn / Уютная Осень) ---
+
+@router.message(Command("autumn_spin", "rain_spin", "cozy_spin"))
+async def cmd_autumn_spin(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "cozy_autumn":
+        return await message.answer("🍂 Сезон Уютной Осени сейчас не активен. Эта команда доступна только осенью!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/autumn_spin [ставка]</code>")
+
+    try:
+        bet = int(args[1])
+        if bet < 100:
+            return await message.answer("Минимальная ставка — 100 сыроежек.")
+    except ValueError:
+        return await message.answer("Ставка должна быть числом.")
+
+    if u_data.get('balance', 0) - bet < -5000:
+        return await message.answer("💸 Недостаточно средств! У вас лимит кредита.")
+
+    await update_user_balance(chat_id, user_id, -bet, action="Autumn Spin Bet")
+
+    msg = await message.answer("🌧️ <i>Крутим осенний зонт фортуны под дождём...</i> 🍂")
+    await asyncio.sleep(1.0)
+
+    rnd = random.random()
+    if rnd < 0.40:
+        profit = 0
+        result_msg = "💧 <b>Холодная лужа!</b> Вы промочили ботинки, ставка уплыла по ручью. (0x)"
+    elif rnd < 0.70:
+        profit = int(bet * 0.5)
+        result_msg = f"🥾 <b>Резиновые сапоги:</b> Спасли от лужи! Возвращено <b>{profit}</b> сыроежек. (0.5x)"
+    elif rnd < 0.85:
+        profit = int(bet * 1.5)
+        result_msg = f"☕ <b>Кружка горячего кофе:</b> Согревает в непогоду! Выигрыш: <b>{profit}</b> сыроежек! (1.5x)"
+    elif rnd < 0.95:
+        profit = int(bet * 2.5)
+        result_msg = f"🧣 <b>Тёплый вязаный шарф:</b> Уютная защита от ветра! Выигрыш: <b>{profit}</b> сыроежек! (2.5x)"
+    else:
+        profit = int(bet * 5.0)
+        result_msg = f"🛋️🔥 <b>СУПЕР-ДЖЕКПОТ УЮТА!</b> Тёплый плед и камин! Выигрыш: <b>{profit}</b> сыроежек! (5.0x)"
+
+    if profit > 0:
+        await update_user_balance(chat_id, user_id, profit, action="Autumn Spin Win")
+
+    await msg.edit_text(
+        f"🍂 <b>ОСЕННИЙ СПИН:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Ставка: <b>{bet}</b> сыроежек\n"
+        f"✨ {result_msg}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+COZY_CASE_PRICE = 10000
+
+COZY_ITEMS_DROP = [
+    {"id": "autumn_scarf", "name": "🧣 Тёплый вязаный шарф", "rarity": "Обычный", "color": "⚪", "weight": 35.0, "min_cash": 2000, "max_cash": 5000},
+    {"id": "pumpkin_pie", "name": "🥧 Домашний тыквенный пирог", "rarity": "Необычный", "color": "🟢", "weight": 28.0, "min_cash": 4000, "max_cash": 8000},
+    {"id": "autumn_thermos", "name": "☕ Термос с облепиховым чаем", "rarity": "Редкий", "color": "🔵", "weight": 20.0, "min_cash": 7000, "max_cash": 12000},
+    {"id": "autumn_sweater", "name": "🦌 Свитер с оленями", "rarity": "Эпический", "color": "🟣", "weight": 11.0, "min_cash": 12000, "max_cash": 20000},
+    {"id": "golden_leaf", "name": "🍁 Золотой кленовый лист", "rarity": "Легендарный", "color": "🟡", "weight": 5.0, "min_cash": 25000, "max_cash": 45000},
+    {"id": "cozy_plaid", "name": "🛋️ Шерстяной клетчатый плед", "rarity": "Мифический", "color": "🔴", "weight": 1.0, "min_cash": 50000, "max_cash": 80000},
+]
+
+@router.message(Command("cozy_case", "autumn_case"))
+async def cmd_cozy_case(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "cozy_autumn":
+        return await message.answer("🍂 Сезон Уютной Осени сейчас не активен. Эта команда доступна только осенью!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    balance = u_data.get('balance', 0)
+    if balance < COZY_CASE_PRICE:
+        return await message.answer(f"💸 Осенний кейс уюта стоит <b>{COZY_CASE_PRICE}</b> сыроежек. У вас недостаточно средств.")
+
+    await update_user_balance(chat_id, user_id, -COZY_CASE_PRICE, action="Cozy Case Open")
+
+    msg = await message.answer("🎁 <i>Открываем осеннюю коробку уюта...</i> ☕🍂")
+    await asyncio.sleep(1.0)
+
+    weights = [item["weight"] for item in COZY_ITEMS_DROP]
+    chosen = random.choices(COZY_ITEMS_DROP, weights=weights, k=1)[0]
+    cash_reward = random.randint(chosen["min_cash"], chosen["max_cash"])
+
+    from user_manager import add_item_to_inventory
+    await add_item_to_inventory(chat_id, user_id, chosen["id"], count=1)
+    await update_user_balance(chat_id, user_id, cash_reward, action="Cozy Case Cash")
+
+    await msg.edit_text(
+        f"🎁 <b>ОТКРЫТИЕ ОСЕННЕГО КЕЙСА УЮТА:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Стоимость: <b>{COZY_CASE_PRICE}</b> сыроежек\n\n"
+        f"{chosen['color']} <b>Находка:</b> {chosen['name']}\n"
+        f"Редкость: <b>{chosen['rarity']}</b>\n"
+        f"💰 Согревающая заначка внутри: <b>+{cash_reward}</b> сыроежек!\n\n"
+        f"✨ Предмет добавлен в ваш /inventory!\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+@router.message(Command("tea", "чай", "cozy"))
+async def cmd_tea(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "cozy_autumn":
+        return await message.answer("🍂 Сезон Уютной Осени сейчас не активен. Выпить согревающий чай можно только осенью!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    COOLDOWN = 7200 # 2 часа
+    last_tea = u_data.get('last_tea_time', 0)
+    now = time.time()
+    if now - last_tea < COOLDOWN:
+        remain = int(COOLDOWN - (now - last_tea))
+        mins, secs = divmod(remain, 60)
+        hours, mins = divmod(mins, 60)
+        return await message.answer(f"☕ Вы ещё не допили прошлую кружку чая! До следующего чаепития: <b>{hours}ч {mins}м {secs}с</b>.")
+
+    tea_varieties = [
+        ("Чай с облепихой и мёдом 🍯", random.randint(3000, 6000)),
+        ("Пряный тыквенный латте с корицей 🥧", random.randint(4000, 7000)),
+        ("Чёрный чай с чабрецом и лимоном 🍋", random.randint(3500, 6500)),
+        ("Горячий какао с маршмеллоу 🍫", random.randint(4500, 8000)),
+        ("Глинтвейн с апельсином и гвоздикой 🍷", random.randint(5000, 9000)),
+    ]
+    name, reward = random.choice(tea_varieties)
+
+    await update_user_balance(chat_id, user_id, reward, action="Cozy Autumn Tea")
+    await update_user_field(chat_id, user_id, 'last_tea_time', now)
+
+    from diseases import remove_disease
+    removed = await remove_disease(chat_id, user_id, "autumn_blues")
+    cure_note = "\n✨ <i>Горячий напиток полностью развеял вашу осеннюю хандру!</i>" if removed else ""
+
+    await message.answer(
+        f"☕ <b>УЮТНОЕ ЧАЕПИТИЕ:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Вы завернулись в тёплый плед и налили:\n"
+        f"🍵 <b>{name}</b>\n\n"
+        f"На душе стало тепло и спокойно!\n"
+        f"💰 Получено: <b>+{reward}</b> сыроежек!{cure_note}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
 # --- НОВЫЕ БАННЫЕ КОМАНДЫ (Сезон Дикторов Тайний Баний) ---
+
 
 BANYA_CASE_PRICE = 12000
 
