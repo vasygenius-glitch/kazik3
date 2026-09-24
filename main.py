@@ -136,6 +136,13 @@ async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus
     status.ready = True
     logger.info("Запущено фоновых задач: %s", len(workers))
 
+    try:
+        from creator import check_and_send_pending_actions
+        from utils import fire_and_forget
+        fire_and_forget(check_and_send_pending_actions(bot))
+    except Exception as e:
+        logger.warning("Pending startup action failed: %s", e)
+
 
 async def on_shutdown(bot, storage, supervisor, status):
     status.ready = False

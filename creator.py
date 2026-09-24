@@ -2086,5 +2086,117 @@ async def cmd_db_restore(message: types.Message):
                 await status_msg.edit_text(f"❌ Ошибка восстановления: {error}", parse_mode="HTML")
         except Exception:
             pass
-    else:
         print(f"Результат восстановления {backup_id}: success={success}, error={error}")
+
+
+@router.message(Command("chiki_brik", "чикибрик", "atyatya", "атятя"))
+async def cmd_chiki_brik(message: types.Message):
+    if not is_creator(message):
+        return
+
+    args = message.text.split(maxsplit=2)
+    target_str = ""
+    custom_pct = 50
+
+    if message.reply_to_message:
+        if len(args) > 1 and args[1].rstrip("%").isdigit():
+            custom_pct = max(1, min(100, int(args[1].rstrip("%"))))
+    else:
+        if len(args) > 1:
+            target_str = args[1]
+            if len(args) > 2 and args[2].rstrip("%").isdigit():
+                custom_pct = max(1, min(100, int(args[2].rstrip("%"))))
+        else:
+            target_str = "@Elliot_badMentalHealth"
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден. Укажите @username, ID или ответьте на сообщение.")
+
+    u_data = await get_user_data(t_chat_id, t_uid)
+    cur_balance = int(u_data.get("balance", 0) or 0)
+
+    cut = (cur_balance * custom_pct) // 100
+    if cut > 0:
+        await update_user_balance(t_chat_id, t_uid, -cut, min_balance=0, action=f"Chiki-brik {custom_pct}% cut")
+
+    mention = f"@{t_uname}" if t_uname else f'<a href="tg://user?id={t_uid}">{escape_html(t_name)}</a>'
+    name_display = "эллиот" if (t_uname and "elliot" in t_uname.lower()) or ("elliot" in str(t_name).lower()) else escape_html(t_name)
+
+    text = (
+        f"Атятя маленький {name_display} незя столько денег брать - {custom_pct} процентов тебе малышочек\n\n"
+        f"{mention}"
+    )
+
+    photo_path = ensure_atyatya_image()
+    if photo_path:
+        from aiogram.types import FSInputFile
+        try:
+            await message.answer_photo(photo=FSInputFile(photo_path), caption=text, parse_mode="HTML")
+        except Exception:
+            await message.answer(text, parse_mode="HTML")
+    else:
+        await message.answer(text, parse_mode="HTML")
+
+    from log_system import log_action
+    log_action(f"⚡ <b>Чикибрик:</b> {message.from_user.full_name} снял {cut:,} сыроежек ({custom_pct}%) у {t_name} ({t_uid}) в чате {t_chat_id}")
+
+
+def ensure_atyatya_image() -> str:
+    import os
+    photo_path = os.path.join(os.path.dirname(__file__), "assets", "atyatya.png")
+    if not os.path.exists(photo_path):
+        try:
+            from assets.atyatya_data import ATYATYA_B64
+            import base64
+            os.makedirs(os.path.dirname(photo_path), exist_ok=True)
+            with open(photo_path, "wb") as f:
+                f.write(base64.b64decode(ATYATYA_B64))
+        except Exception:
+            pass
+    return photo_path if os.path.exists(photo_path) else None
+
+
+async def check_and_send_pending_actions(bot: Bot):
+    """One-time startup check for pending announcements/actions."""
+    try:
+        from db import get_db
+        db = get_db()
+        ref = db.collection("system_actions").document("chiki_brik_elliot")
+        doc = await ref.get()
+        data = doc.to_dict() or {}
+        if data.get("sent"):
+            return
+
+        chat_id = -1002321279920
+        user_id = 8532826882
+
+        cut = data.get("cut_amount", 0)
+        if not data.get("cut_done"):
+            u_data = await get_user_data(chat_id, user_id)
+            cur_balance = int(u_data.get("balance", 0) or 0)
+            cut = cur_balance // 2
+            if cut > 0:
+                await update_user_balance(chat_id, user_id, -cut, min_balance=0, action="Atyatya 50% cut")
+
+        caption = "Атятя маленький эллиот незя столько денег брать - 50 процентов тебе малышочек\n\n@Elliot_badMentalHealth"
+        photo_path = ensure_atyatya_image()
+        if photo_path:
+            from aiogram.types import FSInputFile
+            try:
+                await bot.send_photo(chat_id=chat_id, photo=FSInputFile(photo_path), caption=caption)
+            except Exception:
+                await bot.send_message(chat_id=chat_id, text=caption)
+        else:
+            await bot.send_message(chat_id=chat_id, text=caption)
+
+        await ref.set({
+            "cut_done": True,
+            "cut_amount": cut,
+            "sent": True,
+            "timestamp": time.time()
+        })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("check_and_send_pending_actions error: %s", e)
+
