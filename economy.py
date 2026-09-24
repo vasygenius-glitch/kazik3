@@ -26,11 +26,14 @@ router = Router()
 active_work_games: dict = {}
 active_crime_games: dict = {}
 
-# Кулдауны
+# Кулдауны и лимиты
 WORK_COOLDOWN = 1800        # 30 мин
 CRIME_COOLDOWN = 3600       # 1 ч
 BONUS_COOLDOWN = 14400      # 4 ч
 ROB_BANK_COOLDOWN = 43200   # 12 ч
+BANK_ROB_IMMUNITY_TIME = 14400  # 4 ч защита банка от повторного налёта
+MAX_BANK_ROB_LOOT = 15_000_000  # Максимум 15M сыр. за ограбление (защита экономики)
+MIN_BANK_ROB_LOOT = 100_000     # Минимум 100k сыр.
 GAME_TTL = 60               # сек на мини-игру
 
 
@@ -1135,34 +1138,92 @@ async def cmd_rob_bank(message: types.Message):
         return await message.answer("🏦 Банк не найден. Проверь название.")
 
     target_banker_id = bank_data.get('banker_id')
+    bank_name = escape_html(bank_data.get('name', identifier))
+
+    if target_banker_id == user_id:
+        return await message.answer("🏦 Ты не можешь грабить собственный банк!")
+
     capital = int(bank_data.get('capital', 0))
-    if capital < 10000:
+    if capital < 100_000:
         return await message.answer(
-            "В этом банке слишком мало денег, грабить нечего!"
+            "🏦 В этом банке слишком мало денег, грабить нечего!"
+        )
+
+    # Проверка анти-рейд защиты банка (иммунитет после недавнего налета)
+    last_robbed_time = bank_data.get('last_robbed_time', 0)
+    if current_time - last_robbed_time < BANK_ROB_IMMUNITY_TIME:
+        remain_b = int(BANK_ROB_IMMUNITY_TIME - (current_time - last_robbed_time))
+        b_hours, b_rem = divmod(remain_b, 3600)
+        b_mins, _ = divmod(b_rem, 60)
+        return await message.answer(
+            f"🚨 <b>СИСТЕМА БЕЗОПАСНОСТИ АКТИВИРОВАНА!</b>\n\n"
+            f"Банк <b>{bank_name}</b> находится под усиленной охраной полиции после недавней тревоги.\n"
+            f"Все хранилища заблокированы ещё на <b>{b_hours} ч. {b_mins} мин.</b>"
         )
 
     await update_user_field(chat_id, user_id, 'last_bank_rob_time', current_time)
+    await create_or_update_bank(chat_id, target_banker_id, {'last_robbed_time': current_time})
 
     rand = secrets.SystemRandom()
-    stealth_level = data.get('skills', {}).get('stealth', 0)
-    success_chance = min(0.5, 0.05 + stealth_level * 0.02)
+
+    # Расчет шанса: базовый 1%, стелс до +2%, охрана сейфа снижает шанс до -1.5%
+    stealth_level = min(10, data.get('skills', {}).get('stealth', 0))
+    sec_level = int(bank_data.get('upgrade_security', 0))
+
+    base_chance = 0.01
+    stealth_bonus = stealth_level * 0.002
+    sec_penalty = sec_level * 0.003
+
+    # Итоговый шанс: от 0.2% до 3%
+    success_chance = max(0.002, min(0.03, base_chance + stealth_bonus - sec_penalty))
+    chance_percent = round(success_chance * 100, 2)
+
+    logger.info(
+        f"[ROB_BANK] User {user_id} robs '{bank_name}' (capital={capital}): "
+        f"stealth={stealth_level}, sec={sec_level}, chance={chance_percent}%"
+    )
 
     if rand.random() < success_chance:
-        steal_percent = rand.uniform(0.01, 0.05)
-        stolen = int(capital * steal_percent)
+        steal_percent = rand.uniform(0.001, 0.005)
+        raw_stolen = int(capital * steal_percent)
+        stolen = max(MIN_BANK_ROB_LOOT, min(raw_stolen, MAX_BANK_ROB_LOOT))
+        stolen = min(stolen, max(1, capital // 2))
+
         await create_or_update_bank(
             chat_id, target_banker_id,
-            {'capital': capital - stolen}
+            {'capital': max(0, capital - stolen)}
         )
-        await update_user_balance(chat_id, user_id, stolen)
+        await update_user_balance(chat_id, user_id, stolen, action="Bank Robbery Success")
+
+        formatted_stolen = f"{stolen:_}".replace("_", " ")
         await message.answer(
-            f"🥷 <b>УСПЕШНОЕ ОГРАБЛЕНИЕ!</b>\n\n"
-            f"Вы вынесли из <b>{escape_html(bank_data.get('name', '?'))}</b> "
-            f"<b>{stolen}</b> сыроежек!"
+            f"🥷 <b>НЕВЕРОЯТНОЕ ОГРАБЛЕНИЕ ВЕКА!</b>\n\n"
+            f"Вам чудом удалось взломать защитные протоколы банка <b>{bank_name}</b> (шанс был всего {chance_percent}%!) "
+            f"и скрыться до приезда спецназа.\n\n"
+            f"💰 Вы вынесли из хранилища: <b>{formatted_stolen}</b> сыроежек!\n"
+            f"🚨 Банк переведён в режим максимальной тревоги на 4 часа."
         )
+
+        if target_banker_id:
+            try:
+                await message.bot.send_message(
+                    chat_id=target_banker_id,
+                    text=(
+                        f"🚨 <b>ТРЕВОГА В ВАШЕМ БАНКЕ!</b>\n\n"
+                        f"Банк <b>{bank_name}</b> был ограблен неизвестными!\n"
+                        f"💸 Ущерб хранилища: <b>-{formatted_stolen}</b> сыроежек.\n"
+                        f"🛡️ Рекомендуется прокачать охрану сейфа: <code>/bank_upgrades</code>"
+                    )
+                )
+            except Exception:
+                pass
     else:
-        penalty = rand.randint(50_000, 150_000)
-        await update_user_balance(chat_id, user_id, -penalty, min_balance=0)
+        user_balance = max(0, int(data.get('balance', 0)))
+        penalty = max(500_000, min(5_000_000, int(user_balance * 0.10)))
+        await update_user_balance(chat_id, user_id, -penalty, min_balance=0, action="Bank Robbery Fine")
+
+        sec_guard_msg = f" (Охрана {sec_level} ур. нейтрализовала налёт)" if sec_level > 0 else ""
+
         try:
             await message.bot.restrict_chat_member(
                 chat_id=chat_id,
@@ -1170,13 +1231,15 @@ async def cmd_rob_bank(message: types.Message):
                 permissions=types.ChatPermissions(can_send_messages=False),
                 until_date=timedelta(minutes=30),
             )
-            mute_text = "\nВас посадили в тюрьму (мут) на 30 минут."
+            mute_text = "\n👮 Вы арестованы и отправлены в тюрьму (мут) на 30 минут!"
         except Exception as e:
             logger.warning(f"Не смог замутить {user_id}: {e}")
-            mute_text = "\nВам удалось сбежать, но деньги вы потеряли."
+            mute_text = "\n🏃 Вам удалось вырваться и сбежать, но сумку с деньгами бросили."
 
+        formatted_penalty = f"{penalty:_}".replace("_", " ")
         await message.answer(
-            f"🚔 <b>ОБЛАВА!</b>\n\n"
-            f"Ограбление <b>{escape_html(bank_data.get('name', '?'))}</b> "
-            f"провалилось. Потеряно <b>{penalty}</b> сыр.{mute_text}"
-        )
+            f"🚔 <b>ОБЛАВА И ПРОВАЛ ОГРАБЛЕНИЯ!</b>{sec_guard_msg}\n\n"
+            f"Сигнализация банка <b>{bank_name}</b> сработала мгновенно! Системы сейфа заблокировали двери, "
+            f"а вас окружила вооружённая охрана.\n\n"
+            f"💸 Штраф и конфискация: <b>-{formatted_penalty}</b> сыр.{mute_text}"
+        )
