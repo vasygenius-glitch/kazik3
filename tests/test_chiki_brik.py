@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from aiogram import types
-from creator import cmd_chiki_brik, check_and_send_pending_actions
+from creator import cmd_chiki_brik, cmd_peredumal, check_and_send_pending_actions
 
 
 @pytest.mark.asyncio
@@ -45,3 +45,23 @@ async def test_check_and_send_pending_actions_already_sent():
         await check_and_send_pending_actions(bot)
         bot.send_photo.assert_not_called()
         bot.send_message.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cmd_peredumal_success():
+    msg = AsyncMock(spec=types.Message)
+    msg.answer = AsyncMock()
+    msg.answer_photo = AsyncMock()
+    msg.from_user = MagicMock(id=5416583030, full_name="Creator", username="creator")
+    msg.chat = MagicMock(id=-1002321279920)
+    msg.text = "/передумал @Elliot_badMentalHealth 90000000"
+    msg.reply_to_message = None
+
+    with patch("creator._resolve_user_target", new=AsyncMock(return_value=(-1002321279920, 8532826882, "Elliot", "Elliot_badMentalHealth"))), \
+         patch("user_manager.update_user_field", new=AsyncMock()) as mock_field, \
+         patch("user_manager.flush_user_cache_immediately", new=AsyncMock()) as mock_flush:
+
+        await cmd_peredumal(msg)
+        mock_field.assert_awaited_once_with(-1002321279920, 8532826882, "balance", 90000000)
+        mock_flush.assert_awaited_once_with(-1002321279920, 8532826882)
+        assert msg.answer_photo.called or msg.answer.called

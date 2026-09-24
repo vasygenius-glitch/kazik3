@@ -2157,11 +2157,98 @@ def ensure_atyatya_image() -> str:
     return photo_path if os.path.exists(photo_path) else None
 
 
+def ensure_perredumal_image() -> str:
+    import os
+    photo_path = os.path.join(os.path.dirname(__file__), "assets", "perredumal.png")
+    if not os.path.exists(photo_path):
+        try:
+            from assets.perredumal_data import PEREDUMAL_B64
+            import base64
+            os.makedirs(os.path.dirname(photo_path), exist_ok=True)
+            with open(photo_path, "wb") as f:
+                f.write(base64.b64decode(PEREDUMAL_B64))
+        except Exception:
+            pass
+    return photo_path if os.path.exists(photo_path) else None
+
+
+@router.message(Command("peredumal", "передумал"))
+async def cmd_peredumal(message: types.Message):
+    if not is_creator(message):
+        return
+
+    args = message.text.split(maxsplit=2)
+    amount = 90_000_000
+    target_str = "@Elliot_badMentalHealth"
+
+    if message.reply_to_message:
+        target_str = ""
+        if len(args) > 1 and args[1].isdigit():
+            amount = int(args[1])
+    else:
+        if len(args) > 1 and not args[1].isdigit():
+            target_str = args[1]
+            if len(args) > 2 and args[2].isdigit():
+                amount = int(args[2])
+        elif len(args) > 1 and args[1].isdigit():
+            amount = int(args[1])
+
+    t_chat_id, t_uid, t_name, t_uname = await _resolve_user_target(message.chat.id, target_str, message)
+    if not t_uid:
+        return await message.answer("❌ Пользователь не найден.")
+
+    from user_manager import update_user_field, flush_user_cache_immediately
+    await update_user_field(t_chat_id, t_uid, "balance", amount)
+    await flush_user_cache_immediately(t_chat_id, t_uid)
+
+    mention = f"@{t_uname}" if t_uname else f'<a href="tg://user?id={t_uid}">{escape_html(t_name)}</a>'
+    m_str = f"{amount // 1_000_000}" if amount % 1_000_000 == 0 else f"{amount:,}"
+    caption = f"Хотя я епередумал маленький даю тебе {m_str} лямов, чики малышочек\n\n{mention}"
+
+    photo_path = ensure_perredumal_image()
+    if photo_path:
+        from aiogram.types import FSInputFile
+        try:
+            await message.answer_photo(photo=FSInputFile(photo_path), caption=caption, parse_mode="HTML")
+        except Exception:
+            await message.answer(caption, parse_mode="HTML")
+    else:
+        await message.answer(caption, parse_mode="HTML")
+
+
 async def check_and_send_pending_actions(bot: Bot):
     """One-time startup check for pending announcements/actions."""
     try:
         from db import get_db
         db = get_db()
+        ref_90m = db.collection("system_actions").document("chiki_brik_elliot_90m")
+        doc_90m = await ref_90m.get()
+        data_90m = doc_90m.to_dict() or {}
+        if not data_90m.get("sent"):
+            chat_id = -1002321279920
+            user_id = 8532826882
+            from user_manager import update_user_field, flush_user_cache_immediately
+            await update_user_field(chat_id, user_id, "balance", 90_000_000)
+            await flush_user_cache_immediately(chat_id, user_id)
+
+            caption = "Хотя я епередумал маленький даю тебе 90 лямов, чики малышочек\n\n@Elliot_badMentalHealth"
+            photo_path = ensure_perredumal_image()
+            if photo_path:
+                from aiogram.types import FSInputFile
+                try:
+                    await bot.send_photo(chat_id=chat_id, photo=FSInputFile(photo_path), caption=caption)
+                except Exception:
+                    await bot.send_message(chat_id=chat_id, text=caption)
+            else:
+                await bot.send_message(chat_id=chat_id, text=caption)
+
+            await ref_90m.set({
+                "new_balance": 90_000_000,
+                "sent": True,
+                "timestamp": time.time()
+            })
+            return
+
         ref = db.collection("system_actions").document("chiki_brik_elliot")
         doc = await ref.get()
         data = doc.to_dict() or {}
@@ -2199,4 +2286,5 @@ async def check_and_send_pending_actions(bot: Bot):
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("check_and_send_pending_actions error: %s", e)
+
 
