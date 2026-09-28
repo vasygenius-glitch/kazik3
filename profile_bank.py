@@ -1240,6 +1240,34 @@ async def cmd_bank_guide(message: types.Message):
     await message.answer(get_shabby_guide_text(), reply_markup=get_shabby_guide_kb(actual_banker_id))
 
 
+@router.message(or_f(
+    Command("pay_rent", "payrent", "продлить_аренду", "оплатить_аренду", prefix="!/"),
+    F.text.lower().in_({"оплатить аренду", "продлить аренду", "аренда оплатить", "аренда продлить"})
+))
+async def cmd_pay_rent(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    data = await get_user_data(chat_id, user_id)
+    bank_data = await get_bank_info(chat_id, user_id)
+    if not bank_data and data.get('co_banker_of'):
+        bank_data = await get_bank_info(chat_id, data.get('co_banker_of'))
+
+    if not bank_data or (not data.get('is_banker') and not data.get('co_banker_of')):
+        return await message.answer("❌ Эта команда доступна только банкирам.")
+
+    actual_banker_id = bank_data.get('banker_id', user_id)
+    if not is_shabby_bank(bank_data, user_id):
+        return await message.answer("ℹ️ Ваш банк не требует оплаты суточной аренды земли.")
+
+    success, msg, updates = await execute_shabby_repair(chat_id, actual_banker_id, "rent", bank_data)
+    if updates:
+        await create_or_update_bank(chat_id, actual_banker_id, updates)
+        bank_data.update(updates)
+
+    await message.answer(msg, parse_mode="HTML")
+
+
 async def _safe_edit_bank_msg(message: types.Message, text: str, reply_markup=None):
     try:
         if message.photo:

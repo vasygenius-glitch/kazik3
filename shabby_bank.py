@@ -27,6 +27,7 @@ COST_CALM_BABKI = 20_000         # Валидол, барбариски и ча�
 COST_BRIBE_INSPECTOR = 75_000    # Конверт майору Сидоренко (Пожнадзор)
 COST_PAY_RENT = 50_000           # Суточная аренда ларька (24 часа)
 DAILY_RENT_SECONDS = 86_400      # 24 часа
+EARLY_RENT_PAY_SECONDS = 7200     # Досрочное продление аренды (за 2 часа до окончания)
 
 # Интервал между спонтанными бедствиями
 INCIDENT_COOLDOWN = 900          # 15 минут
@@ -250,8 +251,17 @@ def format_shabby_bank_stats(
 
     now = int(time.time())
     rent_until = bank_data.get("rent_paid_until", 0)
-    rent_hours = max(0, int((rent_until - now) // 3600))
-    rent_status = f"🟢 Оплачено (осталось {rent_hours} ч.)" if now < rent_until else "🔴 ПРОСРОЧЕНО (Братки выбивают долг!)"
+    if now >= rent_until:
+        rent_status = "🔴 ПРОСРОЧЕНО (Братки выбивают долг!)"
+    else:
+        diff = rent_until - now
+        hrs = diff // 3600
+        mins = (diff % 3600) // 60
+        if diff <= EARLY_RENT_PAY_SECONDS:
+            time_display = f"{hrs}ч {mins}м" if hrs > 0 else f"{mins}м"
+            rent_status = f"🟡 Скоро истечет! ({time_display} — доступно продление)"
+        else:
+            rent_status = f"🟢 Оплачено (осталось {hrs} ч.)"
 
     power_status = "🟢 220V (Исправен)" if power else "🔴 ОБЕСТОЧЕН (Выбило пробки!)"
 
@@ -267,6 +277,10 @@ def format_shabby_bank_stats(
         warnings.append("🚒 <b>ПОЖНАДЗОР:</b> Пожарный инспектор на пороге с протоколом закрытия!")
     if not power:
         warnings.append("⚡ <b>НЕТ СВЕТА:</b> Компьютеры погасли, операции заморожены!")
+    if now < rent_until and (rent_until - now) <= 3600:
+        mins_left = max(1, int((rent_until - now) // 60))
+        warnings.append(f"📜 <b>АРЕНДА ЗЕМЛИ:</b> До окончания аренды осталось {mins_left} мин.! Продлите аренду заранее.")
+
 
     status_block = "\n".join(warnings) + "\n" if warnings else ""
     inc_block = f"\n💥 <b>ПОСЛЕДНЕЕ ЧП:</b>\n{incident_text}\n" if incident_text else ""
@@ -327,8 +341,11 @@ def get_shabby_bank_kb(banker_id: int, bank_data: Dict[str, Any]):
 
     # Аренда земли
     now = int(time.time())
-    if now >= bank_data.get("rent_paid_until", 0):
+    rent_until = bank_data.get("rent_paid_until", 0)
+    if now >= rent_until:
         builder.button(text=f"📜 Оплатить аренду ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
+    elif (rent_until - now) <= EARLY_RENT_PAY_SECONDS:
+        builder.button(text=f"📜 Продлить аренду ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
 
     # Стандартные банковские вкладки + Гайд
     builder.button(text="🔄 Обновить", callback_data=f"bstat_main_{banker_id}")
@@ -363,7 +380,7 @@ def get_shabby_guide_text() -> str:
         "выписывает крупный штраф. <i>(Давайте вовремя взятку)</i>\n\n"
         "⚡ <b>Электрощиток:</b> Если выбило пробки — компьютеры обесточены, все операции заморожены! "
         "<i>(Жмите «Врубить рубильник»)</i>\n\n"
-        "📜 <b>Аренда земли:</b> Оплачивается раз в 24 часа (50k сыр.). При просрочке накладывается штраф.\n\n"
+        "📜 <b>Аренда земли:</b> Оплачивается раз в 24 часа (50k сыр.). Можно продлевать заранее (за 2 часа до окончания срока во избежание штрафов)!\n\n"
         "👥 <b>Сбор на капремонт:</b> При каждом ремонте с баланса вкладчиков удерживается символический сбор "
         "(до 0.2%), частично покрывающий ваши расходы на хознужды!\n\n"
         "💡 <b>Совет:</b> Заглядывайте в <code>банк стат</code> 2–3 раза в день, поддерживайте сарай в порядке, "
@@ -455,13 +472,20 @@ async def execute_shabby_repair(
     elif action == "rent":
         if capital < COST_PAY_RENT:
             return False, f"❌ Нужно {COST_PAY_RENT:,} сыр. в капитале на оплату аренды ларька!", {}
-        new_capital = capital - COST_PAY_RENT
         now = int(time.time())
-        rent_until = max(now, bank_data.get("rent_paid_until", 0)) + DAILY_RENT_SECONDS
-        return True, "📜 <b>Аренда земли продлена на 24 часа!</b>\nАрендодатель оставил ларек в покое.", {
+        rent_until_curr = bank_data.get("rent_paid_until", 0)
+        if now < rent_until_curr and (rent_until_curr - now) > EARLY_RENT_PAY_SECONDS:
+            hrs_left = (rent_until_curr - now) // 3600
+            return False, f"⏳ Аренда ещё активна (осталось {hrs_left} ч.). Досрочное продление доступно за {EARLY_RENT_PAY_SECONDS//3600} ч. до окончания!", {}
+
+        new_capital = capital - COST_PAY_RENT
+        rent_until = max(now, rent_until_curr) + DAILY_RENT_SECONDS
+        hrs_total = max(0, int((rent_until - now) // 3600))
+        return True, f"📜 <b>Аренда земли продлена на 24 часа!</b>\nТеперь оплачено ещё на {hrs_total} ч. Арендодатель доволен.", {
             "capital": new_capital,
             "rent_paid_until": rent_until
         }
+
 
     elif action == "power":
         # Рубильник на столбе
