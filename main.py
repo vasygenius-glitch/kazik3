@@ -113,6 +113,7 @@ async def create_storage():
 
 
 async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus):
+    from aiogram.types import BotCommand, MenuButtonCommands
     from admin_logs import admin_alert_worker
     from backup_system import backup_database_task
     from chat_stats import flush_stats_task, weekly_reset_task
@@ -125,6 +126,18 @@ async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus
     from v2.games import tables as v2_tables
 
     await v2_links.init(bot)
+    try:
+        # An unbound global web_app menu cannot select the required group.
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+        await bot.set_my_commands([
+            BotCommand(command="v2", description="🍄 Открыть Казик своего чата"),
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="help", description="Все команды"),
+            BotCommand(command="profile", description="Профиль и сыроежки"),
+            BotCommand(command="bonus", description="Забрать бонус"),
+        ])
+    except Exception as exc:
+        logger.warning("Telegram menu setup failed (%s)", type(exc).__name__)
 
     workers = {
         "logs": partial(flush_logs, bot),

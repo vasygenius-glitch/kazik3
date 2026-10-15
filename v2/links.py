@@ -2,21 +2,51 @@
 используется прямая ссылка t.me/<бот>?startapp=… (Main Mini App из BotFather)
 или t.me/<бот>/<short_name>?startapp=…, а без настройки — переход в ЛС с ботом."""
 import os
+import re
+import logging
+from urllib.parse import urlsplit, urlunsplit
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
 from v2.security import chat_token
 
 state = {"username": "", "main_app": False}
+log = logging.getLogger(__name__)
+
+
+def _app_url(value: str) -> str:
+    """Accept copied Markdown links, but never send malformed URLs to Telegram."""
+    value = value.strip()
+    match = re.fullmatch(r"\[[^\]]*\]\((https://[^)\s]+)\)(/[^?\s]*)?", value)
+    if match:
+        value = match.group(1).rstrip("/") + (match.group(2) or "")
+    value = value.strip("<>")
+    try:
+        parts = urlsplit(value)
+        if (parts.scheme != "https" or not parts.hostname or parts.username
+                or parts.password or parts.port not in (None, 443)
+                or re.search(r"[\s\[\]()<>\\]", value)):
+            return ""
+    except ValueError:
+        return ""
+    path = parts.path.rstrip("/")
+    if not path.endswith("/app"):
+        path += "/app"
+    return urlunsplit((parts.scheme, parts.netloc, path + "/", "", ""))
 
 
 def webapp_url() -> str:
-    url = (os.getenv("V2_WEBAPP_URL") or os.getenv("PUBLIC_URL") or "").strip().rstrip("/")
-    if not url and os.getenv("SPACE_HOST"):
-        url = "https://" + os.getenv("SPACE_HOST").strip()
-    if url and not url.endswith("/app"):
-        url += "/app"
-    return url + "/" if url else ""
+    for key in ("V2_WEBAPP_URL", "PUBLIC_URL", "SPACE_HOST"):
+        value = os.getenv(key, "").strip()
+        if not value:
+            continue
+        if key == "SPACE_HOST" and "://" not in value:
+            value = "https://" + value
+        url = _app_url(value)
+        if url:
+            return url
+        log.warning("%s is not a valid HTTPS Mini App URL; trying fallback", key)
+    return ""
 
 
 def short_name() -> str:

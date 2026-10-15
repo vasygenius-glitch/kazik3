@@ -105,10 +105,23 @@ async def cmd_start(message: types.Message):
     full_name = escape_html(message.from_user.full_name)
 
     await get_user_data(chat_id, user_id, full_name)
+    from v2 import links, settings
+    markup = None
+    hint = "\n\n🍄 <code>/v2</code> — открыть новое приложение своего чата."
+    if message.chat.type == "private":
+        from user_manager import load_user_primary_chat
+        primary = await load_user_primary_chat(user_id)
+        if primary and primary < 0 and await settings.enabled(primary):
+            markup = links.webapp_markup(primary)
+        if markup is None:
+            hint = "\n\n🍄 Для Mini App напиши <code>/v2</code> в своей группе."
+    elif await settings.enabled(chat_id):
+        markup = links.open_markup(chat_id)
     await message.answer(
         f"👋 <b>Привет, {full_name}!</b>\n\n"
         "Я бот для экономики и мини-игр! Твой стартовый баланс — <b>500</b> сыроежек.\n\n"
-        "Пиши <code>/help</code> чтобы увидеть список всех команд."
+        "Пиши <code>/help</code> чтобы увидеть список всех команд." + hint,
+        reply_markup=markup,
     )
 
 
@@ -1242,4 +1255,4 @@ async def cmd_rob_bank(message: types.Message):
             f"Сигнализация банка <b>{bank_name}</b> сработала мгновенно! Системы сейфа заблокировали двери, "
             f"а вас окружила вооружённая охрана.\n\n"
             f"💸 Штраф и конфискация: <b>-{formatted_penalty}</b> сыр.{mute_text}"
-        )
+        )
