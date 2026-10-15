@@ -1,1 +1,1 @@
-"""Opt-in economy, independent of legacy routers."""
+"""Казик V2: Telegram Mini App для групп (казино, лобби, топы, экономика)."""

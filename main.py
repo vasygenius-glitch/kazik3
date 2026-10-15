@@ -120,6 +120,11 @@ async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus
     from stocks import update_stocks_task
     from user_manager import flush_user_data_task
     from seasons import season_rotator_task
+    from v2 import links as v2_links
+    from v2 import live as v2_live
+    from v2.games import tables as v2_tables
+
+    await v2_links.init(bot)
 
     workers = {
         "logs": partial(flush_logs, bot),
@@ -130,6 +135,9 @@ async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus
         "admin_alerts": partial(admin_alert_worker, bot),
         "backups": backup_database_task,
         "seasons": partial(season_rotator_task, bot),
+        "v2_tables": v2_tables.loop,
+        "v2_saver": v2_live.saver,
+        "v2_announcer": partial(v2_live.announcer, bot),
     }
     for name, factory in workers.items():
         supervisor.start(name, factory)
@@ -147,6 +155,13 @@ async def on_startup(bot: Bot, supervisor: TaskSupervisor, status: RuntimeStatus
 async def on_shutdown(bot, storage, supervisor, status):
     status.ready = False
     await supervisor.stop()
+    try:
+        from v2 import live as v2_live
+        from v2.games import tables as v2_tables
+        await asyncio.wait_for(v2_tables.shutdown(), timeout=5)
+        await asyncio.wait_for(v2_live.save_all(), timeout=5)
+    except Exception:
+        logger.exception("Не удалось корректно остановить Казик V2")
     from utils import drain_background_tasks
     from user_manager import flush_user_data
     await drain_background_tasks(timeout=5)
@@ -186,7 +201,8 @@ async def main():
         bot = await _create_bot()
         dp.startup.register(partial(on_startup, supervisor=supervisor, status=status))
 
-        runner = web.AppRunner(create_health_app(status))
+        from v2 import api as v2_api
+        runner = web.AppRunner(v2_api.setup(create_health_app(status), bot))
         await runner.setup()
         port = int(os.environ.get("PORT", "7860"))
         host = os.environ.get("WEB_SERVER_HOST", "0.0.0.0")
