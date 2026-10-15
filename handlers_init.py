@@ -1,4 +1,5 @@
 from aiogram import Dispatcher
+from v2.router import router as economy_v2_router
 from crypto import router as crypto_router
 from stocks import router as stocks_router
 from seasons import router as seasons_router
@@ -100,6 +101,8 @@ async def catch_all(message: Message, u_data: dict = None):
                         await update_user_balance(message.chat.id, message.from_user.id, -10)
 
 def register_all_handlers(dp: Dispatcher):
+    # Opt-in economy must run first; disabled chats fall through to legacy.
+    dp.include_router(economy_v2_router)
     # Твоя биржа
     dp.include_router(crypto_router)
     dp.include_router(stocks_router)
