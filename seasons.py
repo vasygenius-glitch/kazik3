@@ -252,6 +252,62 @@ SEASON_TEMPLATES = {
             {"chance": 0.08, "msg": "\n\n🍁 <b>ЗОЛОТОЙ КЛЕНОВЫЙ ЛИСТ:</b> Вы нашли красивый листок и продали коллекционеру за +{value} сыр.", "range": (2000, 8000)},
             {"chance": 0.04, "msg": "\n\n🥧 <b>ТЫКВЕННЫЙ ПИРОГ:</b> Сосед угостил вас домашним пирогом! Получено +{value} сыр.", "range": (10000, 25000)},
         ]
+    },
+    "analog_horror": {
+        "id": "analog_horror",
+        "name": "СЕЗОН 6: АНАЛОГОВЫЙ ХОРРОР (ANALOG HORROR)",
+        "emoji": "📼📺👁️",
+        "description": (
+            "Эфир захвачен таинственным сигналом. По экрану ЭЛТ-телевизоров бегут помехи.\n"
+            "Не доверяйте отражениям, не смотрите в выключенные кинескопы.\n\n"
+            "📼 <b>АНАЛОГОВЫЙ СИГНАЛ:</b> Базовый заработок на работе увеличен на 20%!\n"
+            "🛠 <b>БУСТ К ОБОРУДОВАНИЮ:</b> Аналоговые предметы (Плёнки VHS, Видеомагнитофоны, ЭЛТ-телевизоры, Радиоприёмники, Камеры Hi8, Запретные записи) дают <b>огромный бонус к зарплате на работе /work и преступлениях /crime</b>!\n"
+            "🔍 Во время работы можно найти редкое аналоговое оборудование прямо в инвентарь!\n\n"
+            "📊 <b>ВЛИЯНИЕ НА МИР:</b>\n"
+            "📈 Базовый заработок: +20%\n"
+            "⚡️ Буст от оборудования VHS: до +175% к заработку!\n"
+            "🍀 Фарт в играх: +5% к шансу выигрыша!\n"
+            "📼 Доступны новые команды: /vhs_spin, /vhs_case, /tape"
+        ),
+        "multiplier": 1.20,
+        "game_win_chance_boost": 5,
+        "glitch_chance": 0.08,
+        "strings": {
+            "tax": "📼 Эфирный сбор (Налог)",
+            "balance": "💰 Сыроежки (Баланс)",
+            "shop": "📺 Магазин Аналоговой Электроники",
+            "shop_biz": "📡 Телевизионные станции",
+            "shop_cars": "🚐 Фургоны телерадиовещания",
+            "work": "📻 Перехват аналогового сигнала",
+            "crime": "📼 Взлом телеэфира",
+            "bonus": "📼 Чистая кассета с бонусом",
+            "profile": "ЛИЧНОЕ ДЕЛО ОПЕРАТОРА VHS",
+            "bank_label": "📺 ЭЛТ-сейф",
+            "bank_title": "📼 АНАЛОГОВЫЙ БАНК",
+            "top_winner": "ЛУЧШИЙ ТЕЛЕОПЕРАТОР",
+            "bj_start": "🎰 КАЗИНО 'СТАТИЧЕСКИЙ ШУМ'",
+            "bj_win": "🎉 ЧИСТЫЙ СИГНАЛ!",
+            "roulette_start": "🌀 НАСТРОЙКА КАНАЛОВ...",
+            "job_list": [
+                "оцифровывал старые VHS-кассеты",
+                "настраивал антенну ЭЛТ-телевизора под шум помех",
+                "слушал ночной аварийный эфир по радио",
+                "исследовал заброшенную телевышку",
+                "расшифровывал зашифрованное послание в помехах",
+                "чистил считывающие головки видеомагнитофона"
+            ],
+            "stocks": {
+                "VHS": {"name": "VHS Static Corp (VHS)", "ticker": "VHS", "desc": "Производство магнитных плёнок и аналоговых видеокассет."},
+                "CRT": {"name": "CathodeRay Tech (CRT)", "ticker": "CRT", "desc": "Завод по выпуску кинескопов и ЭЛТ-мониторов."},
+            }
+        },
+        "seasonal_disease": {"id": "vhs_syndrome", "name": "Аналоговый синдром", "desc": "Помехи перед глазами, искажение частот и шепот из динамиков..."},
+        "events": [
+            {"chance": 0.15, "msg": "\n\n📺 <b>ТЕСТ ЭКСТРЕННОГО ОПОВЕЩЕНИЯ:</b> Эфир прерван! Вам перечислено за перехват частоты +{value} сыр.", "range": (5000, 15000)},
+            {"chance": 0.05, "msg": "\n\n👤 <b>ВСТРЕЧА С АЛЬТЕРНАТИВОМ:</b> Вы услышали свой голос из темноты... Потеряно -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
+            {"chance": 0.08, "msg": "\n\n📻 <b>РАСШИФРОВКА СИГНАЛА:</b> На частоте 462 МГц найдена скрытая запись! Награда: +{value} сыр.", "range": (2000, 8000)},
+            {"chance": 0.04, "msg": "\n\n📼 <b>РЕДКАЯ БОБИНА ПЛЁНКИ:</b> Вы продали чистую японскую кассету коллекционеру за +{value} сыр.", "range": (10000, 25000)},
+        ]
     }
 }
 
@@ -451,7 +507,7 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_
     4. Рассылает торжественный анонс во все чаты белого списка
     """
     if wipe_banks is None:
-        wipe_banks = False if new_season_id == "cozy_autumn" else True
+        wipe_banks = False if new_season_id in ("cozy_autumn", "analog_horror") else True
 
     async with _season_transition_lock:
         if new_season_id not in SEASON_TEMPLATES:
@@ -501,6 +557,27 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_
                 f"🍀 <b>+10% к шансу выигрыша</b> во всех играх казино!\n"
                 f"☕ <b>+25%</b> к ежедневному бонусу /bonus\n"
                 f"🧣 Доступны новые команды: <code>/autumn_spin</code>, <code>/cozy_case</code>, <code>/tea</code>\n\n"
+                f"👉 Подробнее: <code>/season</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+        elif new_season_id == "analog_horror":
+            wipe_info = (
+                "🧹 <b>СЕЗОННЫЙ СБРОС (СРЕДНИЙ ВАЙП):</b>\n"
+                "• Наличные балансы сброшены до <b>500 сыр.</b>\n"
+                "• Инвентарь очищен (🖤🐇 <b>Коллекционные Дикторы сохранены!</b>)\n"
+                "• 🏦 <b>Банки, вклады и счета НЕ тронуты и работают в обычном режиме!</b>\n\n"
+            ) if do_wipe else "✨ <b>Балансы и имущество игроков сохранены!</b>\n\n"
+            announce_text = (
+                f"🏆 <b>НОВЫЙ СЕЗОН ОБЪЯВЛЕН: {new_cfg['name']}!</b> 🏆\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"📼📺👁️ <b>АНАЛОГОВЫЙ ХОРРОР НАСТАЛ!</b> 📼📺👁️\n\n"
+                f"{wipe_info}"
+                f"📻 <b>ОСОБЕННОСТИ И БОНУСЫ СЕЗОНА:</b>\n"
+                f"📈 <b>+20%</b> к базовому заработку на работе /work\n"
+                f"📼 <b>БУСТ К ПРЕДМЕТАМ:</b> Предметы аналогового оборудования (Плёнки VHS, Видеомагнитофоны, ЭЛТ-телевизоры, Радиоприёмники, Камеры Hi8, Запретные записи) дают <b>огромный процентный бонус к зарплате на /work и /crime</b>!\n"
+                f"🔍 Шанс найти редкое аналоговое оборудование во время работы!\n"
+                f"🍀 <b>+5% к шансу выигрыша</b> во всех играх казино!\n"
+                f"📼 Доступны новые команды: <code>/vhs_spin</code>, <code>/vhs_case</code>, <code>/tape</code>\n\n"
                 f"👉 Подробнее: <code>/season</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
             )
@@ -584,14 +661,17 @@ async def season_rotator_task(bot: Bot):
                 if current_id == "tayniy_baniy":
                     logger.info("⏳ Время сезона '%s' истекло. Запуск перехода на Warhammer...", current_id)
                     await perform_season_transition(bot, new_season_id="warhammer", do_wipe=True)
-                elif current_id != "cozy_autumn":
-                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Cozy Autumn...",
+                elif current_id == "warhammer":
+                    logger.info("⏳ Время сезона '%s' истекло. Запуск перехода на Cozy Autumn...", current_id)
+                    await perform_season_transition(bot, new_season_id="cozy_autumn", do_wipe=True, wipe_banks=False)
+                elif current_id != "analog_horror":
+                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Analog Horror...",
                                 current_id, now, end_time)
-                    await perform_season_transition(bot, new_season_id="cozy_autumn", do_wipe=True)
+                    await perform_season_transition(bot, new_season_id="analog_horror", do_wipe=True, wipe_banks=False)
                 else:
-                    if cfg.get("last_wiped_season") != "cozy_autumn":
-                        logger.info("⏳ Сезон cozy_autumn активен, но вайп еще не был зафиксирован. Запуск вайпа...")
-                        await perform_season_transition(bot, new_season_id="cozy_autumn", do_wipe=True)
+                    if cfg.get("last_wiped_season") != "analog_horror":
+                        logger.info("⏳ Сезон analog_horror активен, но вайп еще не был зафиксирован. Запуск вайпа...")
+                        await perform_season_transition(bot, new_season_id="analog_horror", do_wipe=True, wipe_banks=False)
         except asyncio.CancelledError:
             logger.info("Фоновый воркер ротации сезонов остановлен.")
             break
@@ -661,8 +741,11 @@ async def cmd_force_season_rotate(message: types.Message):
     """Принудительная ротация на сезон Cozy Autumn со средним вайпом (только для создателя)."""
     if message.from_user.id != CREATOR_ID:
         return
-    res = await perform_season_transition(message.bot, new_season_id="cozy_autumn", do_wipe=True, wipe_banks=False)
-    await message.answer(f"✅ Принудительная ротация на Cozy Autumn выполнена: {res}")
+    args = message.text.split()
+    target_season = args[1].lower() if len(args) > 1 and args[1].lower() in SEASON_TEMPLATES else "analog_horror"
+    wipe_banks = False if target_season in ("cozy_autumn", "analog_horror") else True
+    res = await perform_season_transition(message.bot, new_season_id=target_season, do_wipe=True, wipe_banks=wipe_banks)
+    await message.answer(f"✅ Принудительная ротация на {target_season} выполнена: {res}")
 
 @router.message(Command("hard_wipe"))
 async def cmd_hard_wipe(message: types.Message):
@@ -699,7 +782,7 @@ async def cmd_set_season(message: types.Message):
         do_wipe = True
 
     if do_wipe:
-        wipe_banks = False if season_id == "cozy_autumn" else True
+        wipe_banks = False if season_id in ("cozy_autumn", "analog_horror") else True
         res = await perform_season_transition(message.bot, new_season_id=season_id, do_wipe=True, wipe_banks=wipe_banks)
         return await message.answer(f"✅ <b>Сезон '{season_id}' активирован с вайпом (сохранение банков: {not wipe_banks})!</b>\nРезультат: {res}")
     
@@ -744,6 +827,15 @@ async def get_season_string(key: str, default: str) -> str:
     cfg = await get_season_config()
     if not cfg.get("active"): return default
     return cfg.get("strings", {}).get(key, default)
+
+ANALOG_WORK_BOOSTS = {
+    "vhs_tape": {"boost": 0.15, "name": "Плёнка VHS"},
+    "vhs_player": {"boost": 0.20, "name": "Видеомагнитофон Panasonic"},
+    "crt_tv": {"boost": 0.25, "name": "ЭЛТ-телевизор «Рубин»"},
+    "anomaly_radio": {"boost": 0.30, "name": "Радиоприёмник аномалий"},
+    "hi8_camera": {"boost": 0.35, "name": "Камера Hi8"},
+    "forbidden_tape": {"boost": 0.50, "name": "Запись «НЕ СМОТРИ»"},
+}
 
 async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tuple[int, str]:
     cfg = await get_season_config()
@@ -819,6 +911,54 @@ async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tup
             success = await add_item_to_inventory(chat_id, user_id, chosen["id"])
             if success:
                 msg += f"\n\n🖤🐇 <b>НАХОДКА!</b> Вы нашли: <code>{chosen['name']}</code> (черный кролик 🖤🐇, {chosen['color']} {chosen['rarity']})! Он добавлен в ваш /inventory."
+
+    # 6. Логика аналогового хоррора (Сезон 6): буст от предметов и дроп кассет/оборудования
+    if cfg.get("id") == "analog_horror":
+        u_data = await get_user_data(chat_id, user_id)
+        inv = (u_data.get("inventory") or {}) if isinstance(u_data, dict) else {}
+
+        # Подсчёт буста от оборудования
+        total_item_boost = 0.0
+        boosted_items = []
+        for it_id, it_info in ANALOG_WORK_BOOSTS.items():
+            if inv.get(it_id, 0) > 0:
+                total_item_boost += it_info["boost"]
+                boosted_items.append(f"{it_info['name']} (+{int(it_info['boost'] * 100)}%)")
+
+        if total_item_boost > 0:
+            extra_cash = int(base_value * total_item_boost)
+            final_value += extra_cash
+            items_str = ", ".join(boosted_items)
+            boost_pct = int(round(total_item_boost * 100))
+            msg += f"\n📼 <b>АНАЛОГОВЫЙ БУСТ ОБОРУДОВАНИЯ (+{boost_pct}%):</b> +<b>{extra_cash}</b> сыр. от ваших предметов ({items_str})!"
+
+        # 10% шанс найти аналоговое оборудование/кассету
+        if random.random() < 0.10:
+            analog_drops = [
+                {"id": "vhs_tape", "name": "📼 Плёнка с помехами (VHS)", "weight": 40.0},
+                {"id": "vhs_player", "name": "📼 Видеомагнитофон Panasonic", "weight": 25.0},
+                {"id": "crt_tv", "name": "📺 ЭЛТ-телевизор «Рубин-714»", "weight": 18.0},
+                {"id": "anomaly_radio", "name": "📻 Радиоприёмник аномалий", "weight": 10.0},
+                {"id": "hi8_camera", "name": "📹 Плёночная камера Hi8", "weight": 5.0},
+                {"id": "forbidden_tape", "name": "📼 Запретная запись «НЕ СМОТРИ»", "weight": 2.0},
+            ]
+            chosen_drop = random.choices(analog_drops, weights=[d["weight"] for d in analog_drops], k=1)[0]
+            from user_manager import add_item_to_inventory
+            success = await add_item_to_inventory(chat_id, user_id, chosen_drop["id"])
+            if success:
+                msg += f"\n\n📼 <b>АНАЛОГОВАЯ НАХОДКА!</b> Среди статического шума вы нашли: <code>{chosen_drop['name']}</code>! Он добавлен в ваш /inventory и усиливает доход."
+
+        # 4% шанс заразиться аналоговым синдромом
+        if random.random() < 0.04:
+            from diseases import get_active_diseases
+            active_d = await get_active_diseases(chat_id, user_id, u_data=u_data)
+            if "vhs_syndrome" not in active_d:
+                curr_dis = u_data.get('diseases') or {}
+                if not isinstance(curr_dis, dict):
+                    curr_dis = {}
+                curr_dis["vhs_syndrome"] = time.time() + 1800  # 30 минут
+                await update_user_field(chat_id, user_id, 'diseases', curr_dis)
+                msg += "\n\n⚠️ <b>АНАЛОГОВЫЙ СИНДРОМ:</b> В ушах зазвенело, а перед глазами поплыли помехи... Вы заразились Аналоговым синдромом! Используйте <code>/tape</code> или аптечку, чтобы снять эффект."
 
     return final_value, await get_glitch_text(msg)
 
@@ -1239,6 +1379,292 @@ async def cmd_tea(message: types.Message):
         f"Вы завернулись в тёплый плед и налили:\n"
         f"🍵 <b>{name}</b>\n\n"
         f"На душе стало тепло и спокойно!\n"
+        f"💰 Получено: <b>+{reward}</b> сыроежек!{cure_note}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+# --- НОВЫЕ АНАЛОГОВЫЕ КОМАНДЫ (Сезон 6: Analog Horror / Аналоговый Хоррор) ---
+
+@router.message(Command("vhs_spin", "tv_spin", "static_spin"))
+async def cmd_vhs_spin(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "analog_horror":
+        return await message.answer("📼 Сезон Аналогового Хоррора сейчас не активен. Эта команда доступна только в этом сезоне!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/vhs_spin [ставка]</code>")
+
+    try:
+        bet = int(args[1])
+        if bet < 100:
+            return await message.answer("Минимальная ставка — 100 сыроежек.")
+    except ValueError:
+        return await message.answer("Ставка должна быть числом.")
+
+    if u_data.get('balance', 0) - bet < -5000:
+        return await message.answer("💸 Недостаточно средств! У вас лимит кредита.")
+
+    await update_user_balance(chat_id, user_id, -bet, action="VHS Spin Bet")
+
+    msg = await message.answer("📺 <i>Настраиваем частоту кинескопа... сквозь белый шум...</i> 📼")
+    await asyncio.sleep(1.0)
+
+    rnd = random.random()
+    if rnd < 0.40:
+        profit = 0
+        result_msg = "📺 <b>Белый шум:</b> Сплошные помехи и шипение динамиков. Сигнал потерян, ставка сгорела. (0x)"
+    elif rnd < 0.70:
+        profit = int(bet * 0.5)
+        result_msg = f"📺 <b>Испытательная таблица:</b> На экране настроечная таблица УИТ. Возвращено <b>{profit}</b> сыроежек. (0.5x)"
+    elif rnd < 0.85:
+        profit = int(bet * 1.5)
+        result_msg = f"📻 <b>Ночной радиоэфир:</b> Поймана скрытая волна! Выигрыш: <b>{profit}</b> сыроежек! (1.5x)"
+    elif rnd < 0.95:
+        profit = int(bet * 2.5)
+        result_msg = f"📼 <b>Засекреченный репортаж:</b> Кадры аномальной активности! Выигрыш: <b>{profit}</b> сыроежек! (2.5x)"
+    else:
+        profit = int(bet * 5.0)
+        result_msg = f"📺👁️ <b>ИСТИННЫЙ АНАЛОГОВЫЙ СИГНАЛ! СУПЕР-ДЖЕКПОТ!</b> Экран вспыхнул ослепительным светом! Выигрыш: <b>{profit}</b> сыроежек! (5.0x)"
+
+    if profit > 0:
+        await update_user_balance(chat_id, user_id, profit, action="VHS Spin Win")
+
+    await msg.edit_text(
+        f"📼 <b>АНАЛОГОВЫЙ ТЕЛЕСПИН:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Ставка: <b>{bet}</b> сыроежек\n"
+        f"✨ {result_msg}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+VHS_CASE_PRICE = 15000
+
+VHS_ITEMS_DROP = [
+    {"id": "vhs_tape", "name": "📼 Плёнка с помехами (VHS)", "rarity": "Обычный", "color": "⚪", "weight": 35.0, "min_cash": 3000, "max_cash": 7000},
+    {"id": "vhs_player", "name": "📼 Видеомагнитофон Panasonic", "rarity": "Необычный", "color": "🟢", "weight": 26.0, "min_cash": 6000, "max_cash": 12000},
+    {"id": "crt_tv", "name": "📺 ЭЛТ-телевизор «Рубин-714»", "rarity": "Редкий", "color": "🔵", "weight": 20.0, "min_cash": 12000, "max_cash": 20000},
+    {"id": "anomaly_radio", "name": "📻 Радиоприёмник аномалий", "rarity": "Эпический", "color": "🟣", "weight": 12.0, "min_cash": 20000, "max_cash": 35000},
+    {"id": "hi8_camera", "name": "📹 Плёночная камера Hi8", "rarity": "Легендарный", "color": "🟡", "weight": 5.5, "min_cash": 40000, "max_cash": 70000},
+    {"id": "forbidden_tape", "name": "📼 Запретная запись «НЕ СМОТРИ»", "rarity": "Мифический", "color": "🔴", "weight": 1.5, "min_cash": 80000, "max_cash": 150000},
+]
+
+async def execute_batch_vhs_case(chat_id: int, user_id: int, count: int, msg: types.Message = None):
+    u_data = await get_user_data(chat_id, user_id)
+    balance = u_data.get('balance', 0)
+    max_affordable = max(0, balance // VHS_CASE_PRICE)
+
+    if max_affordable < 1:
+        text = f"💸 Аналоговый кейс стоит <b>{VHS_CASE_PRICE}</b> сыроежек. У вас недостаточно средств."
+        if msg:
+            return await msg.edit_text(text)
+        return
+
+    count = max(1, min(count, max_affordable))
+    total_cost = count * VHS_CASE_PRICE
+
+    await update_user_balance(chat_id, user_id, -total_cost, action=f"VHS Case Open {count}x")
+
+    weights = [item["weight"] for item in VHS_ITEMS_DROP]
+    from user_manager import add_item_to_inventory
+
+    won_items: dict[str, int] = {}
+    total_cash_reward = 0
+
+    for _ in range(count):
+        chosen = random.choices(VHS_ITEMS_DROP, weights=weights, k=1)[0]
+        it_id = chosen["id"]
+        won_items[it_id] = won_items.get(it_id, 0) + 1
+        cash = random.randint(chosen["min_cash"], chosen["max_cash"])
+        total_cash_reward += cash
+
+    for it_id, qty in won_items.items():
+        await add_item_to_inventory(chat_id, user_id, it_id, count=qty)
+
+    if total_cash_reward > 0:
+        await update_user_balance(chat_id, user_id, total_cash_reward, action="VHS Case Cash")
+
+    formatted_count = f"{count:_}".replace("_", " ")
+    formatted_cost = f"{total_cost:_}".replace("_", " ")
+    formatted_cash = f"{total_cash_reward:_}".replace("_", " ")
+
+    res_lines = [
+        f"📼 <b>ОТКРЫТИЕ АНАЛОГОВЫХ КЕЙСОВ ({formatted_count} шт):</b>",
+        f"━━━━━━━━━━━━━━━━━━━━",
+        f"Потрачено: <b>{formatted_cost}</b> сыроежек",
+        f"💰 Найдено заначек внутри: <b>+{formatted_cash}</b> сыроежек!\n",
+        f"📹 <b>Полученное оборудование (даёт буст к /work!):</b>"
+    ]
+
+    for it_id, qty in won_items.items():
+        obj = next((item for item in VHS_ITEMS_DROP if item["id"] == it_id), None)
+        it_name = obj["name"] if obj else it_id
+        it_rarity = obj["rarity"] if obj else ""
+        it_color = obj["color"] if obj else "⚪"
+        formatted_qty = f"{qty:_}".replace("_", " ")
+        res_lines.append(f"▪️ {it_color} <b>{it_name}</b> — <b>{formatted_qty} шт.</b> ({it_rarity})")
+
+    res_lines.append("\n✨ Предметы добавлены в ваш /inventory!")
+    res_lines.append("━━━━━━━━━━━━━━━━━━━━")
+
+    out_text = "\n".join(res_lines)
+    if msg:
+        try:
+            await msg.edit_text(out_text)
+        except Exception:
+            await msg.answer(out_text)
+
+
+@router.message(Command("vhs_case", "analog_case", "tape_case"))
+async def cmd_vhs_case(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "analog_horror":
+        return await message.answer("📼 Сезон Аналогового Хоррора сейчас не активен. Эта команда доступна только в этом сезоне!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    balance = u_data.get('balance', 0)
+    max_cases = max(0, balance // VHS_CASE_PRICE)
+
+    if max_cases < 1:
+        return await message.answer(f"💸 Аналоговый кейс стоит <b>{VHS_CASE_PRICE}</b> сыроежек. У вас недостаточно средств.")
+
+    raw_text = message.text if isinstance(message.text, str) else "/vhs_case"
+    args = raw_text.split()
+
+    if len(args) >= 2:
+        arg_val = args[1].lower()
+        if arg_val in ("all", "все", "макс", "max"):
+            count = max_cases
+        else:
+            try:
+                count = int(arg_val)
+            except ValueError:
+                count = 1
+        msg = await message.answer(f"📼 <i>Открываем {count} аналоговых кейсов...</i> 📺")
+        return await execute_batch_vhs_case(chat_id, user_id, count, msg)
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+
+    builder.button(text="🎁 1 кейс (15k)", callback_data=f"vhs_case_do_1_{user_id}")
+    if max_cases >= 5:
+        builder.button(text="🎁 5 кейсов (75k)", callback_data=f"vhs_case_do_5_{user_id}")
+    if max_cases >= 50:
+        builder.button(text="🎁 50 кейсов (750k)", callback_data=f"vhs_case_do_50_{user_id}")
+
+    builder.button(text=f"🔥 НА ВСЕ ДЕНЬГИ ({max_cases} шт)", callback_data=f"vhs_case_do_all_{user_id}")
+    builder.adjust(1)
+
+    text = (
+        f"📼 <b>ОТКРЫТИЕ АНАЛОГОВЫХ КЕЙСОВ ОБОРУДОВАНИЯ</b> 📼\n\n"
+        f"Стоимость 1 кейса: <b>{VHS_CASE_PRICE}</b> сыроежек.\n"
+        f"Ваш баланс: <b>{balance}</b> сыр. (Доступно: <b>{max_cases} шт.</b>)\n\n"
+        f"<i>Внутри: кассеты VHS, видеомагнитофоны, ЭЛТ-телевизоры, камеры Hi8 и запретные записи, дающие постоянный буст к заработку на /work!</i>\n\n"
+        f"Выберите количество кейсов:"
+    )
+    await message.answer(text, reply_markup=builder.as_markup())
+
+
+@router.callback_query(F.data.startswith("vhs_case_do_"))
+async def callback_vhs_case_do(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    # vhs_case_do_{qty_or_all}_{owner_id}
+    if len(parts) >= 5:
+        target_qty_str = parts[3]
+        try:
+            owner_id = int(parts[4])
+        except ValueError:
+            owner_id = None
+    else:
+        target_qty_str = parts[-1]
+        owner_id = None
+
+    if owner_id and callback.from_user.id != owner_id:
+        return await callback.answer("❌ Это меню кейсов другого игрока! Напишите /vhs_case для вызова своего меню.", show_alert=True)
+
+    chat_id = callback.message.chat.id
+    user_id = callback.from_user.id
+
+    u_data = await get_user_data(chat_id, user_id)
+    balance = u_data.get('balance', 0)
+    max_cases = max(0, balance // VHS_CASE_PRICE)
+
+    if target_qty_str == "all":
+        qty = max_cases
+    else:
+        try:
+            qty = int(target_qty_str)
+        except ValueError:
+            qty = 1
+
+    if max_cases < 1 or qty < 1:
+        return await callback.answer("💸 Недостаточно средств для открытия кейсов!", show_alert=True)
+
+    qty = min(qty, max_cases)
+    await callback.answer(f"Открываем {qty} кейсов...")
+    await execute_batch_vhs_case(chat_id, user_id, qty, callback.message)
+
+
+@router.message(Command("tape", "кассета", "пленка", "плёнка", "vhs", "watch_tape"))
+async def cmd_tape(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "analog_horror":
+        return await message.answer("📼 Сезон Аналогового Хоррора сейчас не активен. Просматривать плёнки можно только в этом сезоне!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    COOLDOWN = 7200  # 2 часа
+    last_tape = u_data.get('last_tape_time', 0)
+    now = time.time()
+    if now - last_tape < COOLDOWN:
+        remain = int(COOLDOWN - (now - last_tape))
+        mins, secs = divmod(remain, 60)
+        hours, mins = divmod(mins, 60)
+        return await message.answer(f"📼 Видеомагнитофон перегрелся! До следующего просмотра кассеты: <b>{hours}ч {mins}м {secs}с</b>.")
+
+    tape_titles = [
+        ("«ОБНАРУЖЕНИЕ АНОМАЛИЙ НА ЧАСТОТЕ 462 МГц» 📡", random.randint(4000, 7000)),
+        ("«ИНСТРУКЦИЯ ПО ВЫЖИВАНИЮ: ПРИЗНАКИ АЛЬТЕРНАТИВОВ» 👤", random.randint(5000, 8500)),
+        ("«НОЧНОЙ АРХИВ ТЕЛЕКАНАЛА: СЕКРЕТНЫЙ ЭФИР 1989» 📺", random.randint(4500, 7500)),
+        ("«УЧЕБНАЯ ЗАПИСЬ: КАЛИБРОВКА КИНЕСКОПА В УСЛОВИЯХ ИСКАЖЕНИЙ» 🛠", random.randint(4000, 8000)),
+        ("«НЕИЗВЕСТНЫЙ СИГНАЛ: СЪЁМКА В ЛЕСНОМ МАССИВЕ» 📹", random.randint(5500, 9000)),
+    ]
+    title, reward = random.choice(tape_titles)
+
+    await update_user_balance(chat_id, user_id, reward, action="Analog Horror Tape Watch")
+    await update_user_field(chat_id, user_id, 'last_tape_time', now)
+
+    from diseases import remove_disease
+    removed = await remove_disease(chat_id, user_id, "vhs_syndrome")
+    cure_note = "\n✨ <i>Просмотр инструктажа полностью снял ваш Аналоговый синдром!</i>" if removed else ""
+
+    await message.answer(
+        f"📼 <b>ПРОСМОТР АНАЛОГОВОЙ ЗАПИСИ:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Вы вставили кассету в видеомагнитофон...\n"
+        f"Сквозь рябь помех воспроизводится:\n"
+        f"📽️ <b>{title}</b>\n\n"
+        f"Вы зафиксировали данные и получили выплату от исследователей аномалий!\n"
         f"💰 Получено: <b>+{reward}</b> сыроежек!{cure_note}\n"
         f"━━━━━━━━━━━━━━━━━━━━"
     )

@@ -122,6 +122,14 @@ ITEMS: dict[str, dict] = {
     "pumpkin_pie":     {"name": "🥧 Домашний тыквенный пирог", "price": 10_000, "cat": "cozy", "action": "other", "desc": "Свежеиспечённый с корицей и мускатом."},
     "cozy_plaid":      {"name": "🛋️ Шерстяной клетчатый плед", "price": 50_000, "cat": "cozy", "action": "other", "desc": "Самый тёплый плед. Защищает от любой хандры."},
 
+    # АНАЛОГОВЫЙ ХОРРОР (СЕЗОН 6) - ОБОРУДОВАНИЕ И ЗАПИСИ ДЛЯ БУСТА ВОРКА
+    "vhs_tape":        {"name": "📼 Плёнка с помехами (VHS)", "price": 6_000, "cat": "analog", "action": "other", "desc": "Магнитная лента со странной записью. Дает +15% к заработку на /work и /crime!"},
+    "vhs_player":      {"name": "📼 Видеомагнитофон Panasonic", "price": 18_000, "cat": "analog", "action": "other", "desc": "Японский 4-головочный видик. Дает +20% к заработку на /work и /crime!"},
+    "crt_tv":          {"name": "📺 ЭЛТ-телевизор «Рубин-714»", "price": 35_000, "cat": "analog", "action": "other", "desc": "Тяжёлый лампово-полупроводниковый кинескоп. Дает +25% к заработку на /work и /crime!"},
+    "anomaly_radio":   {"name": "📻 Радиоприёмник аномалий", "price": 60_000, "cat": "analog", "action": "other", "desc": "Ловит частоты вне гражданского диапазона. Дает +30% к заработку на /work и /crime!"},
+    "hi8_camera":      {"name": "📹 Плёночная камера Hi8", "price": 100_000, "cat": "analog", "action": "other", "desc": "Портативная аналоговая камера с ночным режимом. Дает +35% к заработку на /work и /crime!"},
+    "forbidden_tape":  {"name": "📼 Запретная запись «НЕ СМОТРИ»", "price": 250_000, "cat": "analog", "action": "other", "desc": "Запись неизвестного происхождения. Дает +50% к заработку на /work и /crime!"},
+
     # ДИКТОРЫ ТАЙНИЙ БАНИЙ (СЕЗОН 3) - 70 РАНГОВ РЕДКОСТИ (ВСЕ ЦЕНЫ СБРОШЕНЫ В 0)
     "dictor_common":            {"name": "обычный диктор тайний баний", "price": 0, "cat": "tayniy_baniy", "action": "other", "desc": "Обычный диктор тайний баний (черный кролик 🖤🐇)."},
     "dictor_simple":            {"name": "простой диктор тайний баний", "price": 0, "cat": "tayniy_baniy", "action": "other", "desc": "Простой диктор тайний баний (черный кролик 🖤🐇)."},
@@ -195,7 +203,7 @@ ITEMS: dict[str, dict] = {
     "dictor_antigravity":        {"name": "антигравитационный диктор тайний баний", "price": 0, "cat": "tayniy_baniy", "action": "other", "desc": "Антигравитационный диктор тайний баний (черный кролик 🖤🐇)."},
 }
 
-CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное", "prestige": "🌟 Престиж", "tayniy_baniy": "🐰 Дикторы"}
+CATEGORY_NAMES = {"biz": "Бизнесы", "cars": "Машины", "other": "Разное", "prestige": "🌟 Престиж", "tayniy_baniy": "🐰 Дикторы", "analog": "📼 Аналоговый хоррор"}
 CONFIRM_THRESHOLD = 1_000_000  # цена, выше которой требуется подтверждение
 SELL_RATIO = 0.75
 CACHE_TTL = 60
@@ -207,9 +215,9 @@ ITEM_KEYS: list[str] = list(ITEMS.keys())
 ITEM_INDEX_MAP: dict[str, int] = {k: i for i, k in enumerate(ITEM_KEYS)}
 INDEX_ITEM_MAP: dict[int, str] = {i: k for i, k in enumerate(ITEM_KEYS)}
 
-CAT_KEYS: list[str] = ["biz", "cars", "prestige", "other", "tayniy_baniy"]
-CAT_INDEX_MAP: dict[str, int] = {"biz": 0, "cars": 1, "prestige": 2, "other": 3, "tayniy_baniy": 4}
-INDEX_CAT_MAP: dict[int, str] = {0: "biz", 1: "cars", 2: "prestige", 3: "other", 4: "tayniy_baniy"}
+CAT_KEYS: list[str] = ["biz", "cars", "prestige", "other", "tayniy_baniy", "analog"]
+CAT_INDEX_MAP: dict[str, int] = {"biz": 0, "cars": 1, "prestige": 2, "other": 3, "tayniy_baniy": 4, "analog": 5}
+INDEX_CAT_MAP: dict[int, str] = {0: "biz", 1: "cars", 2: "prestige", 3: "other", 4: "tayniy_baniy", 5: "analog"}
 
 DICTORS_ORDER: list[str] = [k for k in ITEM_KEYS if k.startswith("dictor_")]
 
@@ -292,6 +300,14 @@ ITEM_ALIASES: dict[str, str] = {
     "гравитационный дредноут": "prestige_dreadnought", "prestige_dreadnought": "prestige_dreadnought",
     "монолит": "prestige_monolith", "вселенский монолит": "prestige_monolith", "prestige_monolith": "prestige_monolith",
     "ковчег вечности": "prestige_ark", "prestige_ark": "prestige_ark",
+
+    # Аналоговый хоррор
+    "кассета": "vhs_tape", "пленка": "vhs_tape", "плёнка": "vhs_tape", "vhs": "vhs_tape", "tape": "vhs_tape", "vhs_tape": "vhs_tape",
+    "видик": "vhs_player", "видак": "vhs_player", "видеомагнитофон": "vhs_player", "магнитофон": "vhs_player", "vhs_player": "vhs_player",
+    "телик": "crt_tv", "телевизор": "crt_tv", "рубин": "crt_tv", "crt": "crt_tv", "crt_tv": "crt_tv",
+    "радио": "anomaly_radio", "радиоприемник": "anomaly_radio", "радиоприёмник": "anomaly_radio", "radio": "anomaly_radio", "anomaly_radio": "anomaly_radio",
+    "камера": "hi8_camera", "hi8": "hi8_camera", "hi8_camera": "hi8_camera",
+    "запретная_кассета": "forbidden_tape", "не_смотри": "forbidden_tape", "forbidden_tape": "forbidden_tape",
 
     # Дикторы и спец. алиасы
     "антигравити": "dictor_antigravity", "антигравитация": "dictor_antigravity", "antigravity": "dictor_antigravity",
@@ -477,10 +493,11 @@ async def get_main_shop_kb(prestige_level: int = 0, user_id: Optional[int] = Non
     builder.button(text=_shop_kb_cache.biz, callback_data=f"shop_cat_biz{uid_suffix}")
     builder.button(text=_shop_kb_cache.cars, callback_data=f"shop_cat_cars{uid_suffix}")
     builder.button(text="💎 Прочее", callback_data=f"shop_cat_other{uid_suffix}")
+    builder.button(text="📼 Хоррор VHS", callback_data=f"shop_cat_analog{uid_suffix}")
     if prestige_level >= 1:
         builder.button(text="🌟 Магазин Престижа", callback_data=f"shop_cat_prestige{uid_suffix}")
     builder.button(text="🎒 Мой инвентарь", callback_data=f"shop_to_inv{uid_suffix}")
-    builder.adjust(2, 2 if prestige_level < 1 else 3)
+    builder.adjust(2, 2, 2 if prestige_level >= 1 else 1)
     return builder.as_markup()
 
 

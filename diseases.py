@@ -29,7 +29,9 @@ DISEASES = {
     "tripper": {"name": "Триппер", "desc": "Временный запрет на активацию любых промокодов."},
     "balanoposthitis": {"name": "Баланопостит", "desc": "Максимальная ставка во всех рулетках и слотах урезается до 1000 сыроежек."},
     "aids": {"name": "СПИД", "desc": "Полная блокировка всех команд экономики и игр. Твой баланс заморожен, ты в реанимации."},
-    "reality_flu": {"name": "Грипп Реальности", "desc": "Ваше тело мерцает. 20% шанс, что сообщение в чате превратится в глитч."}
+    "reality_flu": {"name": "Грипп Реальности", "desc": "Ваше тело мерцает. 20% шанс, что сообщение в чате превратится в глитч."},
+    "autumn_blues": {"name": "Осенняя Хандра", "desc": "Хочется спать и пить какао. Вы иногда тихо вздыхаете в чат..."},
+    "vhs_syndrome": {"name": "Аналоговый синдром", "desc": "Помехи перед глазами, искажение частот и шепот из динамиков..."}
 }
 
 from utils_pkg.cache_manager import global_cache
@@ -143,6 +145,17 @@ async def get_active_diseases(chat_id: int, user_id: int, u_data: dict = None) -
         await update_user_field(chat_id, user_id, 'diseases', diseases)
 
     return active
+
+async def remove_disease(chat_id: int, user_id: int, disease_id: str) -> bool:
+    """Удаляет конкретную болезнь у пользователя."""
+    from user_manager import get_user_data, update_user_field
+    data = await get_user_data(chat_id, user_id)
+    diseases = data.get('diseases')
+    if not isinstance(diseases, dict) or disease_id not in diseases:
+        return False
+    del diseases[disease_id]
+    await update_user_field(chat_id, user_id, 'diseases', diseases)
+    return True
 
 @router.message(Command("зппп"))
 async def cmd_std(message: types.Message):
