@@ -309,7 +309,7 @@ async def test_vhs_case_execution(monkeypatch):
     await execute_batch_vhs_case(111, 222, count=2, msg=status_msg)
 
     # Cost: 2 * 15000 = 30000. Balance was 50000 -> + cash drops
-    assert user_state["balance"] > 20000
+    assert user_state["balance"] > 10000
     # Two items awarded to inventory
     total_items = sum(user_state["inventory"].values())
     assert total_items == 2

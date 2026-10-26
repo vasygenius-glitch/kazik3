@@ -935,12 +935,12 @@ async def apply_season_logic(chat_id: int, user_id: int, base_value: int) -> tup
         # 10% шанс найти аналоговое оборудование/кассету
         if random.random() < 0.10:
             analog_drops = [
-                {"id": "vhs_tape", "name": "📼 Плёнка с помехами (VHS)", "weight": 40.0},
-                {"id": "vhs_player", "name": "📼 Видеомагнитофон Panasonic", "weight": 25.0},
-                {"id": "crt_tv", "name": "📺 ЭЛТ-телевизор «Рубин-714»", "weight": 18.0},
-                {"id": "anomaly_radio", "name": "📻 Радиоприёмник аномалий", "weight": 10.0},
-                {"id": "hi8_camera", "name": "📹 Плёночная камера Hi8", "weight": 5.0},
-                {"id": "forbidden_tape", "name": "📼 Запретная запись «НЕ СМОТРИ»", "weight": 2.0},
+                {"id": "vhs_tape", "name": "📼 Плёнка с помехами (VHS)", "weight": 60.0},
+                {"id": "vhs_player", "name": "📼 Видеомагнитофон Panasonic", "weight": 24.0},
+                {"id": "crt_tv", "name": "📺 ЭЛТ-телевизор «Рубин-714»", "weight": 10.0},
+                {"id": "anomaly_radio", "name": "📻 Радиоприёмник аномалий", "weight": 4.0},
+                {"id": "hi8_camera", "name": "📹 Плёночная камера Hi8", "weight": 1.5},
+                {"id": "forbidden_tape", "name": "📼 Запретная запись «НЕ СМОТРИ»", "weight": 0.5},
             ]
             chosen_drop = random.choices(analog_drops, weights=[d["weight"] for d in analog_drops], k=1)[0]
             from user_manager import add_item_to_inventory
@@ -1447,15 +1447,15 @@ async def cmd_vhs_spin(message: types.Message):
     )
 
 
-VHS_CASE_PRICE = 15000
+VHS_CASE_PRICE = 20000
 
 VHS_ITEMS_DROP = [
-    {"id": "vhs_tape", "name": "📼 Плёнка с помехами (VHS)", "rarity": "Обычный", "color": "⚪", "weight": 35.0, "min_cash": 3000, "max_cash": 7000},
-    {"id": "vhs_player", "name": "📼 Видеомагнитофон Panasonic", "rarity": "Необычный", "color": "🟢", "weight": 26.0, "min_cash": 6000, "max_cash": 12000},
-    {"id": "crt_tv", "name": "📺 ЭЛТ-телевизор «Рубин-714»", "rarity": "Редкий", "color": "🔵", "weight": 20.0, "min_cash": 12000, "max_cash": 20000},
-    {"id": "anomaly_radio", "name": "📻 Радиоприёмник аномалий", "rarity": "Эпический", "color": "🟣", "weight": 12.0, "min_cash": 20000, "max_cash": 35000},
-    {"id": "hi8_camera", "name": "📹 Плёночная камера Hi8", "rarity": "Легендарный", "color": "🟡", "weight": 5.5, "min_cash": 40000, "max_cash": 70000},
-    {"id": "forbidden_tape", "name": "📼 Запретная запись «НЕ СМОТРИ»", "rarity": "Мифический", "color": "🔴", "weight": 1.5, "min_cash": 80000, "max_cash": 150000},
+    {"id": "vhs_tape", "name": "📼 Плёнка с помехами (VHS)", "rarity": "Обычный", "color": "⚪", "weight": 60.0, "min_cash": 500, "max_cash": 1500},
+    {"id": "vhs_player", "name": "📼 Видеомагнитофон Panasonic", "rarity": "Необычный", "color": "🟢", "weight": 24.0, "min_cash": 1000, "max_cash": 2500},
+    {"id": "crt_tv", "name": "📺 ЭЛТ-телевизор «Рубин-714»", "rarity": "Редкий", "color": "🔵", "weight": 10.0, "min_cash": 2000, "max_cash": 4000},
+    {"id": "anomaly_radio", "name": "📻 Радиоприёмник аномалий", "rarity": "Эпический", "color": "🟣", "weight": 4.0, "min_cash": 3000, "max_cash": 7000},
+    {"id": "hi8_camera", "name": "📹 Плёночная камера Hi8", "rarity": "Легендарный", "color": "🟡", "weight": 1.5, "min_cash": 5000, "max_cash": 15000},
+    {"id": "forbidden_tape", "name": "📼 Запретная запись «НЕ СМОТРИ»", "rarity": "Мифический", "color": "🔴", "weight": 0.5, "min_cash": 20000, "max_cash": 40000},
 ]
 
 async def execute_batch_vhs_case(chat_id: int, user_id: int, count: int, msg: types.Message = None):
@@ -1561,11 +1561,11 @@ async def cmd_vhs_case(message: types.Message):
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     builder = InlineKeyboardBuilder()
 
-    builder.button(text="🎁 1 кейс (15k)", callback_data=f"vhs_case_do_1_{user_id}")
+    builder.button(text="🎁 1 кейс (20k)", callback_data=f"vhs_case_do_1_{user_id}")
     if max_cases >= 5:
-        builder.button(text="🎁 5 кейсов (75k)", callback_data=f"vhs_case_do_5_{user_id}")
+        builder.button(text="🎁 5 кейсов (100k)", callback_data=f"vhs_case_do_5_{user_id}")
     if max_cases >= 50:
-        builder.button(text="🎁 50 кейсов (750k)", callback_data=f"vhs_case_do_50_{user_id}")
+        builder.button(text="🎁 50 кейсов (1M)", callback_data=f"vhs_case_do_50_{user_id}")
 
     builder.button(text=f"🔥 НА ВСЕ ДЕНЬГИ ({max_cases} шт)", callback_data=f"vhs_case_do_all_{user_id}")
     builder.adjust(1)
