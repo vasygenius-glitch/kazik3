@@ -2,9 +2,14 @@ from db import get_db
 
 _whitelist_cache = None
 
-async def get_whitelist():
+def invalidate_whitelist_cache():
+    """Сбрасывает локальный кэш белого списка."""
     global _whitelist_cache
-    if _whitelist_cache is not None:
+    _whitelist_cache = None
+
+async def get_whitelist(force_reload: bool = False):
+    global _whitelist_cache
+    if not force_reload and _whitelist_cache is not None:
         return _whitelist_cache
 
     db = get_db()
@@ -17,8 +22,7 @@ async def get_whitelist():
         if isinstance(allowed, list):
             _whitelist_cache = {int(k): "Unknown Group" for k in allowed if str(k).strip()}
             save_data = {str(k): v for k, v in _whitelist_cache.items()}
-            from utils import fire_and_forget
-            fire_and_forget(ref.set({'allowed_chats': save_data}))
+            await ref.set({'allowed_chats': save_data})
         else:
             _whitelist_cache = {int(k): v for k, v in allowed.items() if str(k).strip()}
     else:
@@ -30,13 +34,14 @@ async def add_to_whitelist(chat_id: int, chat_title: str = "Unknown Group"):
     db = get_db()
     ref = db.collection('bot_settings').document('whitelist')
     whitelist = await get_whitelist()
-    if chat_id not in whitelist:
-        whitelist[chat_id] = chat_title
+    cid = int(chat_id)
+    title = str(chat_title).strip() or "Unknown Group"
+    if cid not in whitelist or whitelist[cid] != title:
+        whitelist[cid] = title
         _whitelist_cache = whitelist
         # Firestore keys must be strings
         save_data = {str(k): v for k, v in whitelist.items()}
-        from utils import fire_and_forget
-        fire_and_forget(ref.set({'allowed_chats': save_data}))
+        await ref.set({'allowed_chats': save_data})
         return True
     return False
 
@@ -45,12 +50,12 @@ async def remove_from_whitelist(chat_id: int):
     db = get_db()
     ref = db.collection('bot_settings').document('whitelist')
     whitelist = await get_whitelist()
-    if chat_id in whitelist:
-        del whitelist[chat_id]
+    cid = int(chat_id)
+    if cid in whitelist:
+        del whitelist[cid]
         _whitelist_cache = whitelist
         save_data = {str(k): v for k, v in whitelist.items()}
-        from utils import fire_and_forget
-        fire_and_forget(ref.set({'allowed_chats': save_data}))
+        await ref.set({'allowed_chats': save_data})
         return True
     return False
 

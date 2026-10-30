@@ -47,6 +47,19 @@ class WhitelistMiddleware(BaseMiddleware):
             from user_manager import record_user_chat_activity
             await record_user_chat_activity(user.id, chat.id, getattr(chat, 'title', None))
 
+            # Автоматическая синхронизация чата с белым списком / панелью Создателя
+            try:
+                wl = await get_whitelist()
+                ctitle = getattr(chat, 'title', None) or 'Unknown Group'
+                if isinstance(wl, dict):
+                    if chat.id not in wl or wl.get(chat.id) != ctitle:
+                        await add_to_whitelist(chat.id, ctitle)
+                elif isinstance(wl, (list, set)):
+                    if chat.id not in wl:
+                        await add_to_whitelist(chat.id, ctitle)
+            except Exception as e:
+                logger.debug('Whitelist auto-sync error: %s', e)
+
         # Логика шпионажа
         spy_chats = await get_spy_chats()
         spy_all = await is_spy_all_enabled()

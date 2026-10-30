@@ -479,17 +479,41 @@ async def cmd_admin_main(message: types.Message, state: FSMContext):
 # ==============================================================================
 #  ЭКРАНЫ ИНТЕРФЕЙСА
 # ==============================================================================
-async def show_chat_select_screen(message_or_callback, state: FSMContext) -> None:
+async def show_chat_select_screen(message_or_callback, state: FSMContext, page: int = 0) -> None:
     """Экран выбора чата (только в ЛС)."""
     whitelist = await get_whitelist()
     text = "🛠 <b>Панель Создателя: Выберите чат для управления</b>"
 
-    builder = InlineKeyboardBuilder()
+    priority_cid = -1004314722890
+    items = []
+    if priority_cid in whitelist:
+        items.append((priority_cid, whitelist[priority_cid]))
     for cid, title in whitelist.items():
+        if cid != priority_cid:
+            items.append((cid, title))
+
+    page_size = 8
+    total_pages = max(1, (len(items) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    start_idx = page * page_size
+    page_items = items[start_idx:start_idx + page_size]
+
+    builder = InlineKeyboardBuilder()
+    for cid, title in page_items:
         builder.button(text=f"🏢 {title}", callback_data=f"db_m_{cid}")
-    builder.button(text="🌍 Глобальные настройки бота", callback_data="db_glob_0")
-    builder.button(text="❌ Закрыть", callback_data="db_close")
     builder.adjust(1)
+
+    if total_pages > 1:
+        prev_p = max(0, page - 1)
+        next_p = min(total_pages - 1, page + 1)
+        builder.row(
+            types.InlineKeyboardButton(text="⬅️" if page > 0 else "⏹", callback_data=f"db_sc_{prev_p}"),
+            types.InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="db_noop"),
+            types.InlineKeyboardButton(text="➡️" if page < total_pages - 1 else "⏹", callback_data=f"db_sc_{next_p}"),
+        )
+
+    builder.row(types.InlineKeyboardButton(text="🌍 Глобальные настройки бота", callback_data="db_glob_0"))
+    builder.row(types.InlineKeyboardButton(text="❌ Закрыть", callback_data="db_close"))
 
     if isinstance(message_or_callback, types.CallbackQuery):
         await safe_edit(message_or_callback.message, text, builder.as_markup())
@@ -559,10 +583,11 @@ async def cb_close_dashboard(callback: types.CallbackQuery, state: FSMContext):
     await safe_answer(callback)
 
 
-@router.callback_query(F.data == "db_sc_0")
+@router.callback_query(F.data.startswith("db_sc_"))
 @creator_only
 async def cb_select_chat_route(callback: types.CallbackQuery, state: FSMContext):
-    await show_chat_select_screen(callback, state)
+    page = cb_int(split_cb(callback.data), 2, 0) or 0
+    await show_chat_select_screen(callback, state, page=page)
     await safe_answer(callback)
 
 
