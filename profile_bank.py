@@ -19,6 +19,7 @@ from config import CREATOR_ID, CREATOR_IDS
 from shabby_bank import (
     is_shabby_bank,
     SHABBY_BANK_IMG_PATH,
+    get_shabby_bank_input_file,
     check_and_apply_shabby_decay,
     format_shabby_bank_stats,
     get_shabby_bank_kb,
@@ -719,23 +720,30 @@ async def cmd_bank(message: types.Message):
 
             rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
 
-            if is_shabby_bank(bank_data, bank_data.get('banker_id')) and os.path.exists(SHABBY_BANK_IMG_PATH):
-                durability = bank_data.get('durability', 35)
-                fire_risk = bank_data.get('fire_risk', 65)
-                babki = bank_data.get('babki_queue', 75)
-                photo = FSInputFile(SHABBY_BANK_IMG_PATH)
+            if is_shabby_bank(bank_data, bank_data.get('banker_id')):
+                durability = bank_data.get('durability', 70)
+                fire_risk = bank_data.get('fire_risk', 25)
+                babki = bank_data.get('babki_queue', 35)
+                border_heat = bank_data.get('border_heat', 30)
+                photo = get_shabby_bank_input_file()
                 text = (
-                    f"🏛 <b>{escape_html(bank_data.get('name', 'Доисторический банк'))}</b>\n"
-                    f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит...»</i>\n\n"
+                    f"🏛 <b>{escape_html(bank_data.get('name', 'Доисторический VIP-банк'))}</b>\n"
+                    f"<i>«Официальный партнёр Минсыра Табулистана: мусор вывезли, мрамор положили»</i>\n\n"
                     f"🏛 Владелец: <code>{escape_html(bank_data.get('banker_name', '🦖'))}</code> (ID: <code>{bank_data.get('banker_id', '?')}</code>)\n"
-                    f"📈 Ставка по вкладу: <b>{rate}%</b> в день <i>(макс. % для нищенок 👉👈)</i>\n"
+                    f"📈 Ставка по вкладу: <b>{rate}%</b> в день <i>(элитный % для своих 👉👈)</i>\n"
                     f"💰 Капитал банка: <b>{bank_data.get('capital', 0):,}</b> сыр.\n\n"
-                    f"🏚 <i>Состояние здания:</i>\n"
-                    f"🧱 Прочность сарая: <b>{durability}%</b> (крыша течет)\n"
-                    f"🔥 Пожароопасность: <b>{fire_risk}%</b> (проводка искрит)\n"
-                    f"👵 Очередь у входа: <b>{babki}%</b> (орут за коммуналку 1998 года)"
+                    f"🏢 <i>Состояние особняка у границы:</i>\n"
+                    f"🏛 Фасад и ремонт: <b>{durability}%</b>\n"
+                    f"🔥 Ферма в подвале: <b>{fire_risk}%</b>\n"
+                    f"👵 Очередь бабок: <b>{babki}%</b>\n"
+                    f"🛂 Палево на КПП: <b>{border_heat}%</b>"
                 )
-                return await message.answer_photo(photo=photo, caption=text)
+                if photo:
+                    try:
+                        return await message.answer_photo(photo=photo, caption=text)
+                    except Exception as e:
+                        logger.warning("Failed to answer_photo in /bank info: %s", e)
+                return await message.answer(text)
 
             text = (
                 f"🏛 <b>{escape_html(bank_data.get('name', 'Банк'))}</b>\n\n"
@@ -1235,19 +1243,20 @@ async def cmd_bank_stats(message: types.Message):
     actual_banker_id = bank_data.get('banker_id', user_id)
     kb = get_shabby_bank_kb(actual_banker_id, bank_data) if is_shabby_bank(bank_data, user_id) else get_bank_stats_kb(actual_banker_id)
 
-    if is_shabby_bank(bank_data, user_id) and os.path.exists(SHABBY_BANK_IMG_PATH):
-        photo = FSInputFile(SHABBY_BANK_IMG_PATH)
-        if len(text) <= 1024:
-            try:
-                return await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
-            except Exception as e:
-                logger.warning("Failed to answer_photo in cmd_bank_stats: %s", e)
-        else:
-            try:
-                await message.answer_photo(photo=photo)
-                return await message.answer(text, reply_markup=kb)
-            except Exception as e:
-                logger.warning("Failed to answer_photo with split message in cmd_bank_stats: %s", e)
+    if is_shabby_bank(bank_data, user_id):
+        photo = get_shabby_bank_input_file()
+        if photo:
+            if len(text) <= 1024:
+                try:
+                    return await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+                except Exception as e:
+                    logger.warning("Failed to answer_photo in cmd_bank_stats: %s", e)
+            else:
+                try:
+                    await message.answer_photo(photo=photo)
+                    return await message.answer(text, reply_markup=kb)
+                except Exception as e:
+                    logger.warning("Failed to answer_photo with split message in cmd_bank_stats: %s", e)
 
     await message.answer(text, reply_markup=kb)
 

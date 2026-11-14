@@ -12,12 +12,37 @@ logger = logging.getLogger(__name__)
 SHABBY_BANKER_IDS = {6896326008, 7081184095}
 
 # Путь к изображению здания банка
-SHABBY_BANK_IMG_PATH = os.path.join(os.path.dirname(__file__), "assets", "shabby_bank.jpg")
+SHABBY_BANK_IMG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "assets", "shabby_bank.jpg"))
 try:
     from shabby_bank_asset import ensure_shabby_bank_image
     ensure_shabby_bank_image(SHABBY_BANK_IMG_PATH)
 except Exception as _e:
     logger.warning("Could not auto-extract shabby bank image: %s", _e)
+
+
+def get_shabby_bank_input_file():
+    """Возвращает InputFile для гарантированной отправки фото банка (FSInputFile или BufferedInputFile)."""
+    try:
+        from shabby_bank_asset import ensure_shabby_bank_image
+        ensure_shabby_bank_image(SHABBY_BANK_IMG_PATH)
+    except Exception:
+        pass
+
+    if os.path.exists(SHABBY_BANK_IMG_PATH):
+        try:
+            from aiogram.types import FSInputFile
+            return FSInputFile(SHABBY_BANK_IMG_PATH)
+        except Exception as e:
+            logger.warning("Could not load FSInputFile for shabby bank: %s", e)
+
+    try:
+        from shabby_bank_asset import SHABBY_BANK_B64
+        from aiogram.types import BufferedInputFile
+        import base64
+        return BufferedInputFile(base64.b64decode(SHABBY_BANK_B64), filename="shabby_bank.jpg")
+    except Exception as e:
+        logger.error("Could not build buffered shabby bank input file: %s", e)
+        return None
 
 # Стоимость обслуживания и приколов (сбалансировано под разбогатевший банк)
 COST_EXTINGUISH = 45_000         # Охлаждение майнинг-фермы и проводки джакузи
