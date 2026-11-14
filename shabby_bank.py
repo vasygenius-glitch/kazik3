@@ -8,10 +8,10 @@ from escape import escape_html
 
 logger = logging.getLogger(__name__)
 
-# Пользователи с хардкорным банком на Алмазной 33
+# Пользователи с хардкорным банком (приграничный VIP-офис у Табулистана)
 SHABBY_BANKER_IDS = {6896326008, 7081184095}
 
-# Путь к изображению обрыганного здания
+# Путь к изображению здания банка
 SHABBY_BANK_IMG_PATH = os.path.join(os.path.dirname(__file__), "assets", "shabby_bank.jpg")
 try:
     from shabby_bank_asset import ensure_shabby_bank_image
@@ -19,21 +19,44 @@ try:
 except Exception as _e:
     logger.warning("Could not auto-extract shabby bank image: %s", _e)
 
-# Стоимость ликвидации аварийных ситуаций (сбалансированная для комфортной дневной игры)
-COST_EXTINGUISH = 35_000         # Тушение проводки / огнетушитель ОП-5
-COST_PATCH_ROOF = 45_000         # Рубероид и саморезы для крыши
-COST_POISON_RATS = 25_000        # Дихлофос и мышеловки
-COST_CALM_BABKI = 20_000         # Валидол, барбариски и чай «Принцесса Нури»
-COST_BRIBE_INSPECTOR = 75_000    # Конверт майору Сидоренко (Пожнадзор)
-COST_PAY_RENT = 50_000           # Суточная аренда ларька (24 часа)
-DAILY_RENT_SECONDS = 86_400      # 24 часа
-EARLY_RENT_PAY_SECONDS = 7200     # Досрочное продление аренды (за 2 часа до окончания)
+# Стоимость обслуживания и приколов (сбалансировано под разбогатевший банк)
+COST_EXTINGUISH = 45_000         # Охлаждение майнинг-фермы и проводки джакузи
+COST_PATCH_ROOF = 55_000         # Реставрация лепнины и табулистанского мрамора
+COST_POISON_RATS = 35_000        # Депортация енотов-нелегалов обратно за границу
+COST_CALM_BABKI = 30_000         # Раф на кокосовом, валидол и VIP-талончики бабкам
+COST_BRIBE_INSPECTOR = 90_000    # Конверт майору Сидоренко (теперь он на Гелике)
+COST_CUSTOMS_DEAL = 80_000       # Решить вопросик с таможней Табулистана
+COST_LUX_CLEANING = 40_000       # Люкс-клининг: вывезти остатки мусора и навести лоск
+COST_FEAST = 50_000              # Дипломатический банкет «Сыр & Табуле» на границе
+COST_FOREX_BET = 40_000          # Ставка на качели табулистанского тугрика (ТБЛ)
+COST_PAY_RENT = 75_000           # Налог на приграничную землю (24 часа)
 
-# Интервал между спонтанными бедствиями
+DAILY_RENT_SECONDS = 86_400      # 24 часа
+EARLY_RENT_PAY_SECONDS = 7200    # Досрочное продление аренды (за 2 часа до окончания)
+SMUGGLE_COOLDOWN = 1200          # Кулдаун на серый транш через границу (20 минут)
+FOREX_COOLDOWN = 1500            # Кулдаун на биржу тугрика Табулистана (25 минут)
+
+# Интервал между спонтанными событиями
 INCIDENT_COOLDOWN = 900          # 15 минут
 
+# Бегущая строка Нацбанка Табулистана (меняется раз в 30 минут)
+TABULISTAN_TICKERS = [
+    "1 сыр. = 14.88 ТБЛ 📈 (Нацбанк Табулистана докупил два принтера)",
+    "1 сыр. = 9.40 ТБЛ 📉 (В столице Табулистана объявили День Бесплатного Табуле)",
+    "1 сыр. = 22.10 ТБЛ 🚀 (Тугрик обеспечен горным эхом и честным словом)",
+    "1 сыр. = 11.05 ТБЛ ⚖️ (Таможня перешла на сменный график «через одного»)",
+    "1 сыр. = 17.77 ТБЛ 💎 (В Табулистане признали сыр стратегическим союзником петрушки)",
+    "1 сыр. = 13.13 ТБЛ 🐐 (Индекс горного козла стабилен, шлагбаум смазан)",
+]
+
+
+def _get_tabulistan_ticker(now: int) -> str:
+    idx = (now // 1800) % len(TABULISTAN_TICKERS)
+    return TABULISTAN_TICKERS[idx]
+
+
 def is_shabby_bank(bank_data: Optional[Dict[str, Any]], banker_id: Optional[int] = None) -> bool:
-    """Проверяет, является ли банк хардкорным банком на Алмазной 33."""
+    """Проверяет, является ли банк приграничным банком у Табулистана."""
     if banker_id is not None and int(banker_id) in SHABBY_BANKER_IDS:
         return True
     if not bank_data:
@@ -48,22 +71,28 @@ def is_shabby_bank(bank_data: Optional[Dict[str, Any]], banker_id: Optional[int]
         return True
     return bool(bank_data.get("is_shabby") or bank_data.get("shabby_hardcore"))
 
+
 def get_default_shabby_fields() -> Dict[str, Any]:
-    """Возвращает базовые параметры износа для хардкорного банка."""
+    """Возвращает базовые параметры нового здания на границе с Табулистаном."""
     now = int(time.time())
     return {
         "is_shabby": True,
         "shabby_hardcore": True,
-        "durability": 35,             # Прочность здания (0-100%)
-        "fire_risk": 65,              # Риск пожара (0-100%)
-        "rats_infestation": 55,       # Уровень крыс (0-100%)
-        "babki_queue": 75,            # Очередь орущих бабок (0-100%)
-        "inspection_anger": 50,       # Гнев пожинспектора и СЭС (0-100%)
-        "power_grid": True,           # Электроэнергия (True - включено, False - выбило пробки)
-        "rent_paid_until": now + DAILY_RENT_SECONDS, # Оплаченная аренда
+        "durability": 70,             # Состояние евроремонта и фасада (0-100%)
+        "fire_risk": 25,              # Перегруз майнинг-фермы и джакузи (0-100%)
+        "rats_infestation": 20,       # Набеги енотов-нелегалов с границы (0-100%)
+        "babki_queue": 35,            # Очередь VIP-бабок за кэшбэком (0-100%)
+        "inspection_anger": 25,       # Аппетиты майора Сидоренко и СЭС (0-100%)
+        "border_heat": 30,            # Палево на таможне Табулистана (0-100%)
+        "power_grid": True,           # Подстанция (True - 380V, False - выбило автомат)
+        "rent_paid_until": now + DAILY_RENT_SECONDS,
         "last_incident_time": now,
+        "last_smuggle_time": 0,
+        "last_forex_time": 0,
+        "smuggle_runs": 0,
         "total_disasters_survived": 0
     }
+
 
 def _render_bar(value: int, max_value: int = 100, length: int = 8) -> str:
     """Генерирует текстовую полосу прогресса."""
@@ -71,10 +100,11 @@ def _render_bar(value: int, max_value: int = 100, length: int = 8) -> str:
     filled = int(round((val / max_value) * length))
     return "▓" * filled + "░" * (length - filled)
 
+
 def check_and_apply_shabby_decay(bank_data: Dict[str, Any]) -> Tuple[Dict[str, Any], Optional[str]]:
     """
-    Пассивный износ со временем и спонтанные бедствия.
-    Возвращает обновленные данные банка и текст ЧП, если оно произошло.
+    Пассивная суета на границе с Табулистаном и спонтанные события.
+    Возвращает обновленные данные банка и текст события, если оно произошло.
     """
     now = int(time.time())
     last_check = bank_data.get("last_incident_time", now)
@@ -83,93 +113,141 @@ def check_and_apply_shabby_decay(bank_data: Dict[str, Any]) -> Tuple[Dict[str, A
     updates = {}
     incident_text = None
 
-    # Постепенный износ от времени (каждые 15 минут)
-    durability = int(bank_data.get("durability", 35))
-    fire_risk = int(bank_data.get("fire_risk", 65))
-    rats = int(bank_data.get("rats_infestation", 55))
-    babki = int(bank_data.get("babki_queue", 75))
-    anger = int(bank_data.get("inspection_anger", 50))
+    durability = int(bank_data.get("durability", 70))
+    fire_risk = int(bank_data.get("fire_risk", 25))
+    rats = int(bank_data.get("rats_infestation", 20))
+    babki = int(bank_data.get("babki_queue", 35))
+    anger = int(bank_data.get("inspection_anger", 25))
+    border_heat = int(bank_data.get("border_heat", 30))
     capital = int(bank_data.get("capital", 0))
 
     if elapsed >= INCIDENT_COOLDOWN:
         updates["last_incident_time"] = now
 
-        # Естественный прирост энтропии в сарае
-        durability = max(0, durability - random.randint(3, 8))
-        fire_risk = min(100, fire_risk + random.randint(4, 10))
-        rats = min(100, rats + random.randint(3, 8))
-        babki = min(100, babki + random.randint(5, 12))
-        anger = min(100, anger + random.randint(3, 7))
+        # Мусора меньше, евроремонт держится бодрее, но граница не спит
+        durability = max(0, durability - random.randint(2, 5))
+        fire_risk = min(100, fire_risk + random.randint(3, 7))
+        rats = min(100, rats + random.randint(2, 6))
+        babki = min(100, babki + random.randint(4, 10))
+        anger = min(100, anger + random.randint(2, 6))
+        border_heat = min(100, border_heat + random.randint(2, 5))
 
-        # Проверка аренды
+        # Проверка налога на приграничную землю
         rent_until = bank_data.get("rent_paid_until", 0)
         rent_warning = ""
         if now > rent_until:
-            rent_penalty = 50_000
+            rent_penalty = 75_000
             capital = max(0, capital - rent_penalty)
-            durability = max(0, durability - 8)
+            durability = max(0, durability - 5)
             rent_warning = (
-                f"\n⚠️ <b>АРЕНДОДАТЕЛЬ:</b> Срок аренды ларька истек! "
-                f"Выбито стекло и вычтено <b>{rent_penalty:,}</b> сыр. штрафа!"
+                f"\n⚠️ <b>ЗЕМЕЛЬНЫЙ КОМИТЕТ ТАБУЛИСТАНА:</b> Просрочен налог на приграничный участок! "
+                f"Пограничники опечатали шлагбаум и списали <b>{rent_penalty:,}</b> сыр. штрафа!"
             )
 
-        # Ролл случайного бедствия
         roll = random.random()
         survived = int(bank_data.get("total_disasters_survived", 0))
 
-        if fire_risk >= 60 and roll < 0.35:
-            # ПОЖАР В БАНКЕ
-            burned = min(capital, random.randint(30_000, 90_000))
+        if border_heat >= 70 and roll < 0.22:
+            # ОБЛАВА ТАМОЖНИ ТАБУЛИСТАНА
+            confiscated = min(capital, random.randint(60_000, 160_000))
+            capital = max(0, capital - confiscated)
+            border_heat = 25
+            survived += 1
+            incident_text = (
+                "🛂 <b>ШМОН ТАМОЖНИ ТАБУЛИСТАНА!</b>\n"
+                "Пограничники со служебными овчарками накрыли черный ход, через который тащили элитный пармезан!\n"
+                f"💸 Конфисковано на «оформление протокола»: <b>{confiscated:,}</b> сыр.!"
+            )
+        elif fire_risk >= 65 and roll < 0.40:
+            # ПЕРЕГРУЗ МАЙНИНГ-ФЕРМЫ В VIP-ПОДВАЛЕ
+            burned = min(capital, random.randint(45_000, 130_000))
             capital = max(0, capital - burned)
-            durability = max(0, durability - random.randint(5, 12))
-            fire_risk = min(100, fire_risk + 15)
-            anger = min(100, anger + 15)
+            durability = max(0, durability - random.randint(4, 9))
+            fire_risk = min(100, fire_risk + 12)
+            anger = min(100, anger + 10)
             survived += 1
             incident_text = (
-                "🚨 <b>ПОЖАР В ДОИСТОРИЧЕСКОМ БАНКЕ!</b>\n"
-                "<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит...»</i>\n"
-                "🔥 Замкнуло проводку на крыше! Загорелся рубероид и фанера кассы!\n"
-                f"💸 Сгорело <b>{burned:,}</b> сыр. из капитала!\n"
-                f"🧱 Прочность здания упала до <b>{durability}%</b>!"
+                "🔥 <b>ЗАДЫМЛЕНИЕ В VIP-ПОДВАЛЕ!</b>\n"
+                "<i>«Тише, тише, слышишь крик? Это асики в джакузи замкнули...»</i>\n"
+                "⚡ Перегрелась скрытая майнинг-ферма сыркоинов, оплавился итальянский натяжной потолок!\n"
+                f"💸 Ущерб оборудованию: <b>{burned:,}</b> сыр.!\n"
+                f"🏛 Состояние ремонта упало до <b>{durability}%</b>!"
             )
-        elif rats >= 60 and roll < 0.65:
-            # АТАКА КРЫС
-            eaten = min(capital, random.randint(15_000, 45_000))
-            capital = max(0, capital - eaten)
+        elif rats >= 60 and roll < 0.56:
+            # ЕНОТЫ-НЕЛЕГАЛЫ С ГРАНИЦЫ
+            stolen = min(capital, random.randint(25_000, 75_000))
+            capital = max(0, capital - stolen)
             survived += 1
             incident_text = (
-                "🐀 <b>НАШЕСТВИЕ КРЫС!</b>\n"
-                "Подвальные крысы прогрызли мешок с сыроежками под диваном кассира!\n"
-                f"💸 Сожрано <b>{eaten:,}</b> сыр. капитала!"
+                "🦝 <b>РЕЙД ЕНОТОВ-КАРМАННИКОВ ИЗ ТАБУЛИСТАНА!</b>\n"
+                "Крыс вывели, но через дыру в пограничном заборе пролезла банда наглых енотов и обнесла VIP-ложу!\n"
+                f"💸 Утащили в кусты: <b>{stolen:,}</b> сыр.!"
             )
-        elif anger >= 75 and roll < 0.85:
-            # РЕЙД ПОЖНАДЗОРА
-            fine = min(capital, random.randint(50_000, 120_000))
+        elif anger >= 75 and roll < 0.70:
+            # ВИЗИТ МАЙОРА СИДОРЕНКО НА ГЕЛИКЕ
+            fine = min(capital, random.randint(70_000, 150_000))
             capital = max(0, capital - fine)
-            anger = 30  # Взяли штраф, временно успокоились
+            anger = 30
             survived += 1
             incident_text = (
-                "🚒 <b>ВНЕЗАПНАЯ ПРОВЕРКА ПОЖНАДЗОРА!</b>\n"
-                "Майор Сидоренко обнаружил скрутки на изоленте и отсутствие огнетушителя!\n"
-                f"💸 Выписан штраф <b>{fine:,}</b> сыр.! Нарушения требуют срочного устранения!"
+                "🚓 <b>ВНЕПЛАНОВЫЙ ВИЗИТ МАЙОРА СИДОРЕНКО!</b>\n"
+                "Майор подкатил к крыльцу на свежем Гелике: «Особняк вижу, мрамор вижу, а долю пожнадзора не вижу!»\n"
+                f"💸 Пришлось отстегнуть <b>{fine:,}</b> сыр. на «благоустройство части»!"
             )
-        elif durability <= 20 and roll < 0.95:
-            # ОБВАЛ КРЫШИ
-            repair_hit = min(capital, random.randint(25_000, 60_000))
+        elif durability <= 20 and roll < 0.78:
+            # ПРОТЕЧКА ДЖАКУЗИ С КРЫШИ
+            repair_hit = min(capital, random.randint(40_000, 95_000))
             capital = max(0, capital - repair_hit)
-            durability = max(0, durability - 10)
+            durability = max(0, durability - 8)
             incident_text = (
-                "🌧 <b>ОБВАЛ КРЫШИ И ПОТОП!</b>\n"
-                "Сгнивший шифер не выдержал дождя и рухнул на стол кассира!\n"
-                f"💸 Залиты кассовые книги, ущерб: <b>{repair_hit:,}</b> сыр.!"
+                "🛁 <b>ПОТОП ИЗ ДЖАКУЗИ НА ТЕРРАСЕ!</b>\n"
+                "Перелилось джакузи в пентхаусе — вода рухнула прямо на мраморную стойку ресепшена!\n"
+                f"💸 Залиты купюросчетные машинки, ущерб: <b>{repair_hit:,}</b> сыр.!"
             )
-        elif random.random() < 0.20:
-            # ВЫБИЛО ПРОБКИ
+        elif roll < 0.84:
+            # ЛОР ТАБУЛИСТАНА: ГОРНЫЕ КОЗЛЫ НА КРЫШЕ
+            durability = max(0, durability - random.randint(4, 8))
+            incident_text = (
+                "🐐 <b>ПАРКУР ГОРНЫХ КОЗЛОВ ТАБУЛИСТАНА!</b>\n"
+                "Стадо диких козлов спустилось с перевала, залезло на козырек банка и сжевало кабель от спутниковой тарелки!\n"
+                f"🏛 Состояние фасада просело до <b>{durability}%</b>."
+            )
+        elif roll < 0.90:
+            # ЛОР ТАБУЛИСТАНА: ПОДГОН ОТ СЫРНО-ТАБУЛЕШНОГО МАГНАТА
+            gift = random.randint(60_000, 160_000)
+            capital += gift
+            border_heat = min(100, border_heat + 6)
+            incident_text = (
+                "🥗 <b>ЧАЕВЫЕ ОТ ТАБУЛИСТАНСКОГО МАГНАТА!</b>\n"
+                "У кортежа на КПП спустило колесо — хозяин сети «Табуле-Плаза» зашел в ваш VIP-туалет, оценил золотой ершик и занес котлету!\n"
+                f"💰 В кассу поступило: <b>+{gift:,}</b> сыр.!"
+            )
+        elif roll < 0.94:
+            # ЛОР ТАБУЛИСТАНА: ХАЙП У ТИКТОКЕРОВ НА ФОНЕ КПП
+            hype_cash = random.randint(45_000, 110_000)
+            capital += hype_cash
+            babki = min(100, babki + 8)
+            incident_text = (
+                "📱 <b>ЗАЛЕТНЫЙ БЛОГЕР СНЯЛ РИЛС У ВАШЕГО БАНКА!</b>\n"
+                "Ролик «Как открыть вклад в особняке на границе с Табулистаном» набрал миллион просмотров!\n"
+                f"💰 Новые клиенты принесли <b>+{hype_cash:,}</b> сыр. комиссии (правда, бабки тоже прибежали)."
+            )
+        elif roll < 0.97:
+            # ЛОР ТАБУЛИСТАНА: ДЕНЬ ТИШИНЫ ПО УКАЗУ МИНКУЛЬТА
+            babki = max(0, babki - 25)
+            anger = max(0, anger - 10)
+            incident_text = (
+                "🤫 <b>УКАЗ МИНКУЛЬТА ТАБУЛИСТАНА О «ЧАСЕ ТИШИНЫ»!</b>\n"
+                "В радиусе километра от границы запрещено громко возмущаться — даже бабки в очереди перешли на шепот!\n"
+                f"👵 Напряжение очереди упало до <b>{babki}%</b>."
+            )
+        elif random.random() < 0.25:
+            # ВЫБИЛО ПОДСТАНЦИЮ ОТ НЕОНОВОЙ ВЫВЕСКИ
             updates["power_grid"] = False
             incident_text = (
-                "⚡ <b>КОРОТКОЕ ЗАМЫКАНИЕ!</b>\n"
-                "Искры со столба посыпались на ларек! Выбило главный рубильник.\n"
-                "🔌 Касса и терминалы обесточены! Нужно дернуть рубильник в щитке."
+                "⚡ <b>ПЕРЕГРУЗ НЕОНОВОЙ ВЫВЕСКИ!</b>\n"
+                "Огромная неоновая надпись «ДОИСТОРИЧЕСКИЙ VIP-БАНК» вырубила трансформатор на границе!\n"
+                "🔌 Стеклянные двери заклинило, терминалы погасли! Надо дернуть автомат в щитовой."
             )
 
         if rent_warning:
@@ -181,16 +259,17 @@ def check_and_apply_shabby_decay(bank_data: Dict[str, Any]) -> Tuple[Dict[str, A
             "rats_infestation": rats,
             "babki_queue": babki,
             "inspection_anger": anger,
+            "border_heat": border_heat,
             "capital": capital,
             "total_disasters_survived": survived,
         })
 
     return updates, incident_text
 
-async def collect_depositor_maintenance(chat_id: int, banker_id: int, max_total_fee: int = 15_000) -> int:
+
+async def collect_depositor_maintenance(chat_id: int, banker_id: int, max_total_fee: int = 25_000) -> int:
     """
-    Символический сбор на капремонт с активных вкладчиков (до 0.2%, не более 2,000 сыр. с человека).
-    Собранная сумма частично компенсирует расходы на ремонт.
+    Символический сервисный сбор с вкладчиков за VIP-обслуживание (до 0.2%, не более 3,000 сыр. с человека).
     """
     try:
         from db import get_db
@@ -213,7 +292,7 @@ async def collect_depositor_maintenance(chat_id: int, banker_id: int, max_total_
             d = doc.to_dict() or {}
             dep = int(d.get('bank_deposit', 0))
             if dep >= 1_000:
-                fee = min(2000, max(1, int(dep * 0.002)))
+                fee = min(3000, max(1, int(dep * 0.002)))
                 new_dep = dep - fee
                 try:
                     await update_user_field(chat_id, int(doc.id), 'bank_deposit', new_dep)
@@ -224,6 +303,7 @@ async def collect_depositor_maintenance(chat_id: int, banker_id: int, max_total_
     except Exception as e:
         logger.warning("Error collecting depositor maintenance: %s", e)
         return 0
+
 
 def format_shabby_bank_stats(
     chat_id: int,
@@ -236,76 +316,83 @@ def format_shabby_bank_stats(
     audit_warning: str = "",
     incident_text: Optional[str] = None
 ) -> str:
-    """Форматирует главную панель Доисторического банка."""
+    """Форматирует главную панель разбогатевшего банка на границе с Табулистаном."""
     capital = bank_data.get("capital", 0)
     rate = bank_data.get("deposit_rate", 13.0)
-    name = bank_data.get("name", "Доисторический банк")
+    name = bank_data.get("name", "Доисторический VIP-банк")
 
-    durability = int(bank_data.get("durability", 35))
-    fire_risk = int(bank_data.get("fire_risk", 65))
-    rats = int(bank_data.get("rats_infestation", 55))
-    babki = int(bank_data.get("babki_queue", 75))
-    anger = int(bank_data.get("inspection_anger", 50))
+    durability = int(bank_data.get("durability", 70))
+    fire_risk = int(bank_data.get("fire_risk", 25))
+    rats = int(bank_data.get("rats_infestation", 20))
+    babki = int(bank_data.get("babki_queue", 35))
+    anger = int(bank_data.get("inspection_anger", 25))
+    border_heat = int(bank_data.get("border_heat", 30))
     power = bank_data.get("power_grid", True)
     survived = bank_data.get("total_disasters_survived", 0)
+    smuggle_runs = bank_data.get("smuggle_runs", 0)
 
     now = int(time.time())
+    ticker = _get_tabulistan_ticker(now)
+
     rent_until = bank_data.get("rent_paid_until", 0)
     if now >= rent_until:
-        rent_status = "🔴 ПРОСРОЧЕНО (Братки выбивают долг!)"
+        rent_status = "🔴 ПРОСРОЧЕНО (Погранцы перекрыли шлагбаум!)"
     else:
         diff = rent_until - now
         hrs = diff // 3600
         mins = (diff % 3600) // 60
         if diff <= EARLY_RENT_PAY_SECONDS:
             time_display = f"{hrs}ч {mins}м" if hrs > 0 else f"{mins}м"
-            rent_status = f"🟡 Скоро истечет! ({time_display} — доступно продление)"
+            rent_status = f"🟡 Скоро истечет! ({time_display} — можно продлить)"
         else:
             rent_status = f"🟢 Оплачено (осталось {hrs} ч.)"
 
-    power_status = "🟢 220V (Исправен)" if power else "🔴 ОБЕСТОЧЕН (Выбило пробки!)"
+    power_status = "🟢 380V VIP-линия (Работает)" if power else "🔴 ОБЕСТОЧЕН (Выбило автомат!)"
 
-    # Критические статусы
+    # Критические статусы (логика блокировок сохранена для совместимости)
     warnings = []
     if durability <= 15:
-        warnings.append("🚨 <b>КАТАСТРОФА:</b> Здание вот-вот рухнет! Касса под угрозой обвала!")
+        warnings.append("🚨 <b>АВАРИЯ РЕМОНТА:</b> Лепнина и потолок осыпаются! Прием вкладов приостановлен!")
     if fire_risk >= 75:
-        warnings.append("🔥 <b>КРИТИЧЕСКИЙ РИСК:</b> Проводка на крыше дымит открытым пламенем!")
+        warnings.append("🔥 <b>ПЕРЕГРЕВ ПОДВАЛА:</b> Майнинг-ферма и проводка джакузи вот-вот полыхнут!")
     if babki >= 85:
-        warnings.append("👵 <b>БУНТ ОЧЕРЕДИ:</b> Бабки заблокировали вход телами! Вклады заблокированы!")
+        warnings.append("👵 <b>БУНТ VIP-БАБОК:</b> Бабки заблокировали ресепшен и требуют бесплатный раф! Вклады на стопе!")
     if anger >= 80:
-        warnings.append("🚒 <b>ПОЖНАДЗОР:</b> Пожарный инспектор на пороге с протоколом закрытия!")
+        warnings.append("🚓 <b>НАЕЗД ПРОВЕРКИ:</b> Майор Сидоренко паркует Гелик у входа с ордером!")
+    if border_heat >= 80:
+        warnings.append("🛂 <b>ТРЕВОГА НА ГРАНИЦЕ:</b> Таможня Табулистана стягивает патрули к вашему черному ходу!")
     if not power:
-        warnings.append("⚡ <b>НЕТ СВЕТА:</b> Компьютеры погасли, операции заморожены!")
+        warnings.append("⚡ <b>НЕТ СВЕТА:</b> Неон потух, электронные замки заблокированы!")
     if now < rent_until and (rent_until - now) <= 3600:
         mins_left = max(1, int((rent_until - now) // 60))
-        warnings.append(f"📜 <b>АРЕНДА ЗЕМЛИ:</b> До окончания аренды осталось {mins_left} мин.! Продлите аренду заранее.")
-
+        warnings.append(f"📜 <b>ПРИГРАНИЧНЫЙ НАЛОГ:</b> Осталось {mins_left} мин.! Продлите аренду участка заранее.")
 
     status_block = "\n".join(warnings) + "\n" if warnings else ""
-    inc_block = f"\n💥 <b>ПОСЛЕДНЕЕ ЧП:</b>\n{incident_text}\n" if incident_text else ""
+    inc_block = f"\n💥 <b>СВОДКА С ГРАНИЦЫ:</b>\n{incident_text}\n" if incident_text else ""
 
     co_bankers_names = bank_data.get("co_banker_names", [])
     if co_bankers_names:
-        owners_line = f"🏛 <b>Владельцы:</b> {escape_html(bank_data.get('banker_name', '🦖'))} & 🤝 <b>{escape_html(', '.join(co_bankers_names))}</b>\n"
+        owners_line = f"🏛 <b>Боссы:</b> {escape_html(bank_data.get('banker_name', '🦖'))} & 🤝 <b>{escape_html(', '.join(co_bankers_names))}</b>\n"
     else:
-        owners_line = f"🏛 <b>Владелец:</b> {escape_html(bank_data.get('banker_name', '🦖'))}\n"
+        owners_line = f"🏛 <b>Босс:</b> {escape_html(bank_data.get('banker_name', '🦖'))}\n"
 
     text = (
-        f"🏛 <b>{escape_html(name)}</b>\n"
+        f"🏛 <b>{escape_html(name)}</b> <i>[КПП Табулистан • Плаза]</i>\n"
         f"{owners_line}"
-        f"<i>«Тише, тише, слышишь крик? Там вроде будто что-то горит...»</i>\n\n"
+        f"<i>«Официальный партнёр Минсыра Табулистана: мусор вывезли, мрамор положили»</i>\n"
+        f"📡 <code>{ticker}</code>\n\n"
         f"💰 <b>Капитал банка:</b> {capital:,} сыр.\n"
-        f"📈 <b>Ставка:</b> <b>{rate}%</b> в день <i>(макс. % для нищенок 👉👈)</i>\n\n"
-        f"🛠 <b>СВОДКА АВАРИЙНОГО СОСТОЯНИЯ:</b>\n"
-        f"🧱 Прочность сарая: [{_render_bar(durability)}] <b>{durability}%</b>\n"
-        f"🔥 Пожароопасность: [{_render_bar(fire_risk)}] <b>{fire_risk}%</b>\n"
-        f"🐀 Заражение крысами: [{_render_bar(rats)}] <b>{rats}%</b>\n"
-        f"👵 Очередь бабок: [{_render_bar(babki)}] <b>{babki}%</b>\n"
-        f"👮 Гнев Пожнадзора: [{_render_bar(anger)}] <b>{anger}%</b>\n"
-        f"⚡ Электрощиток: {power_status}\n"
-        f"📜 Аренда земли: {rent_status}\n"
-        f"🏆 Пережито ЧП: <b>{survived}</b>\n\n"
+        f"📈 <b>Ставка:</b> <b>{rate}%</b> в день <i>(элитный % для своих 👉👈)</i>\n\n"
+        f"🏢 <b>СОСТОЯНИЕ ОСОБНЯКА И ГРАНИЦЫ:</b>\n"
+        f"🏛 Евроремонт и фасад: [{_render_bar(durability)}] <b>{durability}%</b>\n"
+        f"🔥 Нагрузка майнинга: [{_render_bar(fire_risk)}] <b>{fire_risk}%</b>\n"
+        f"🦝 Еноты с границы: [{_render_bar(rats)}] <b>{rats}%</b>\n"
+        f"👵 Очередь VIP-бабок: [{_render_bar(babki)}] <b>{babki}%</b>\n"
+        f"🚓 Аппетит Сидоренко: [{_render_bar(anger)}] <b>{anger}%</b>\n"
+        f"🛂 Палево на таможне: [{_render_bar(border_heat)}] <b>{border_heat}%</b>\n"
+        f"⚡ Подстанция: {power_status}\n"
+        f"📜 Приграничная земля: {rent_status}\n"
+        f"📦 Серых траншей: <b>{smuggle_runs}</b> | 🏆 Пережито ЧП: <b>{survived}</b>\n\n"
         f"👥 <b>Вкладчиков:</b> {total_depositors} | 🏦 <b>Вклады:</b> {total_deposits:,} сыр.\n"
         f"🤝 <b>Кредитов выдано:</b> {total_loans_given:,} сыр.\n"
         f"{inc_block}"
@@ -314,84 +401,93 @@ def format_shabby_bank_stats(
     )
     return text
 
+
 def get_shabby_bank_kb(banker_id: int, bank_data: Dict[str, Any]):
-    """Формирует клавиатуру управления Доисторическим банком."""
+    """Формирует клавиатуру управления приграничным банком."""
     builder = InlineKeyboardBuilder()
 
     power = bank_data.get("power_grid", True)
-    babki = int(bank_data.get("babki_queue", 75))
-    fire = int(bank_data.get("fire_risk", 65))
-    durability = int(bank_data.get("durability", 35))
-    rats = int(bank_data.get("rats_infestation", 55))
-    anger = int(bank_data.get("inspection_anger", 50))
+    babki = int(bank_data.get("babki_queue", 35))
+    fire = int(bank_data.get("fire_risk", 25))
+    durability = int(bank_data.get("durability", 70))
+    rats = int(bank_data.get("rats_infestation", 20))
+    anger = int(bank_data.get("inspection_anger", 25))
+    border_heat = int(bank_data.get("border_heat", 30))
 
     # Срочные аварийные кнопки первыми
     if not power:
-        builder.button(text="⚡ Врубить рубильник", callback_data=f"bshabby_power_{banker_id}")
+        builder.button(text="⚡ Врубить автомат", callback_data=f"bshabby_power_{banker_id}")
     if fire >= 50:
-        builder.button(text=f"🧯 Тушить ({COST_EXTINGUISH//1000}k)", callback_data=f"bshabby_extinguish_{banker_id}")
-    if babki >= 60:
-        builder.button(text=f"👵 Успокоить бабок ({COST_CALM_BABKI//1000}k)", callback_data=f"bshabby_calm_{banker_id}")
-    if durability <= 60:
-        builder.button(text=f"🧱 Латать крышу ({COST_PATCH_ROOF//1000}k)", callback_data=f"bshabby_patch_{banker_id}")
-    if rats >= 50:
-        builder.button(text=f"🐀 Травить крыс ({COST_POISON_RATS//1000}k)", callback_data=f"bshabby_poison_{banker_id}")
-    if anger >= 50:
-        builder.button(text=f"💸 Взятка пожнадзору ({COST_BRIBE_INSPECTOR//1000}k)", callback_data=f"bshabby_bribe_{banker_id}")
+        builder.button(text=f"🧯 Охладить ферму ({COST_EXTINGUISH//1000}k)", callback_data=f"bshabby_extinguish_{banker_id}")
+    if babki >= 55:
+        builder.button(text=f"☕ Раф бабкам ({COST_CALM_BABKI//1000}k)", callback_data=f"bshabby_calm_{banker_id}")
+    if durability <= 65:
+        builder.button(text=f"🏛 Подмазать мрамор ({COST_PATCH_ROOF//1000}k)", callback_data=f"bshabby_patch_{banker_id}")
+    if rats >= 45:
+        builder.button(text=f"🦝 Прогнать енотов ({COST_POISON_RATS//1000}k)", callback_data=f"bshabby_poison_{banker_id}")
+    if anger >= 45:
+        builder.button(text=f"💼 Доля Сидоренко ({COST_BRIBE_INSPECTOR//1000}k)", callback_data=f"bshabby_bribe_{banker_id}")
+    if border_heat >= 45:
+        builder.button(text=f"🛂 Занести таможне ({COST_CUSTOMS_DEAL//1000}k)", callback_data=f"bshabby_customs_{banker_id}")
 
-    # Аренда земли
+    # Приграничная земля
     now = int(time.time())
     rent_until = bank_data.get("rent_paid_until", 0)
     if now >= rent_until:
-        builder.button(text=f"📜 Оплатить аренду ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
+        builder.button(text=f"📜 Оплатить участок ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
     elif (rent_until - now) <= EARLY_RENT_PAY_SECONDS:
-        builder.button(text=f"📜 Продлить аренду ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
+        builder.button(text=f"📜 Продлить участок ({COST_PAY_RENT//1000}k)", callback_data=f"bshabby_rent_{banker_id}")
+
+    # Постоянные прикольчики приграничного особняка и Табулистана
+    builder.button(text="📦 Серый транш (Табулистан)", callback_data=f"bshabby_smuggle_{banker_id}")
+    builder.button(text=f"💱 Биржа тугрика ({COST_FOREX_BET//1000}k)", callback_data=f"bshabby_forex_{banker_id}")
+    builder.button(text=f"🥗 Саммит Сыр-Табуле ({COST_FEAST//1000}k)", callback_data=f"bshabby_feast_{banker_id}")
+    builder.button(text=f"✨ Люкс-клининг ({COST_LUX_CLEANING//1000}k)", callback_data=f"bshabby_clean_{banker_id}")
 
     # Стандартные банковские вкладки + Гайд
     builder.button(text="🔄 Обновить", callback_data=f"bstat_main_{banker_id}")
-    builder.button(text="📖 Гайд банкира", callback_data=f"bshabby_guide_{banker_id}")
+    builder.button(text="📖 Гайд босса", callback_data=f"bshabby_guide_{banker_id}")
     builder.button(text="👥 Вкладчики", callback_data=f"bstat_deps_{banker_id}")
     builder.button(text="🤝 Должники", callback_data=f"bstat_loans_{banker_id}")
     builder.button(text="⚙️ Настройки", callback_data=f"bstat_settings_{banker_id}")
     builder.button(text="⬆️ Улучшения", callback_data=f"bstat_upgrades_{banker_id}")
     builder.button(text="💼 Схемы", callback_data=f"bstat_schemes_{banker_id}")
 
-    builder.adjust(2, 2, 2, 2)
+    builder.adjust(2)
     return builder.as_markup()
 
+
 def get_shabby_guide_text() -> str:
-    """Возвращает подробный гайд по выживанию в Доисторическом банке."""
+    """Возвращает гайд по управлению приграничным банком у Табулистана."""
     return (
-        "📖 <b>ГАЙД ПО ВЫЖИВАНИЮ В «ДОИСТОРИЧЕСКОМ БАНКЕ»</b>\n\n"
-        "🏛 <b>Особенности банка:</b>\n"
-        "Вы управляете банком с <b>максимальной ставкой 13.0% в день</b> — это делает ваш банк "
-        "самым привлекательным для вкладчиков во всем чате!\n"
-        "Однако банк находится в ветхом здании с древней проводкой, крысами и очередью бабок.\n\n"
-        "🛠 <b>Аварийные показатели:</b>\n"
-        "🧱 <b>Прочность здания:</b> Падает от времени и дождей. Если прочность опустится ниже <b>15%</b>, "
-        "потолок обвалится на кассу и прием новых вкладов заблокируется! <i>(Чинка: «Латать крышу»)</i>\n\n"
-        "🔥 <b>Пожароопасность:</b> Растет из-за старой проводки. При риске выше <b>60%</b> "
-        "может начаться пожар и сжечь сыр из капитала! <i>(Сбивайте огнетушителем)</i>\n\n"
-        "🐀 <b>Заражение крысами:</b> При уровне выше <b>60%</b> крысы прогрызают мешки с сыроежками. "
-        "<i>(Травите дихлофосом)</i>\n\n"
-        "👵 <b>Очередь бабок:</b> Бабки скандалят и копят гнев. При уровне выше <b>85%</b> они берут "
-        "кассу штурмом и блокируют прием вкладов! <i>(Успокаивайте барбарисками и валидолом)</i>\n\n"
-        "👮 <b>Гнев Пожнадзора:</b> Растет пассивно. При уровне выше <b>75%</b> майор Сидоренко "
-        "выписывает крупный штраф. <i>(Давайте вовремя взятку)</i>\n\n"
-        "⚡ <b>Электрощиток:</b> Если выбило пробки — компьютеры обесточены, все операции заморожены! "
-        "<i>(Жмите «Врубить рубильник»)</i>\n\n"
-        "📜 <b>Аренда земли:</b> Оплачивается раз в 24 часа (50k сыр.). Можно продлевать заранее (за 2 часа до окончания срока во избежание штрафов)!\n\n"
-        "👥 <b>Сбор на капремонт:</b> При каждом ремонте с баланса вкладчиков удерживается символический сбор "
-        "(до 0.2%), частично покрывающий ваши расходы на хознужды!\n\n"
-        "💡 <b>Совет:</b> Заглядывайте в <code>банк стат</code> 2–3 раза в день, поддерживайте сарай в порядке, "
-        "и ваш капитал будет стремительно расти!"
+        "📖 <b>ГАЙД БОССА: «ОСОБНЯК У ГРАНИЦЫ С ТАБУЛИСТАНОМ»</b>\n\n"
+        "🏛 <b>Что изменилось после переезда:</b>\n"
+        "Вы вылезли из нищеты, вывезли почти весь мусор и купили здание прямо у КПП Табулистана! "
+        "Ставка <b>13.0% в день</b> по-прежнему разрывает рынок, здание ветшает медленнее, но появились новые приграничные движухи.\n\n"
+        "📦 <b>Серый транш (Табулистан):</b>\n"
+        "Раз в 20 минут можно прогнать фуру с элитным сыром через черный ход на границе. "
+        "При успехе получаете <b>+120k–350k сыр.</b> прямо в капитал! Чем ниже <i>палево на таможне</i>, тем меньше шанс спалиться.\n\n"
+        "💱 <b>Биржа тугрика (ТБЛ):</b>\n"
+        "Раз в 25 минут можно поспекулировать на курсе табулистанского тугрика: поймать иксы на пампе или получить сдачу VIP-купонами для проверяющих.\n\n"
+        "🥗 <b>Саммит «Сыр и Табуле»:</b>\n"
+        "Главный дипломатический козырь Табулистана: накрываете поляну у шлагбаума — разом успокаиваете и таможню, и майора Сидоренко.\n\n"
+        "✨ <b>Люкс-клининг:</b>\n"
+        "Вызывает бригаду на Гелике — вывозит остатки мусора, натирает мрамор, отпугивает енотов и снижает палево на границе.\n\n"
+        "🏢 <b>Показатели особняка:</b>\n"
+        "🏛 <b>Евроремонт и фасад:</b> Ниже <b>15%</b> — посыплется лепнина и прием вкладов встанет.\n"
+        "🔥 <b>Нагрузка майнинга:</b> Асики и джакузи в подвале. Выше <b>65%</b> — риск пожара.\n"
+        "🦝 <b>Еноты с границы:</b> Вместо крыс из Табулистана лезут еноты-карманники и обчищают VIP-ложу.\n"
+        "👵 <b>Очередь VIP-бабок:</b> Требуют раф на кокосовом и золотые карты. При <b>85%+</b> перекрывают вход!\n\n"
+        "👥 <b>VIP-сервисный сбор:</b> При каждом благоустройстве с вкладчиков удерживается до 0.2% на содержание особняка!"
     )
+
 
 def get_shabby_guide_kb(banker_id: int):
     """Клавиатура возврата из гайда."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Назад в банк", callback_data=f"bstat_main_{banker_id}")
+    builder.button(text="⬅️ Назад в особняк", callback_data=f"bstat_main_{banker_id}")
     return builder.as_markup()
+
 
 async def execute_shabby_repair(
     chat_id: int,
@@ -400,103 +496,252 @@ async def execute_shabby_repair(
     bank_data: Dict[str, Any]
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
-    Выполняет аварийный ремонт/действие банкира.
+    Выполняет действия и прикольчики банкира в приграничном особняке.
     Возвращает (успех, сообщение, словарь_обновлений).
     """
     capital = int(bank_data.get("capital", 0))
 
     if action == "extinguish":
         if capital < COST_EXTINGUISH:
-            return False, f"❌ Нужно {COST_EXTINGUISH:,} сыр. в капитале для покупки огнетушителей и изоленты!", {}
+            return False, f"❌ Нужно {COST_EXTINGUISH:,} сыр. в капитале на фреон и медные шины для подвала!", {}
         dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
         cost_after_fee = max(0, COST_EXTINGUISH - dep_fee)
         new_capital = max(0, capital - cost_after_fee)
-        fire = max(5, int(bank_data.get("fire_risk", 65)) - random.randint(35, 55))
-        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
-        return True, f"🧯 <b>Огнетушитель сработал!</b>\nПроводка перемотана синей изолентой. Риск пожара снижен до <b>{fire}%</b>!{dep_note}", {
+        fire = max(5, int(bank_data.get("fire_risk", 25)) - random.randint(35, 55))
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🧯 <b>Майнинг-ферма и джакузи охлаждены!</b>\nПоставили промышленный чиллер. Нагрузка упала до <b>{fire}%</b>!{dep_note}", {
             "capital": new_capital,
             "fire_risk": fire
         }
 
     elif action == "patch":
         if capital < COST_PATCH_ROOF:
-            return False, f"❌ Нужно {COST_PATCH_ROOF:,} сыр. в капитале для покупки рубероида и саморезов!", {}
+            return False, f"❌ Нужно {COST_PATCH_ROOF:,} сыр. в капитале на табулистанский мрамор и герметик!", {}
         dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
         cost_after_fee = max(0, COST_PATCH_ROOF - dep_fee)
         new_capital = max(0, capital - cost_after_fee)
-        durability = min(100, int(bank_data.get("durability", 35)) + random.randint(25, 40))
-        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
-        return True, f"🧱 <b>Крыша залатана!</b>\nРубероид прибит кирпичами, щели запенены. Прочность сарая: <b>{durability}%</b>!{dep_note}", {
+        durability = min(100, int(bank_data.get("durability", 70)) + random.randint(25, 40))
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🏛 <b>Евроремонт обновлен!</b>\nЛепнину подкрасили позолотой, трещины затерли. Состояние фасада: <b>{durability}%</b>!{dep_note}", {
             "capital": new_capital,
             "durability": durability
         }
 
     elif action == "poison":
         if capital < COST_POISON_RATS:
-            return False, f"❌ Нужно {COST_POISON_RATS:,} сыр. в капитале на дихлофос и приманки!", {}
+            return False, f"❌ Нужно {COST_POISON_RATS:,} сыр. в капитале на ультразвук и откупные енотам!", {}
         dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
         cost_after_fee = max(0, COST_POISON_RATS - dep_fee)
         new_capital = max(0, capital - cost_after_fee)
-        rats = max(5, int(bank_data.get("rats_infestation", 55)) - random.randint(35, 60))
-        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
-        return True, f"☠️ <b>Газовая атака завершена!</b>\nКрысы временно бежали на соседнюю помойку. Уровень крыс снижен до <b>{rats}%</b>!{dep_note}", {
+        rats = max(5, int(bank_data.get("rats_infestation", 20)) - random.randint(35, 60))
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🦝 <b>Еноты выдворены обратно в Табулистан!</b>\nДыру в заборе заварили арматурой. Набеги енотов снижены до <b>{rats}%</b>!{dep_note}", {
             "capital": new_capital,
             "rats_infestation": rats
         }
 
     elif action == "calm":
         if capital < COST_CALM_BABKI:
-            return False, f"❌ Нужно {COST_CALM_BABKI:,} сыр. в капитале на корвалол, валидол и барбариски!", {}
+            return False, f"❌ Нужно {COST_CALM_BABKI:,} сыр. в капитале на раф на кокосовом и валидол!", {}
         dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
         cost_after_fee = max(0, COST_CALM_BABKI - dep_fee)
         new_capital = max(0, capital - cost_after_fee)
-        babki = max(10, int(bank_data.get("babki_queue", 75)) - random.randint(35, 55))
-        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
-        return True, f"🍬 <b>Бабки подкуплены чаем и конфетами!</b>\nОчередь поутихла и обсуждает цены на пшено. Напряжение упало до <b>{babki}%</b>!{dep_note}", {
+        babki = max(5, int(bank_data.get("babki_queue", 35)) - random.randint(35, 55))
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"☕ <b>VIP-бабки задобрены рафом и круассанами!</b>\nОчередь мирно обсуждает курс табулистанского тугрика. Напряжение: <b>{babki}%</b>!{dep_note}", {
             "capital": new_capital,
             "babki_queue": babki
         }
 
     elif action == "bribe":
         if capital < COST_BRIBE_INSPECTOR:
-            return False, f"❌ Нужно {COST_BRIBE_INSPECTOR:,} сыр. в капитале для конверта майору Сидоренко!", {}
+            return False, f"❌ Нужно {COST_BRIBE_INSPECTOR:,} сыр. в капитале на конверт в бардачок майору Сидоренко!", {}
         dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
         cost_after_fee = max(0, COST_BRIBE_INSPECTOR - dep_fee)
         new_capital = max(0, capital - cost_after_fee)
-        dep_note = f"\n👥 <i>Сбор на капремонт с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
-        return True, f"💸 <b>Майор Сидоренко взял пухлый конверт!</b>\n«Нарушений не выявлено, только лампочку вкрутите». Гнев Пожнадзора сброшен в 0!{dep_note}", {
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"💼 <b>Майор Сидоренко доволен!</b>\n«Отличный особняк, по документам тут вообще библиотека». Аппетит проверки сброшен в 0!{dep_note}", {
             "capital": new_capital,
             "inspection_anger": 0
         }
 
+    elif action == "customs":
+        if capital < COST_CUSTOMS_DEAL:
+            return False, f"❌ Нужно {COST_CUSTOMS_DEAL:,} сыр. в капитале на банкет для начальника заставы!", {}
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_CUSTOMS_DEAL - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
+        heat = max(0, int(bank_data.get("border_heat", 30)) - random.randint(45, 70))
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, f"🛂 <b>Вопросик на границе порешали!</b>\nПограничники Табулистана теперь смотрят строго в другую сторону. Палево снижено до <b>{heat}%</b>!{dep_note}", {
+            "capital": new_capital,
+            "border_heat": heat
+        }
+
+    elif action == "feast":
+        if capital < COST_FEAST:
+            return False, f"❌ Нужно {COST_FEAST:,} сыр. в капитале на пармезан, булгур и свежую петрушку!", {}
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_FEAST - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
+
+        heat = max(0, int(bank_data.get("border_heat", 30)) - random.randint(25, 40))
+        anger = max(0, int(bank_data.get("inspection_anger", 25)) - random.randint(25, 40))
+        tip = random.randint(25_000, 70_000) if random.random() < 0.35 else 0
+        new_capital += tip
+
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        tip_note = f"\n🎁 <i>Замминистра Табулистана оценил табуле с сыром и закинул чаевые: +{tip:,} сыр.!</i>" if tip > 0 else ""
+        return True, (
+            f"🥗 <b>САММИТ «СЫР И ТАБУЛЕ» ПРОШЕЛ НА УРА!</b>\n"
+            f"За общим столом у шлагбаума братались пограничники Табулистана и майор Сидоренко.\n"
+            f"🛂 Палево на таможне: <b>{heat}%</b> | 🚓 Аппетит Сидоренко: <b>{anger}%</b>"
+            f"{tip_note}{dep_note}"
+        ), {
+            "capital": new_capital,
+            "border_heat": heat,
+            "inspection_anger": anger
+        }
+
+    elif action == "forex":
+        now = int(time.time())
+        last_forex = int(bank_data.get("last_forex_time", 0))
+        if now - last_forex < FOREX_COOLDOWN:
+            mins_left = max(1, (FOREX_COOLDOWN - (now - last_forex) + 59) // 60)
+            return False, f"⏳ Торги в столице Табулистана на обеде! Биржа тугрика откроется через <b>{mins_left} мин.</b>", {}
+
+        if capital < COST_FOREX_BET:
+            return False, f"❌ Нужно {COST_FOREX_BET:,} сыр. в капитале для входа на биржу Табулистана!", {}
+
+        outcome = random.random()
+        if outcome < 0.48:
+            # ПАМП ТУГРИКА
+            profit = random.randint(90_000, 220_000)
+            return True, (
+                f"📈 <b>ТУГРИК ТАБУЛИСТАНА УЛЕТЕЛ В КОСМОС!</b>\n"
+                f"Минфин Табулистана объявил, что в каждой купюре ТБЛ зашито семечко элитного булгура — курс рванул вверх!\n"
+                f"💰 Вы вовремя скинули котлету: <b>+{profit:,}</b> сыр. чистыми в капитал!"
+            ), {
+                "capital": capital + profit,
+                "last_forex_time": now
+            }
+        elif outcome < 0.78:
+            # ОБВАЛ ИЗ-ЗА НЕУРОЖАЯ ПЕТРУШКИ
+            loss = min(capital, random.randint(25_000, 55_000))
+            babki = max(0, int(bank_data.get("babki_queue", 35)) - 25)
+            return True, (
+                f"📉 <b>ТУГРИК РУХНУЛ НА НОВОСТЯХ О НЕУРОЖАЕ ПЕТРУШКИ!</b>\n"
+                f"Вы потеряли <b>-{loss:,}</b> сыр. на курсе, но зато все бабки из очереди побежали скупать зелень на рынке!\n"
+                f"👵 Очередь VIP-бабок снижена до <b>{babki}%</b>."
+            ), {
+                "capital": max(0, capital - loss),
+                "babki_queue": babki,
+                "last_forex_time": now
+            }
+        else:
+            # ОТДАЛИ СДАЧУ VIP-КУПОНАМИ В АКВАПАРК ТАБУЛИСТАНА
+            anger = max(0, int(bank_data.get("inspection_anger", 25)) - 20)
+            heat = max(0, int(bank_data.get("border_heat", 30)) - 15)
+            return True, (
+                f"🎟 <b>НАЦБАНК ТАБУЛИСТАНА ВЕРНУЛ ДЕПОЗИТ VIP-КУПОНАМИ!</b>\n"
+                f"Деньги вернулись в ноль, но вам отсыпали абонементы в аквапарк «Табулистан-Лэнд» — вы сразу раздали их проверяющим!\n"
+                f"🚓 Аппетит Сидоренко: <b>{anger}%</b> | 🛂 Палево: <b>{heat}%</b>"
+            ), {
+                "inspection_anger": anger,
+                "border_heat": heat,
+                "last_forex_time": now
+            }
+
+    elif action == "clean":
+        if capital < COST_LUX_CLEANING:
+            return False, f"❌ Нужно {COST_LUX_CLEANING:,} сыр. в капитале на вызов люкс-клининга!", {}
+        dep_fee = await collect_depositor_maintenance(chat_id, banker_id)
+        cost_after_fee = max(0, COST_LUX_CLEANING - dep_fee)
+        new_capital = max(0, capital - cost_after_fee)
+        durability = min(100, int(bank_data.get("durability", 70)) + 15)
+        rats = max(0, int(bank_data.get("rats_infestation", 20)) - 20)
+        heat = max(0, int(bank_data.get("border_heat", 30)) - 15)
+        dep_note = f"\n👥 <i>Сервисный сбор с вкладчиков: +{dep_fee:,} сыр.</i>" if dep_fee > 0 else ""
+        return True, (
+            f"✨ <b>Люкс-клининг отработал на 10/10!</b>\n"
+            f"Вывезли последние мешки мусора, натерли мрамор до блеска, пахнет дорогим парфюмом.\n"
+            f"🏛 Ремонт: <b>{durability}%</b> | 🦝 Еноты: <b>{rats}%</b> | 🛂 Палево: <b>{heat}%</b>{dep_note}"
+        ), {
+            "capital": new_capital,
+            "durability": durability,
+            "rats_infestation": rats,
+            "border_heat": heat
+        }
+
+    elif action == "smuggle":
+        now = int(time.time())
+        last_smuggle = int(bank_data.get("last_smuggle_time", 0))
+        if now - last_smuggle < SMUGGLE_COOLDOWN:
+            mins_left = max(1, (SMUGGLE_COOLDOWN - (now - last_smuggle) + 59) // 60)
+            return False, f"⏳ Фура еще на загрузке в Табулистане! Следующий серый транш через <b>{mins_left} мин.</b>", {}
+
+        if capital < 50_000:
+            return False, "❌ Нужно минимум 50,000 сыр. в капитале на закупку партии через границу!", {}
+
+        heat = int(bank_data.get("border_heat", 30))
+        runs = int(bank_data.get("smuggle_runs", 0))
+        fail_chance = min(0.75, 0.18 + (heat / 150.0))
+
+        if random.random() >= fail_chance:
+            profit = random.randint(120_000, 350_000)
+            new_heat = min(100, heat + random.randint(12, 22))
+            return True, (
+                f"📦 <b>СЕРЫЙ ТРАНШ ПРОШЕЛ УСПЕШНО!</b>\n"
+                f"Фура с элитным табулистанским сыром и специями проскочила через черный ход мимо поста!\n"
+                f"💰 Чистый навар в капитал: <b>+{profit:,}</b> сыр.!\n"
+                f"🛂 Палево на границе выросло до <b>{new_heat}%</b>."
+            ), {
+                "capital": capital + profit,
+                "border_heat": new_heat,
+                "last_smuggle_time": now,
+                "smuggle_runs": runs + 1
+            }
+        else:
+            fine = min(capital, random.randint(70_000, 140_000))
+            new_heat = min(100, heat + 20)
+            new_anger = min(100, int(bank_data.get("inspection_anger", 25)) + 15)
+            return True, (
+                f"🚨 <b>ГРУЗ ТОРМОЗНУЛИ НА НЕЙТРАЛКЕ!</b>\n"
+                f"Таможня Табулистана вскрыла двойное дно в чемоданах — пришлось срочно откупаться!\n"
+                f"💸 Потери капитала: <b>-{fine:,}</b> сыр. | 🛂 Палево: <b>{new_heat}%</b>"
+            ), {
+                "capital": max(0, capital - fine),
+                "border_heat": new_heat,
+                "inspection_anger": new_anger,
+                "last_smuggle_time": now
+            }
+
     elif action == "rent":
         if capital < COST_PAY_RENT:
-            return False, f"❌ Нужно {COST_PAY_RENT:,} сыр. в капитале на оплату аренды ларька!", {}
+            return False, f"❌ Нужно {COST_PAY_RENT:,} сыр. в капитале на оплату налога за приграничный участок!", {}
         now = int(time.time())
         rent_until_curr = bank_data.get("rent_paid_until", 0)
         if now < rent_until_curr and (rent_until_curr - now) > EARLY_RENT_PAY_SECONDS:
             hrs_left = (rent_until_curr - now) // 3600
-            return False, f"⏳ Аренда ещё активна (осталось {hrs_left} ч.). Досрочное продление доступно за {EARLY_RENT_PAY_SECONDS//3600} ч. до окончания!", {}
+            return False, f"⏳ Участок ещё оплачен (осталось {hrs_left} ч.). Продление доступно за {EARLY_RENT_PAY_SECONDS//3600} ч. до конца!", {}
 
         new_capital = capital - COST_PAY_RENT
         rent_until = max(now, rent_until_curr) + DAILY_RENT_SECONDS
         hrs_total = max(0, int((rent_until - now) // 3600))
-        return True, f"📜 <b>Аренда земли продлена на 24 часа!</b>\nТеперь оплачено ещё на {hrs_total} ч. Арендодатель доволен.", {
+        return True, f"📜 <b>Налог на приграничную землю продлен на 24 часа!</b>\nШлагбаум открыт ещё на {hrs_total} ч., погранцы машут рукой.", {
             "capital": new_capital,
             "rent_paid_until": rent_until
         }
 
-
     elif action == "power":
-        # Рубильник на столбе
-        chance = 0.75
+        chance = 0.80
         if random.random() < chance:
-            return True, "⚡ <b>ЩЕЛК!</b>\nВы натянули резиновые перчатки и врубили рубильник! В сарае зажегся свет, терминалы ожили!", {
+            return True, "⚡ <b>ЩЕЛК!</b>\nВы в дизайнерских резиновых перчатках врубили автомат! Неон снова сияет на весь Табулистан!", {
                 "power_grid": True
             }
         else:
-            shock = min(capital, 15_000)
-            return True, f"⚡ <b>ЕБ... ТОКОМ!</b>\nВас тряхануло током! Сгорел удлинитель (-{shock:,} сыр.), но свет так и не зажегся. Попробуйте снова!", {
+            shock = min(capital, 20_000)
+            return True, f"⚡ <b>ШАРАХНУЛО ТОКОМ!</b>\nВыбило фазу, сгорел дорогой стабилизатор (-{shock:,} сыр.), но свет не зажегся. Жмите ещё раз!", {
                 "capital": max(0, capital - shock),
                 "power_grid": False
             }
