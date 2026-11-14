@@ -14,7 +14,7 @@ from profile_bank import cmd_pay_rent
 
 
 def test_early_rent_constants():
-    assert EARLY_RENT_PAY_SECONDS == 7200
+    assert EARLY_RENT_PAY_SECONDS == 86400
     assert DAILY_RENT_SECONDS == 86400
     assert COST_PAY_RENT == 75000
 
@@ -34,8 +34,8 @@ def test_shabby_bank_kb_rent_buttons():
     texts_soon = [btn.text for row in kb_soon.inline_keyboard for btn in row]
     assert any("Продлить участок" in t or "Продлить аренду" in t for t in texts_soon)
 
-    # Case 3: Rent has plenty of time (10 hours left)
-    bank_data_plenty = {"rent_paid_until": now + 36000, "capital": 100000}
+    # Case 3: Rent has plenty of time (30 hours left > 24h)
+    bank_data_plenty = {"rent_paid_until": now + 108000, "capital": 100000}
     kb_plenty = get_shabby_bank_kb(12345, bank_data_plenty)
     texts_plenty = [btn.text for row in kb_plenty.inline_keyboard for btn in row]
     assert not any("участок" in t.lower() or "аренду" in t.lower() for t in texts_plenty)
@@ -78,7 +78,7 @@ async def test_execute_shabby_repair_rent_too_early():
     now = int(time.time())
     bank_data = {
         "capital": 200000,
-        "rent_paid_until": now + 40000,  # 11 hours left
+        "rent_paid_until": now + 120000,  # 33 hours left > 24 hours
     }
     success, msg, updates = await execute_shabby_repair(1, 12345, "rent", bank_data)
     assert success is False

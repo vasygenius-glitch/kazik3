@@ -57,7 +57,7 @@ COST_FOREX_BET = 40_000          # Ставка на качели табулис
 COST_PAY_RENT = 75_000           # Налог на приграничную землю (24 часа)
 
 DAILY_RENT_SECONDS = 86_400      # 24 часа
-EARLY_RENT_PAY_SECONDS = 7200    # Досрочное продление аренды (за 2 часа до окончания)
+EARLY_RENT_PAY_SECONDS = 86_400  # Досрочное продление аренды (за 24 часа до окончания)
 SMUGGLE_COOLDOWN = 1200          # Кулдаун на серый транш через границу (20 минут)
 FOREX_COOLDOWN = 1500            # Кулдаун на биржу тугрика Табулистана (25 минут)
 
@@ -366,7 +366,7 @@ def format_shabby_bank_stats(
         diff = rent_until - now
         hrs = diff // 3600
         mins = (diff % 3600) // 60
-        if diff <= EARLY_RENT_PAY_SECONDS:
+        if diff <= 10800:
             time_display = f"{hrs}ч {mins}м" if hrs > 0 else f"{mins}м"
             rent_status = f"🟡 Скоро истечет! ({time_display})"
         else:
