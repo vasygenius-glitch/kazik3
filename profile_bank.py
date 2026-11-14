@@ -11,7 +11,7 @@ from aiogram.types import FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from db import get_db
 from escape import escape_html
-from user_manager import get_user_data, update_user_balance, update_user_field
+from user_manager import get_user_data, update_user_balance, update_user_field, resolve_chat_id
 from shop import ITEMS
 from utils import fire_and_forget
 from seasons import get_season_string
@@ -307,6 +307,16 @@ def _is_name_match(search: str, target: str) -> bool:
 async def get_bank_info(chat_id: int, identifier):
     if not identifier:
         return None
+
+    if chat_id is not None:
+        try:
+            cid_int = int(chat_id)
+            if cid_int > 0:
+                resolved = resolve_chat_id(cid_int, identifier)
+                if resolved != cid_int:
+                    chat_id = resolved
+        except (ValueError, TypeError):
+            pass
 
     # 0) Сначала ищем среди ВСЕХ кэшированных банков этого чата
     search_str = str(identifier).strip()
@@ -1204,8 +1214,8 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
     F.text.lower().startswith("банк стат ")
 ))
 async def cmd_bank_stats(message: types.Message):
-    chat_id = message.chat.id
     user_id = message.from_user.id
+    chat_id = resolve_chat_id(message.chat.id, user_id)
 
     data = await get_user_data(chat_id, user_id)
     if not data.get('is_banker', False):
@@ -1223,11 +1233,23 @@ async def cmd_bank_stats(message: types.Message):
     text = await generate_bank_main_stats(chat_id, user_id, bank_data)
 
     actual_banker_id = bank_data.get('banker_id', user_id)
+    kb = get_shabby_bank_kb(actual_banker_id, bank_data) if is_shabby_bank(bank_data, user_id) else get_bank_stats_kb(actual_banker_id)
+
     if is_shabby_bank(bank_data, user_id) and os.path.exists(SHABBY_BANK_IMG_PATH):
         photo = FSInputFile(SHABBY_BANK_IMG_PATH)
-        await message.answer_photo(photo=photo, caption=text, reply_markup=get_shabby_bank_kb(actual_banker_id, bank_data))
-    else:
-        await message.answer(text, reply_markup=get_bank_stats_kb(actual_banker_id))
+        if len(text) <= 1024:
+            try:
+                return await message.answer_photo(photo=photo, caption=text, reply_markup=kb)
+            except Exception as e:
+                logger.warning("Failed to answer_photo in cmd_bank_stats: %s", e)
+        else:
+            try:
+                await message.answer_photo(photo=photo)
+                return await message.answer(text, reply_markup=kb)
+            except Exception as e:
+                logger.warning("Failed to answer_photo with split message in cmd_bank_stats: %s", e)
+
+    await message.answer(text, reply_markup=kb)
 
 
 @router.message(or_f(
@@ -1235,8 +1257,10 @@ async def cmd_bank_stats(message: types.Message):
     F.text.lower().in_({"банк гайд", "гайд банкира", "гайд банк", "банкгайд"})
 ))
 async def cmd_bank_guide(message: types.Message):
-    bank_data = await get_bank_info(message.chat.id, message.from_user.id)
-    actual_banker_id = bank_data.get('banker_id', message.from_user.id) if bank_data else message.from_user.id
+    user_id = message.from_user.id
+    chat_id = resolve_chat_id(message.chat.id, user_id)
+    bank_data = await get_bank_info(chat_id, user_id)
+    actual_banker_id = bank_data.get('banker_id', user_id) if bank_data else user_id
     await message.answer(get_shabby_guide_text(), reply_markup=get_shabby_guide_kb(actual_banker_id))
 
 
@@ -1245,8 +1269,8 @@ async def cmd_bank_guide(message: types.Message):
     F.text.lower().in_({"оплатить аренду", "продлить аренду", "аренда оплатить", "аренда продлить"})
 ))
 async def cmd_pay_rent(message: types.Message):
-    chat_id = message.chat.id
     user_id = message.from_user.id
+    chat_id = resolve_chat_id(message.chat.id, user_id)
 
     data = await get_user_data(chat_id, user_id)
     bank_data = await get_bank_info(chat_id, user_id)
@@ -1271,7 +1295,10 @@ async def cmd_pay_rent(message: types.Message):
 async def _safe_edit_bank_msg(message: types.Message, text: str, reply_markup=None):
     try:
         if message.photo:
-            await message.edit_caption(caption=text, reply_markup=reply_markup)
+            if len(text) <= 1024:
+                await message.edit_caption(caption=text, reply_markup=reply_markup)
+            else:
+                await message.edit_caption(caption=text[:1020] + "…", reply_markup=reply_markup)
         else:
             await message.edit_text(text, reply_markup=reply_markup)
     except Exception as e:
@@ -1294,7 +1321,7 @@ async def cb_shabby_bank(callback: types.CallbackQuery):
         await _safe_edit_bank_msg(callback.message, get_shabby_guide_text(), reply_markup=get_shabby_guide_kb(banker_id))
         return await callback.answer()
 
-    chat_id = callback.message.chat.id
+    chat_id = resolve_chat_id(callback.message.chat.id, banker_id)
     bank_data = await get_bank_info(chat_id, banker_id)
     if not bank_data:
         return await callback.answer("❌ Банк не найден.", show_alert=True)
@@ -1339,7 +1366,7 @@ async def cb_bank_stats(callback: types.CallbackQuery):
     except ValueError:
         return await callback.answer("❌ Некорректные данные.", show_alert=True)
 
-    chat_id = callback.message.chat.id
+    chat_id = resolve_chat_id(callback.message.chat.id, banker_id)
     bank_data = await get_bank_info(chat_id, banker_id)
     if not bank_data:
         return await callback.answer("❌ Банк не найден.", show_alert=True)
@@ -1828,7 +1855,7 @@ async def cb_incass(callback: types.CallbackQuery):
     except ValueError:
         return await callback.answer()
 
-    chat_id = callback.message.chat.id
+    chat_id = resolve_chat_id(callback.message.chat.id, banker_id)
     bank_data = await get_bank_info(chat_id, banker_id)
     co_bankers = [int(x) for x in (bank_data.get('co_bankers', []) if bank_data else []) if str(x).isdigit()]
     if callback.from_user.id != banker_id and callback.from_user.id not in co_bankers:

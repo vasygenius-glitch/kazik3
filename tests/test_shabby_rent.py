@@ -108,3 +108,62 @@ async def test_cmd_pay_rent_handler():
         await cmd_pay_rent(msg)
         assert msg.answer.called
         assert mock_save.called
+
+
+@pytest.mark.asyncio
+async def test_cmd_bank_stats_caption_safety():
+    from profile_bank import cmd_bank_stats, _safe_edit_bank_msg
+
+    # Case 1: Normal length
+    msg = AsyncMock(spec=types.Message)
+    msg.chat = MagicMock(id=-1002321279920)
+    msg.from_user = MagicMock(id=6896326008)
+    msg.answer = AsyncMock()
+    msg.answer_photo = AsyncMock()
+
+    bank_data = {
+        "banker_id": 6896326008,
+        "is_shabby": True,
+        "name": "Доисторический VIP-банк",
+        "capital": 100000,
+        "rent_paid_until": int(time.time()) + 10000,
+    }
+
+    with patch("profile_bank.get_user_data", new=AsyncMock(return_value={"is_banker": True})), \
+         patch("diseases.get_active_diseases", new=AsyncMock(return_value=[])), \
+         patch("profile_bank.get_bank_info", new=AsyncMock(return_value=bank_data)), \
+         patch("profile_bank.generate_bank_main_stats", new=AsyncMock(return_value="A" * 500)), \
+         patch("os.path.exists", return_value=True):
+
+        await cmd_bank_stats(msg)
+        assert msg.answer_photo.called
+        call_kwargs = msg.answer_photo.call_args[1]
+        assert len(call_kwargs["caption"]) == 500
+
+    # Case 2: Text exceeds Telegram 1024 limit
+    msg_long = AsyncMock(spec=types.Message)
+    msg_long.chat = MagicMock(id=-1002321279920)
+    msg_long.from_user = MagicMock(id=6896326008)
+    msg_long.answer = AsyncMock()
+    msg_long.answer_photo = AsyncMock()
+
+    with patch("profile_bank.get_user_data", new=AsyncMock(return_value={"is_banker": True})), \
+         patch("diseases.get_active_diseases", new=AsyncMock(return_value=[])), \
+         patch("profile_bank.get_bank_info", new=AsyncMock(return_value=bank_data)), \
+         patch("profile_bank.generate_bank_main_stats", new=AsyncMock(return_value="A" * 1200)), \
+         patch("os.path.exists", return_value=True):
+
+        await cmd_bank_stats(msg_long)
+        assert msg_long.answer_photo.called
+        assert msg_long.answer.called
+
+    # Case 3: _safe_edit_bank_msg truncation
+    msg_edit = AsyncMock(spec=types.Message)
+    msg_edit.photo = [MagicMock()]
+    msg_edit.edit_caption = AsyncMock()
+
+    await _safe_edit_bank_msg(msg_edit, "B" * 1200)
+    assert msg_edit.edit_caption.called
+    caption_arg = msg_edit.edit_caption.call_args[1]["caption"]
+    assert len(caption_arg) <= 1024
+

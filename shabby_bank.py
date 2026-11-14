@@ -94,7 +94,7 @@ def get_default_shabby_fields() -> Dict[str, Any]:
     }
 
 
-def _render_bar(value: int, max_value: int = 100, length: int = 8) -> str:
+def _render_bar(value: int, max_value: int = 100, length: int = 5) -> str:
     """Генерирует текстовую полосу прогресса."""
     val = max(0, min(value, max_value))
     filled = int(round((val / max_value) * length))
@@ -336,39 +336,45 @@ def format_shabby_bank_stats(
 
     rent_until = bank_data.get("rent_paid_until", 0)
     if now >= rent_until:
-        rent_status = "🔴 ПРОСРОЧЕНО (Погранцы перекрыли шлагбаум!)"
+        rent_status = "🔴 ПРОСРОЧЕНО (Шлагбаум перекрыт!)"
     else:
         diff = rent_until - now
         hrs = diff // 3600
         mins = (diff % 3600) // 60
         if diff <= EARLY_RENT_PAY_SECONDS:
             time_display = f"{hrs}ч {mins}м" if hrs > 0 else f"{mins}м"
-            rent_status = f"🟡 Скоро истечет! ({time_display} — можно продлить)"
+            rent_status = f"🟡 Скоро истечет! ({time_display})"
         else:
-            rent_status = f"🟢 Оплачено (осталось {hrs} ч.)"
+            rent_status = f"🟢 Оплачено ({hrs} ч.)"
 
-    power_status = "🟢 380V VIP-линия (Работает)" if power else "🔴 ОБЕСТОЧЕН (Выбило автомат!)"
+    power_status = "🟢 380V VIP (В норме)" if power else "🔴 ОБЕСТОЧЕН (Выбило автомат!)"
 
     # Критические статусы (логика блокировок сохранена для совместимости)
     warnings = []
     if durability <= 15:
-        warnings.append("🚨 <b>АВАРИЯ РЕМОНТА:</b> Лепнина и потолок осыпаются! Прием вкладов приостановлен!")
+        warnings.append("🚨 <b>АВАРИЯ:</b> Фасад осыпается! Вклады на стопе!")
     if fire_risk >= 75:
-        warnings.append("🔥 <b>ПЕРЕГРЕВ ПОДВАЛА:</b> Майнинг-ферма и проводка джакузи вот-вот полыхнут!")
+        warnings.append("🔥 <b>ПЕРЕГРЕВ:</b> Ферма в подвале дымит!")
     if babki >= 85:
-        warnings.append("👵 <b>БУНТ VIP-БАБОК:</b> Бабки заблокировали ресепшен и требуют бесплатный раф! Вклады на стопе!")
+        warnings.append("👵 <b>БУНТ БАБОК:</b> Перекрыли вход за раф! Вклады на стопе!")
     if anger >= 80:
-        warnings.append("🚓 <b>НАЕЗД ПРОВЕРКИ:</b> Майор Сидоренко паркует Гелик у входа с ордером!")
+        warnings.append("🚓 <b>ПРОВЕРКА:</b> Сидоренко паркует Гелик у крыльца!")
     if border_heat >= 80:
-        warnings.append("🛂 <b>ТРЕВОГА НА ГРАНИЦЕ:</b> Таможня Табулистана стягивает патрули к вашему черному ходу!")
+        warnings.append("🛂 <b>ТАМОЖНЯ:</b> Патрули стянуты к черному ходу!")
     if not power:
-        warnings.append("⚡ <b>НЕТ СВЕТА:</b> Неон потух, электронные замки заблокированы!")
+        warnings.append("⚡ <b>НЕТ СВЕТА:</b> Неон потух, замки обесточены!")
     if now < rent_until and (rent_until - now) <= 3600:
         mins_left = max(1, int((rent_until - now) // 60))
         warnings.append(f"📜 <b>ПРИГРАНИЧНЫЙ НАЛОГ:</b> Осталось {mins_left} мин.! Продлите аренду участка заранее.")
 
-    status_block = "\n".join(warnings) + "\n" if warnings else ""
-    inc_block = f"\n💥 <b>СВОДКА С ГРАНИЦЫ:</b>\n{incident_text}\n" if incident_text else ""
+    if len(warnings) > 3:
+        status_block = "\n".join(warnings[:3]) + f"\n⚠️ <i>...и ещё {len(warnings)-3} угроз!</i>\n"
+    elif warnings:
+        status_block = "\n".join(warnings) + "\n"
+    else:
+        status_block = ""
+
+    inc_block = f"\n💥 <b>СВОДКА:</b>\n{incident_text}\n" if incident_text else ""
 
     co_bankers_names = bank_data.get("co_banker_names", [])
     if co_bankers_names:
@@ -376,29 +382,35 @@ def format_shabby_bank_stats(
     else:
         owners_line = f"🏛 <b>Босс:</b> {escape_html(bank_data.get('banker_name', '🦖'))}\n"
 
+    slogan_line = "<i>«Официальный партнёр Минсыра Табулистана: мусор вывезли, мрамор положили»</i>\n"
+
     text = (
         f"🏛 <b>{escape_html(name)}</b> <i>[КПП Табулистан • Плаза]</i>\n"
         f"{owners_line}"
-        f"<i>«Официальный партнёр Минсыра Табулистана: мусор вывезли, мрамор положили»</i>\n"
+        f"{slogan_line}"
         f"📡 <code>{ticker}</code>\n\n"
         f"💰 <b>Капитал банка:</b> {capital:,} сыр.\n"
         f"📈 <b>Ставка:</b> <b>{rate}%</b> в день <i>(элитный % для своих 👉👈)</i>\n\n"
         f"🏢 <b>СОСТОЯНИЕ ОСОБНЯКА И ГРАНИЦЫ:</b>\n"
-        f"🏛 Евроремонт и фасад: [{_render_bar(durability)}] <b>{durability}%</b>\n"
-        f"🔥 Нагрузка майнинга: [{_render_bar(fire_risk)}] <b>{fire_risk}%</b>\n"
-        f"🦝 Еноты с границы: [{_render_bar(rats)}] <b>{rats}%</b>\n"
-        f"👵 Очередь VIP-бабок: [{_render_bar(babki)}] <b>{babki}%</b>\n"
-        f"🚓 Аппетит Сидоренко: [{_render_bar(anger)}] <b>{anger}%</b>\n"
-        f"🛂 Палево на таможне: [{_render_bar(border_heat)}] <b>{border_heat}%</b>\n"
+        f"🏛 Фасад: [{_render_bar(durability)}] <b>{durability}%</b>\n"
+        f"🔥 Ферма: [{_render_bar(fire_risk)}] <b>{fire_risk}%</b>\n"
+        f"🦝 Еноты: [{_render_bar(rats)}] <b>{rats}%</b>\n"
+        f"👵 Бабки: [{_render_bar(babki)}] <b>{babki}%</b>\n"
+        f"🚓 Сидоренко: [{_render_bar(anger)}] <b>{anger}%</b>\n"
+        f"🛂 Палево на КПП: [{_render_bar(border_heat)}] <b>{border_heat}%</b>\n"
         f"⚡ Подстанция: {power_status}\n"
-        f"📜 Приграничная земля: {rent_status}\n"
-        f"📦 Серых траншей: <b>{smuggle_runs}</b> | 🏆 Пережито ЧП: <b>{survived}</b>\n\n"
+        f"📜 Земля: {rent_status}\n"
+        f"📦 Траншей: <b>{smuggle_runs}</b> | 🏆 Пережито ЧП: <b>{survived}</b>\n\n"
         f"👥 <b>Вкладчиков:</b> {total_depositors} | 🏦 <b>Вклады:</b> {total_deposits:,} сыр.\n"
-        f"🤝 <b>Кредитов выдано:</b> {total_loans_given:,} сыр.\n"
+        f"🤝 <b>Кредитов:</b> {total_loans_given:,} сыр.\n"
         f"{inc_block}"
         f"{status_block}"
         f"{audit_warning}"
     )
+
+    if len(text) > 1020:
+        text = text.replace(slogan_line, "")
+
     return text
 
 
