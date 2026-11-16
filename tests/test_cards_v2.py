@@ -158,3 +158,29 @@ async def test_process_drop_rewards_shards_and_pity():
         assert pity == 4
         mock_update.assert_any_call(-1001, 123, "card_pity", 4)
         mock_update.assert_any_call(-1001, 123, "card_shards", 80)
+
+
+def test_card_tempering_and_power():
+    data_lvl1 = {"card_levels": {}}
+    assert cards_system.get_card_level(data_lvl1, "meme_1") == 1
+
+    data_lvl3 = {"card_levels": {"meme_1": 3}}
+    assert cards_system.get_card_level(data_lvl3, "meme_1") == 3
+
+    base_power = CARDS["meme_1"]["power"]
+    lvl1_power = cards_system.get_effective_power("meme_1", 1)
+    lvl3_power = cards_system.get_effective_power("meme_1", 3)
+    assert lvl1_power == base_power
+    assert lvl3_power > lvl1_power
+
+    # Level 5 is max
+    assert cards_system.MAX_CARD_LEVEL == 5
+    cost = cards_system.get_temper_cost("LEGENDARY", 2)
+    assert cost > 0
+
+
+def test_set_rewards_configuration():
+    for set_id, s in CARD_SETS.items():
+        assert "reward_shards" in s
+        assert s["reward_shards"] > 0
+
