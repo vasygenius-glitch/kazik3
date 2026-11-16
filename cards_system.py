@@ -15,6 +15,8 @@ import json
 import logging
 import os
 import random
+import shutil
+import threading
 import time
 from typing import Optional
 
@@ -488,15 +490,135 @@ def roll_card_from_case(
     return random.choice(CARDS_BY_RARITY[rarity]), False
 
 
-def get_card_photo_source(card_id: str) -> Optional[str]:
-    if card_id in _PHOTO_PATH_CACHE:
-        return _PHOTO_PATH_CACHE[card_id]
+ASSETS_ZIP_URL = "https://github.com/vasygenius-glitch/kazik3/releases/download/v2.0-cards-assets/cards_assets_opt.zip"
+_ASSETS_INITIALIZED = False
+_ASSETS_LOCK = threading.Lock()
 
-    for ext in ("jpg", "png", "webp"):
+
+def ensure_cards_assets() -> bool:
+    """Гарантирует наличие всех 200 изображений карточек.
+    Если локальные файлы отсутствуют (например, свежий контейнер на Hugging Face Spaces),
+    автоматически скачивает компактный архив из GitHub Release и распаковывает."""
+    global _ASSETS_INITIALIZED
+    if _ASSETS_INITIALIZED:
+        return True
+
+    with _ASSETS_LOCK:
+        if _ASSETS_INITIALIZED:
+            return True
+
+        pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
+        os.makedirs(pig_dir, exist_ok=True)
+        os.makedirs(CARDS_ASSETS_DIR, exist_ok=True)
+
+        existing_jpg = [
+            f for f in os.listdir(pig_dir)
+            if f.startswith("pig_") and (f.endswith(".jpg") or f.endswith(".webp"))
+        ] if os.path.exists(pig_dir) else []
+
+        if len(existing_jpg) >= 200:
+            _ASSETS_INITIALIZED = True
+            return True
+
+        zip_path = os.path.join(CARDS_ASSETS_DIR, "cards_assets_opt.zip")
+        if not os.path.exists(zip_path):
+            try:
+                import urllib.request
+                logger.info("Загрузка архива карточек из GitHub Release: %s", ASSETS_ZIP_URL)
+                req = urllib.request.Request(
+                    ASSETS_ZIP_URL,
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                with urllib.request.urlopen(req, timeout=120) as resp, open(zip_path, "wb") as out_f:
+                    shutil.copyfileobj(resp, out_f)
+                logger.info("Архив карточек успешно скачан (%s)", zip_path)
+            except Exception as e:
+                logger.warning("Не удалось скачать архив карточек: %s", e)
+                return False
+
+        if os.path.exists(zip_path):
+            try:
+                import zipfile
+                from PIL import Image
+                with zipfile.ZipFile(zip_path, "r") as z:
+                    for item in z.infolist():
+                        if not item.filename.endswith(".webp"):
+                            continue
+                        base = os.path.splitext(item.filename)[0]
+                        webp_path = os.path.join(pig_dir, item.filename)
+                        jpg_name = base + ".jpg"
+                        jpg_path = os.path.join(pig_dir, jpg_name)
+
+                        if not os.path.exists(webp_path):
+                            with open(webp_path, "wb") as f:
+                                f.write(z.read(item))
+
+                        if not os.path.exists(jpg_path):
+                            try:
+                                with Image.open(webp_path) as im:
+                                    im.convert("RGB").save(jpg_path, "JPEG", quality=85)
+                            except Exception:
+                                pass
+
+                        try:
+                            num = int(base.split("_")[-1])
+                            meme_path = os.path.join(CARDS_ASSETS_DIR, f"meme_{num}.jpg")
+                            if not os.path.exists(meme_path) and os.path.exists(jpg_path):
+                                shutil.copyfile(jpg_path, meme_path)
+                        except Exception:
+                            pass
+                logger.info("Все 200 изображений карточек успешно подготовлены!")
+                _PHOTO_PATH_CACHE.clear()
+                _ASSETS_INITIALIZED = True
+                return True
+            except Exception as e:
+                logger.warning("Ошибка при распаковке архива карточек: %s", e)
+                return False
+
+        return False
+
+
+def _ensure_jpg_format(path: str) -> str:
+    """Если файл в формате .webp, конвертирует его в .jpg для полной совместимости с Telegram Bot API."""
+    if not path or not path.lower().endswith(".webp"):
+        return path
+    jpg_path = path.rsplit(".", 1)[0] + ".jpg"
+    if os.path.exists(jpg_path):
+        return jpg_path
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            im.convert("RGB").save(jpg_path, "JPEG", quality=85)
+        return jpg_path
+    except Exception as e:
+        logger.warning("Не удалось сконвертировать %s в JPG: %s", path, e)
+        return path
+
+
+def _start_assets_loader_thread() -> None:
+    try:
+        t = threading.Thread(target=ensure_cards_assets, daemon=True, name="CardsAssetsLoader")
+        t.start()
+    except Exception as e:
+        logger.warning("Не удалось запустить CardsAssetsLoader: %s", e)
+
+
+_start_assets_loader_thread()
+
+
+def get_card_photo_source(card_id: str) -> Optional[str]:
+    if card_id in _PHOTO_PATH_CACHE and _PHOTO_PATH_CACHE[card_id]:
+        cached = _PHOTO_PATH_CACHE[card_id]
+        if cached and os.path.exists(cached):
+            return cached
+
+    # 1. Проверяем assets/cards/meme_X.(jpg|jpeg|png|webp)
+    for ext in ("jpg", "jpeg", "png", "webp"):
         path = os.path.join(CARDS_ASSETS_DIR, f"{card_id}.{ext}")
         if os.path.exists(path):
-            _PHOTO_PATH_CACHE[card_id] = path
-            return path
+            res = _ensure_jpg_format(path)
+            _PHOTO_PATH_CACHE[card_id] = res
+            return res
 
     try:
         num = int(card_id.split("_")[-1]) if "_" in card_id else int("".join(filter(str.isdigit, card_id)))
@@ -504,11 +626,39 @@ def get_card_photo_source(card_id: str) -> Optional[str]:
         num = 1
 
     pig_key = f"pig_{((num - 1) % 200) + 1:03d}"
-    for fname in (f"{pig_key}.jpg", f"pig_{((num - 1) % 200) + 1:02d}.jpg"):
-        pig_path = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs", fname)
-        if os.path.exists(pig_path):
-            _PHOTO_PATH_CACHE[card_id] = pig_path
-            return pig_path
+    pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
+
+    # 2. Проверяем assets/cards/guinea_pigs/pig_XXX.(jpg|jpeg|png|webp)
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        for pkey in (pig_key, f"pig_{((num - 1) % 200) + 1:02d}"):
+            pig_path = os.path.join(pig_dir, f"{pkey}.{ext}")
+            if os.path.exists(pig_path):
+                res = _ensure_jpg_format(pig_path)
+                _PHOTO_PATH_CACHE[card_id] = res
+                return res
+
+    # 3. Проверяем напрямую в assets/cards/
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        alt_path = os.path.join(CARDS_ASSETS_DIR, f"{pig_key}.{ext}")
+        if os.path.exists(alt_path):
+            res = _ensure_jpg_format(alt_path)
+            _PHOTO_PATH_CACHE[card_id] = res
+            return res
+
+    # 4. Если на диске пусто (новый контейнер), пробуем синхронный запуск загрузчика
+    if ensure_cards_assets():
+        for ext in ("jpg", "jpeg", "png", "webp"):
+            path = os.path.join(CARDS_ASSETS_DIR, f"{card_id}.{ext}")
+            if os.path.exists(path):
+                res = _ensure_jpg_format(path)
+                _PHOTO_PATH_CACHE[card_id] = res
+                return res
+        for ext in ("jpg", "jpeg", "png", "webp"):
+            pig_path = os.path.join(pig_dir, f"{pig_key}.{ext}")
+            if os.path.exists(pig_path):
+                res = _ensure_jpg_format(pig_path)
+                _PHOTO_PATH_CACHE[card_id] = res
+                return res
 
     global _CARD_URLS_CACHE
     if _CARD_URLS_CACHE is None:
