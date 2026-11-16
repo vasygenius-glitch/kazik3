@@ -5,6 +5,8 @@ firebase-key.json
 logs/
 assets/cards/guinea_pigs/
 assets/cards/cache/
+assets/cards/*.jpg
+assets/cards/*.png
 scratch/
 data/
 .agents/
