@@ -77,15 +77,15 @@ def test_cooldown_manager_creator_bypass():
 
 def test_pity_guarantee():
     case = CASES["epic_case"]
-    # With pity_count = 14 (PITY_THRESHOLD - 1 = 14), next roll (15) triggers pity
-    card_id, triggered = roll_card_from_case(case, user_id=11111, pity_count=14)
+    # With pity_count = PITY_THRESHOLD - 1, next roll triggers pity
+    card_id, triggered = roll_card_from_case(case, user_id=11111, pity_count=PITY_THRESHOLD - 1)
     assert card_id is not None
     assert triggered is True
     assert CARDS[card_id]["rarity"] in ("LEGENDARY", "MYTHIC", "SECRET")
 
     # Common case has no pity
     common_case = CASES["common_case"]
-    card_id_c, triggered_c = roll_card_from_case(common_case, user_id=11111, pity_count=14)
+    card_id_c, triggered_c = roll_card_from_case(common_case, user_id=11111, pity_count=PITY_THRESHOLD - 1)
     assert triggered_c is False
 
 
@@ -137,12 +137,11 @@ def test_best_and_favorite_card_selection():
 
 @pytest.mark.asyncio
 async def test_process_drop_rewards_shards_and_pity():
-    with patch("cards_system.get_user_data") as mock_get, \
-         patch("cards_system.update_user_field") as mock_update, \
+    with patch("cards_system.update_user_field") as mock_update, \
          patch("cards_system.invalidate_user_cache") as mock_inv:
-        
+
         # User owns card, rarity = RARE -> 30 shards
-        mock_get.return_value = {"card_shards": 50, "card_pity": 3}
+        pre_data = {"card_shards": 50, "card_pity": 3}
         mock_update.return_value = None
 
         rare_card = CARDS_BY_RARITY["RARE"][0]
@@ -152,6 +151,7 @@ async def test_process_drop_rewards_shards_and_pity():
             card_id=rare_card,
             was_already_owned=True,
             triggered_pity=False,
+            pre_data=pre_data,
         )
 
         assert shards == 30
