@@ -1,15 +1,17 @@
 # cards_system.py
 """
-Система коллекционных карточек v2.0 (Полная переработка):
+Система коллекционных карточек v2.1 (Визуальный апгрейд + атрибуция игроков):
+- Чёткое указание игрока, выбившего / скрафтившего / просматривающего карту
 - Умные кулдауны (КД) и анти-спам защита для групп и ЛС
 - 7 редкостей (включая Мифические и Секретные), 200 уникальных карточек и 5 сетов
 - Система Гаранта (Pity) на Легендарную+ карту
 - Сырные Осколки (пыль за дубликаты) и Кузница (крафт неоткрытых карт)
-- Фильтры коллекции, поиск карт по номеру/названию, Витрина (избранная карта)
-- Карточные дуэли между игроками (/card_duel)
+- Визуальный UI с прогресс-барами, звёздами редкости и стильной PIL-генерацией карт
+- Фильтры коллекции, поиск карт, Витрина и Карточные дуэли (/card_duel)
 """
 
 import asyncio
+import html
 import json
 import logging
 import os
@@ -68,13 +70,13 @@ COOLDOWNS = {
 # ─────────────────────────────────────────────────────────────
 
 RARITIES = {
-    "COMMON":    {"name": "Обычная",     "emoji": "⚪️", "shards": 5,   "power": 10,  "color": (200, 200, 200)},
-    "UNCOMMON":  {"name": "Необычная",   "emoji": "🟢", "shards": 12,  "power": 25,  "color": (50, 205, 50)},
-    "RARE":      {"name": "Редкая",      "emoji": "🔵", "shards": 30,  "power": 55,  "color": (30, 144, 255)},
-    "EPIC":      {"name": "Эпическая",   "emoji": "🟣", "shards": 75,  "power": 110, "color": (153, 50, 204)},
-    "LEGENDARY": {"name": "Легендарная", "emoji": "🟡", "shards": 180, "power": 230, "color": (255, 215, 0)},
-    "MYTHIC":    {"name": "Мифическая",  "emoji": "🔴", "shards": 350, "power": 420, "color": (220, 30, 60)},
-    "SECRET":    {"name": "Секретная",   "emoji": "🌈", "shards": 700, "power": 777, "color": (255, 105, 180)},
+    "COMMON":    {"name": "Обычная",     "emoji": "⚪️", "stars": 1, "shards": 5,   "power": 10,  "color": (185, 195, 210), "bg": (26, 28, 38)},
+    "UNCOMMON":  {"name": "Необычная",   "emoji": "🟢", "stars": 2, "shards": 12,  "power": 25,  "color": (72, 215, 120),  "bg": (20, 36, 28)},
+    "RARE":      {"name": "Редкая",      "emoji": "🔵", "stars": 3, "shards": 30,  "power": 55,  "color": (65, 165, 255),  "bg": (18, 28, 46)},
+    "EPIC":      {"name": "Эпическая",   "emoji": "🟣", "stars": 4, "shards": 75,  "power": 110, "color": (180, 90, 245),  "bg": (34, 20, 48)},
+    "LEGENDARY": {"name": "Легендарная", "emoji": "🟡", "stars": 5, "shards": 180, "power": 230, "color": (255, 210, 55),  "bg": (44, 34, 16)},
+    "MYTHIC":    {"name": "Мифическая",  "emoji": "🔴", "stars": 6, "shards": 350, "power": 420, "color": (245, 55, 85),   "bg": (46, 16, 24)},
+    "SECRET":    {"name": "Секретная",   "emoji": "🌈", "stars": 7, "shards": 700, "power": 777, "color": (255, 120, 210), "bg": (36, 18, 44)},
 }
 
 RARITY_ORDER = ["COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC", "SECRET"]
@@ -226,6 +228,14 @@ def fmt_seconds(sec: float) -> str:
     return f"{s} сек."
 
 
+def format_player_mention(user: Optional[types.User], fallback_name: str = "Игрок") -> str:
+    """Возвращает кликабельное HTML-упоминание игрока для чата."""
+    if user is None:
+        return html.escape(fallback_name)
+    safe_name = html.escape(user.full_name or fallback_name)
+    return f'<a href="tg://user?id={user.id}">{safe_name}</a>'
+
+
 # ─────────────────────────────────────────────────────────────
 #  ГЕНЕРАЦИЯ 200 КАРТ
 # ─────────────────────────────────────────────────────────────
@@ -372,7 +382,7 @@ _CARD_URLS_CACHE: Optional[dict] = None
 
 
 # ─────────────────────────────────────────────────────────────
-#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+#  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И ВИЗУАЛЬНЫЕ ХЕЛПЕРЫ
 # ─────────────────────────────────────────────────────────────
 
 def get_rarity_emoji(rarity: str) -> str:
@@ -381,6 +391,11 @@ def get_rarity_emoji(rarity: str) -> str:
 
 def get_rarity_name(rarity: str) -> str:
     return RARITIES.get(rarity, {}).get("name", "Обычная")
+
+
+def get_rarity_stars(rarity: str) -> str:
+    stars = RARITIES.get(rarity, {}).get("stars", 1)
+    return "★" * stars + "☆" * max(0, 7 - stars)
 
 
 def get_rarity_shards(rarity: str) -> int:
@@ -393,10 +408,10 @@ def fmt_num(value: int | float) -> str:
 
 def make_progress_bar(current: int, total: int, length: int = 10) -> str:
     if total <= 0:
-        return "░" * length
+        return "▱" * length
     ratio = max(0.0, min(1.0, current / total))
     filled = int(round(ratio * length))
-    return "▓" * filled + "░" * (length - filled)
+    return "▰" * filled + "▱" * (length - filled)
 
 
 def roll_card_from_case(
@@ -414,7 +429,6 @@ def roll_card_from_case(
         rarity = random.choice(pool)
         return random.choice(CARDS_BY_RARITY[rarity]), False
 
-    # Срабатывание гаранта (Pity)
     if pity_count + 1 >= PITY_THRESHOLD and case_info["id"] != "common_case":
         pity_pool = [r for r in ("LEGENDARY", "MYTHIC", "SECRET") if CARDS_BY_RARITY.get(r)]
         if pity_pool:
@@ -467,34 +481,80 @@ def find_card_photo(card_id: str) -> Optional[str]:
     return get_card_photo_source(card_id)
 
 
-def generate_card_image_fallback(card_id: str) -> str:
-    """Генерирует стильную запасную карточку через PIL с номером и рамкой редкости."""
+def _load_pil_font(size: int):
+    from PIL import ImageFont
+    font_candidates = (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    )
+    for path in font_candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size=size)
+            except Exception:
+                pass
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
+
+
+def generate_card_image_fallback(card_id: str) -> str:
+    """Генерирует стильную коллекционную карту через PIL с рамкой редкости, звёздами и статами."""
+    try:
+        from PIL import Image, ImageDraw
 
         cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
         os.makedirs(cache_dir, exist_ok=True)
-        out_path = os.path.join(cache_dir, f"{card_id}_fallback.png")
+        out_path = os.path.join(cache_dir, f"{card_id}_v2.png")
         if os.path.exists(out_path):
             return out_path
 
         card_info = CARDS.get(card_id, {})
         rarity = str(card_info.get("rarity", "COMMON")).upper()
-        border_color = RARITIES.get(rarity, {}).get("color", (200, 200, 200))
+        r_meta = RARITIES.get(rarity, RARITIES["COMMON"])
+        border_color = r_meta["color"]
+        bg_color = r_meta["bg"]
 
-        img = Image.new("RGB", (600, 800), color=(20, 18, 34))
+        w, h = 600, 820
+        img = Image.new("RGB", (w, h), color=bg_color)
         draw = ImageDraw.Draw(img)
 
-        # Рамка редкости и внутренний декор
-        draw.rectangle([16, 16, 584, 784], outline=border_color, width=12)
-        draw.rectangle([34, 34, 566, 766], outline=(245, 245, 255), width=2)
-        draw.rectangle([60, 120, 540, 520], fill=(34, 30, 56), outline=border_color, width=3)
+        # Многослойная рамка и угловые акценты
+        draw.rounded_rectangle([14, 14, w - 14, h - 14], radius=28, outline=border_color, width=10)
+        draw.rounded_rectangle([30, 30, w - 30, h - 30], radius=20, outline=(245, 245, 255), width=2)
 
-        font_lg = ImageFont.load_default()
-        num_str = f"#{card_id.removeprefix('meme_')}"
-        draw.text((270, 65), num_str, fill=border_color, font=font_lg)
-        draw.text((220, 310), "GUINEA PIG CARD", fill=(220, 220, 240), font=font_lg)
-        draw.text((230, 580), get_rarity_name(rarity).upper(), fill=border_color, font=font_lg)
+        # Верхняя плашка номера и редкости
+        draw.rounded_rectangle([54, 52, w - 54, 122], radius=14, fill=(18, 18, 28), outline=border_color, width=2)
+        # Центральное окно иллюстрации
+        draw.rounded_rectangle([54, 142, w - 54, 530], radius=18, fill=(28, 26, 44), outline=border_color, width=3)
+        # Декоративный силуэт в центре
+        draw.ellipse([190, 210, 410, 430], fill=(38, 35, 62), outline=border_color, width=4)
+        # Нижняя плашка статов
+        draw.rounded_rectangle([54, 552, w - 54, 766], radius=16, fill=(18, 18, 28), outline=border_color, width=2)
+
+        font_title = _load_pil_font(26)
+        font_sub = _load_pil_font(20)
+        font_big = _load_pil_font(34)
+
+        num_str = f"№{card_id.removeprefix('meme_')}"
+        rarity_label = get_rarity_name(rarity).upper()
+        stars_str = "*" * r_meta["stars"]
+
+        draw.text((76, 72), num_str, fill=border_color, font=font_title)
+        draw.text((250, 72), rarity_label, fill=(245, 245, 255), font=font_title)
+        draw.text((238, 316), num_str, fill=border_color, font=font_big)
+
+        name_raw = card_info.get("name", "Свинка")
+        # Убираем эмодзи-префикс для чистого шрифта
+        clean_name = name_raw.split(": ", 1)[-1][:28]
+        draw.text((76, 578), clean_name, fill=(255, 255, 255), font=font_title)
+        draw.text((76, 628), f"POWER: {card_info.get('power', 10)}   |   TIER: {stars_str}", fill=border_color, font=font_sub)
+
+        mult_pct = round(card_info.get("bonus_multiplier", 0) * 100, 2)
+        flat_val = card_info.get("bonus_flat", 0)
+        draw.text((76, 676), f"BONUS: +{mult_pct}%   |   INCOME: +{flat_val}/day", fill=(200, 215, 235), font=font_sub)
 
         img.save(out_path)
         return out_path
@@ -510,7 +570,7 @@ def format_card_bonuses(card: dict) -> str:
         lines.append(f"✨ Множитель • <b>+{mult_percent}%</b> к /bonus")
     if card["bonus_flat"] > 0:
         lines.append(f"💰 Доход • <b>+{fmt_num(card['bonus_flat'])}</b> сыр./день")
-    lines.append(f"⚔️ Сила карты • <b>{card.get('power', 10)}</b>")
+    lines.append(f"⚔️ Сила • <b>{card.get('power', 10)} ⚡</b>")
     return "\n".join(lines)
 
 
@@ -522,22 +582,26 @@ def format_case_description(case: dict) -> str:
     return f"{case['tagline']}\nШансы: " + " | ".join(chance_parts)
 
 
-def build_shop_text(data: dict) -> str:
+def build_shop_text(data: dict, player_mention: Optional[str] = None) -> str:
     balance = data.get("balance", 0)
     shards = data.get("card_shards", 0)
     pity = data.get("card_pity", 0)
     pity_bar = make_progress_bar(pity, PITY_THRESHOLD, 10)
 
     cases_block = "\n\n".join(
-        f"{c['name']} — <b>{'БЕСПЛАТНО' if c['price'] == 0 else fmt_num(c['price']) + ' сыр.'}</b>\n"
+        f"▸ {c['name']} — <b>{'БЕСПЛАТНО' if c['price'] == 0 else fmt_num(c['price']) + ' сыр.'}</b>\n"
         f"<i>{format_case_description(c)}</i>"
         for c in CASES.values()
     )
 
+    owner_line = f"👤 Игрок • {player_mention}\n" if player_mention else ""
     return (
-        "🎴 <b>МАГАЗИН КЕЙСОВ С КАРТОЧКАМИ</b> 🎴\n\n"
+        "🎴 <b>МАГАЗИН КЕЙСОВ С КАРТОЧКАМИ</b> 🎴\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"{owner_line}"
         f"💰 Баланс: <b>{fmt_num(balance)}</b> сыр.  |  🧀 Осколки: <b>{fmt_num(shards)}</b>\n"
-        f"🎯 Гарант Легендарки+: [{pity_bar}] <b>{pity}/{PITY_THRESHOLD}</b>\n\n"
+        f"🎯 Гарант Легендарки+: [{pity_bar}] <b>{pity}/{PITY_THRESHOLD}</b>\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n\n"
         f"{cases_block}"
     )
 
@@ -567,8 +631,9 @@ def build_card_caption_markup(card_key: str, user_id: int, is_fav: bool = False)
     builder = InlineKeyboardBuilder()
     fav_text = "⭐️ На витрине" if is_fav else "☆ На витрину"
     builder.button(text=fav_text, callback_data=f"card_fav_{card_key}_{user_id}")
+    builder.button(text="🎒 Коллекция", callback_data=f"card_page_0_all_{user_id}")
     builder.button(text="❌ Закрыть", callback_data=f"card_close_{user_id}")
-    builder.adjust(2)
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 
@@ -590,7 +655,6 @@ async def send_card_message(
 
     photo_source = get_card_photo_source(card_id)
 
-    # 1. Локальный файл
     if photo_source and not photo_source.startswith(("http://", "https://")) and os.path.exists(photo_source):
         try:
             sent_msg = await message.answer_photo(
@@ -602,7 +666,6 @@ async def send_card_message(
         except Exception as e:
             logger.warning("Ошибка отправки локального фото %s: %s", photo_source, e)
 
-    # 2. Внешний URL
     if photo_source and photo_source.startswith(("http://", "https://")):
         clean_url = photo_source.split("?")[0]
         try:
@@ -613,7 +676,6 @@ async def send_card_message(
         except Exception as e:
             logger.warning("Ошибка отправки URL фото %s: %s", clean_url, e)
 
-    # 3. PIL Fallback
     fallback_path = generate_card_image_fallback(card_id)
     if fallback_path and os.path.exists(fallback_path):
         try:
@@ -626,7 +688,6 @@ async def send_card_message(
         except Exception as e:
             logger.warning("Ошибка отправки PIL fallback %s: %s", fallback_path, e)
 
-    # 4. Резервный URL / текст
     default_pig_url = "https://images.unsplash.com/photo-1548767797-d8c844163c4c?w=800&auto=format&fit=crop"
     try:
         sent_msg = await message.answer_photo(photo=default_pig_url, caption=text, reply_markup=reply_markup)
@@ -657,7 +718,6 @@ async def _process_drop_rewards(
     data = await get_user_data(chat_id, user_id)
     rarity = CARDS[card_id]["rarity"]
 
-    # Сбрасываем гарант, если выпала Легендарная+ или сработал сам гарант
     if triggered_pity or rarity in ("LEGENDARY", "MYTHIC", "SECRET"):
         new_pity = 0
     else:
@@ -675,8 +735,27 @@ async def _process_drop_rewards(
     return gained_shards, new_pity
 
 
+def _build_animation_slides(player_mention: str, rarity: str) -> tuple[str, ...]:
+    base = [
+        f"🎰 <b>Открытие кейса</b> • {player_mention}\n\n[▱▱▱▱▱▱▱▱▱▱] 0%",
+        f"🎰 <b>Открытие кейса</b> • {player_mention}\n\n[▰▰▰▱▱▱▱▱▱▱] 30%\n🌀 <i>Тасуем колоду свинок...</i>",
+        f"🎰 <b>Открытие кейса</b> • {player_mention}\n\n[▰▰▰▰▰▰▰▱▱▱] 70%\n✨ <i>Сверяем редкость и ауру...</i>",
+    ]
+    if rarity in ("LEGENDARY", "MYTHIC", "SECRET"):
+        base.append(
+            f"🎰 <b>Открытие кейса</b> • {player_mention}\n\n[▰▰▰▰▰▰▰▰▰▰] 100%\n"
+            f"🔥 <b>ВСПЫШКА РЕДКОСТИ! ЧТО-ТО МОЩНОЕ...</b>"
+        )
+    else:
+        base.append(
+            f"🎰 <b>Открытие кейса</b> • {player_mention}\n\n[▰▰▰▰▰▰▰▰▰▰] 100%\n🎉 <b>ГОТОВО!</b>"
+        )
+    return tuple(base)
+
+
 def _build_drop_caption(
     title: str,
+    player_mention: str,
     card_id: str,
     was_owned: bool,
     gained_shards: int,
@@ -686,6 +765,8 @@ def _build_drop_caption(
     card = CARDS[card_id]
     rarity = card["rarity"]
     num = card_id.removeprefix("meme_")
+    stars = get_rarity_stars(rarity)
+    pity_bar = make_progress_bar(new_pity, PITY_THRESHOLD, 8)
 
     badges = []
     if not was_owned:
@@ -697,12 +778,15 @@ def _build_drop_caption(
 
     badges_str = "\n".join(badges)
     return (
-        f"{title}\n\n"
+        f"{title}\n"
+        f"👤 Выбил(а) • {player_mention}\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
         f"{badges_str}\n\n"
         f"🃏 «<b>{card['name']}</b>» (№{num})\n"
-        f"💎 Редкость • {get_rarity_emoji(rarity)} <b>{get_rarity_name(rarity)}</b>\n"
+        f"💎 Редкость • {get_rarity_emoji(rarity)} <b>{get_rarity_name(rarity)}</b> <code>[{stars}]</code>\n"
         f"{format_card_bonuses(card)}\n"
-        f"🎯 До гаранта: <b>{new_pity}/{PITY_THRESHOLD}</b>"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"🎯 Гарант: [{pity_bar}] <b>{new_pity}/{PITY_THRESHOLD}</b>"
     )
 
 
@@ -719,13 +803,6 @@ FREE_CASE_TRIGGERS = {
     "/бесплатный кейс", "/бонусный кейс",
 }
 
-ANIMATION_SLIDES = (
-    "🎰 <b>Открытие кейса...</b>\n\n[░░░░░░░░░░] 0%",
-    "🎰 <b>Открытие кейса...</b>\n\n[▓▓▓░░░░░░░] 30%\n🌀 <i>Тасуем колоду свинок...</i>",
-    "🎰 <b>Открытие кейса...</b>\n\n[▓▓▓▓▓▓▓░░░] 70%\n✨ <i>Сверяем редкость и ауру...</i>",
-    "🎰 <b>Открытие кейса...</b>\n\n[▓▓▓▓▓▓▓▓▓▓] 100%\n🎉 <b>ГОТОВО!</b>",
-)
-
 
 @router.message(Command("reset_free_case", "reset_bc", "сброс_бк", "reset_case"))
 async def cmd_reset_free_case(message: types.Message):
@@ -735,25 +812,26 @@ async def cmd_reset_free_case(message: types.Message):
 
     chat_id = message.chat.id
     target_id = user_id
-    target_name = message.from_user.full_name
+    target_mention = format_player_mention(message.from_user)
 
     if message.reply_to_message and message.reply_to_message.from_user:
         target_id = message.reply_to_message.from_user.id
-        target_name = message.reply_to_message.from_user.full_name
+        target_mention = format_player_mention(message.reply_to_message.from_user)
     else:
         args = (message.text or "").split()
         if len(args) >= 2:
             target_user = await get_user_by_username_or_id(chat_id, args[1])
             if target_user:
                 target_id = target_user["user_id"]
-                target_name = target_user.get("full_name", f"Юзер {target_id}")
+                safe_name = html.escape(target_user.get("full_name", f"Юзер {target_id}"))
+                target_mention = f'<a href="tg://user?id={target_id}">{safe_name}</a>'
 
     await update_user_field(chat_id, target_id, "last_free_card_case_ts", 0)
     invalidate_user_cache(chat_id, target_id)
 
     await message.answer(
         f"⚡️ <b>Сброс выполнен!</b>\n\n"
-        f"Кулдаун бесплатного кейса для <b>{target_name}</b> обнулён! Команда <code>/бк</code> доступна прямо сейчас."
+        f"Кулдаун бесплатного кейса для {target_mention} обнулён! Команда <code>/бк</code> доступна прямо сейчас."
     )
 
 
@@ -762,6 +840,7 @@ async def cmd_reset_free_case(message: types.Message):
 async def cmd_free_case(message: types.Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
+    player_mention = format_player_mention(message.from_user)
 
     ok_spam, left_spam = cooldowns.check(chat_id, user_id, "free_case_spam")
     if not ok_spam:
@@ -798,7 +877,7 @@ async def cmd_free_case(message: types.Message):
 
         if not success:
             cooldowns.trigger(chat_id, user_id, "free_case_spam")
-            return await message.answer(err)
+            return await message.answer(f"{player_mention}, {err}")
 
         invalidate_user_cache(chat_id, user_id)
         gained_shards, new_pity = await _process_drop_rewards(
@@ -807,13 +886,15 @@ async def cmd_free_case(message: types.Message):
 
     cooldowns.trigger(chat_id, user_id, "case_open")
 
-    msg = await message.answer("🎁 <b>Открываем бесплатный 12-часовой кейс...</b>")
-    for slide in ANIMATION_SLIDES:
+    slides = _build_animation_slides(player_mention, CARDS[card_id]["rarity"])
+    msg = await message.answer(slides[0])
+    for slide in slides[1:]:
+        await asyncio.sleep(ANIMATION_DELAY)
         try:
             await msg.edit_text(slide)
         except Exception:
             pass
-        await asyncio.sleep(ANIMATION_DELAY)
+    await asyncio.sleep(0.3)
     try:
         await msg.delete()
     except Exception:
@@ -821,7 +902,7 @@ async def cmd_free_case(message: types.Message):
 
     caption = _build_drop_caption(
         "🎁 <b>БЕСПЛАТНЫЙ КЕЙС (12ч) ОТКРЫТ!</b>",
-        card_id, was_owned, gained_shards, new_pity, triggered_pity
+        player_mention, card_id, was_owned, gained_shards, new_pity, triggered_pity
     )
     is_fav = pre_data.get("favorite_card_id") == card_id
     await send_card_message(
@@ -842,6 +923,7 @@ async def callback_open_free_case(callback: CallbackQuery):
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
+    player_mention = format_player_mention(callback.from_user)
 
     ok_cb, left_cb = cooldowns.check(chat_id, user_id, "callback")
     if not ok_cb:
@@ -884,7 +966,8 @@ async def callback_open_free_case(callback: CallbackQuery):
     cooldowns.trigger(chat_id, user_id, "case_open")
     await callback.answer("Открываем бесплатный кейс...")
 
-    for slide in ANIMATION_SLIDES:
+    slides = _build_animation_slides(player_mention, CARDS[card_id]["rarity"])
+    for slide in slides:
         try:
             await callback.message.edit_text(slide)
         except Exception:
@@ -898,7 +981,7 @@ async def callback_open_free_case(callback: CallbackQuery):
 
     caption = _build_drop_caption(
         "🎁 <b>БЕСПЛАТНЫЙ КЕЙС (12ч) ОТКРЫТ!</b>",
-        card_id, was_owned, gained_shards, new_pity, triggered_pity
+        player_mention, card_id, was_owned, gained_shards, new_pity, triggered_pity
     )
     is_fav = pre_data.get("favorite_card_id") == card_id
     await send_card_message(
@@ -926,8 +1009,9 @@ async def cmd_cases(message: types.Message):
         return
 
     cooldowns.trigger(chat_id, user_id, "shop_cmd")
+    player_mention = format_player_mention(message.from_user)
     await message.answer(
-        build_shop_text(data),
+        build_shop_text(data, player_mention),
         reply_markup=build_shop_keyboard(user_id=user_id),
     )
 
@@ -955,13 +1039,17 @@ async def callback_shop_back(callback: CallbackQuery):
     if data.get("is_banned"):
         return await callback.answer("Вы забанены.", show_alert=True)
 
+    player_mention = format_player_mention(callback.from_user)
     try:
         await callback.message.edit_text(
-            build_shop_text(data),
+            build_shop_text(data, player_mention),
             reply_markup=build_shop_keyboard(user_id=user_id),
         )
     except Exception:
-        pass
+        await callback.message.answer(
+            build_shop_text(data, player_mention),
+            reply_markup=build_shop_keyboard(user_id=user_id),
+        )
     await callback.answer()
 
 
@@ -990,6 +1078,7 @@ async def callback_buy_case(callback: CallbackQuery):
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
+    player_mention = format_player_mention(callback.from_user)
 
     ok_cd, left_cd = cooldowns.check(chat_id, user_id, "case_open")
     if not ok_cd:
@@ -1001,7 +1090,6 @@ async def callback_buy_case(callback: CallbackQuery):
     price = case_info["price"]
     lock = get_user_lock(chat_id, user_id)
     async with lock:
-        # Повторная проверка под локом от двойного клика
         ok_cd2, left_cd2 = cooldowns.check(chat_id, user_id, "case_open")
         if not ok_cd2:
             return await callback.answer(f"⏳ КД: {fmt_seconds(left_cd2)}", show_alert=True)
@@ -1039,7 +1127,8 @@ async def callback_buy_case(callback: CallbackQuery):
 
     await callback.answer("Открываем кейс...")
 
-    for slide in ANIMATION_SLIDES:
+    slides = _build_animation_slides(player_mention, CARDS[card_id]["rarity"])
+    for slide in slides:
         try:
             await callback.message.edit_text(slide)
         except Exception:
@@ -1053,7 +1142,7 @@ async def callback_buy_case(callback: CallbackQuery):
 
     caption = _build_drop_caption(
         f"{case_info['name']} <b>ОТКРЫТ!</b>",
-        card_id, was_owned, gained_shards, new_pity, triggered_pity
+        player_mention, card_id, was_owned, gained_shards, new_pity, triggered_pity
     )
     is_fav = pre_data.get("favorite_card_id") == card_id
     await send_card_message(
@@ -1065,15 +1154,17 @@ async def callback_buy_case(callback: CallbackQuery):
 #  КУЗНИЦА КАРТ (/forge, /кузница) — КРАФТ ЗА СЫРНЫЕ ОСКОЛКИ
 # ─────────────────────────────────────────────────────────────
 
-def build_forge_text(data: dict) -> str:
+def build_forge_text(data: dict, player_mention: Optional[str] = None) -> str:
     shards = int(data.get("card_shards", 0))
     meme_cards = data.get("meme_cards", {}) or {}
+    owner_line = f"👤 Мастер • {player_mention}\n" if player_mention else ""
 
     lines = [
-        "🔨 <b>КУЗНИЦА КАРТОЧЕК</b> 🔨\n",
-        f"🧀 Ваши Сырные Осколки: <b>{fmt_num(shards)}</b>\n",
+        "🔨 <b>КУЗНИЦА КАРТОЧЕК</b> 🔨",
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈",
+        f"{owner_line}🧀 Сырные Осколки: <b>{fmt_num(shards)}</b>\n",
         "<i>Дубликаты из кейсов автоматически дают осколки. "
-        "Здесь можно гарантированно скрафтить <b>ещё не открытую</b> карту нужной редкости!</i>\n",
+        "Здесь можно гарантированно выковать <b>ещё не открытую</b> карту!</i>\n",
     ]
     for r in ("COMMON", "UNCOMMON", "RARE", "EPIC", "LEGENDARY", "MYTHIC"):
         cost = CRAFT_COSTS[r]
@@ -1116,7 +1207,8 @@ async def cmd_forge(message: types.Message):
         return
 
     cooldowns.trigger(chat_id, user_id, "craft")
-    await message.answer(build_forge_text(data), reply_markup=build_forge_keyboard(user_id))
+    player_mention = format_player_mention(message.from_user)
+    await message.answer(build_forge_text(data, player_mention), reply_markup=build_forge_keyboard(user_id))
 
 
 @router.callback_query(F.data.startswith("card_forge"))
@@ -1130,9 +1222,10 @@ async def callback_forge_menu(callback: CallbackQuery):
             return await callback.answer("⚠️ Это не ваша кузница!", show_alert=True)
 
     data = await get_user_data(callback.message.chat.id, callback.from_user.id)
+    player_mention = format_player_mention(callback.from_user)
     try:
         await callback.message.edit_text(
-            build_forge_text(data),
+            build_forge_text(data, player_mention),
             reply_markup=build_forge_keyboard(callback.from_user.id),
         )
     except Exception:
@@ -1159,6 +1252,7 @@ async def callback_craft_card(callback: CallbackQuery):
 
     chat_id = callback.message.chat.id
     user_id = callback.from_user.id
+    player_mention = format_player_mention(callback.from_user)
 
     ok, left = cooldowns.check(chat_id, user_id, "craft")
     if not ok:
@@ -1191,6 +1285,7 @@ async def callback_craft_card(callback: CallbackQuery):
 
     card = CARDS[new_card_id]
     num = new_card_id.removeprefix("meme_")
+    stars = get_rarity_stars(rarity)
     await callback.answer(f"✨ Выкована карта №{num}!")
     try:
         await callback.message.delete()
@@ -1198,10 +1293,13 @@ async def callback_craft_card(callback: CallbackQuery):
         pass
 
     caption = (
-        "🔨 <b>КАРТА ВЫКОВАНА В КУЗНИЦЕ!</b>\n\n"
+        "🔨 <b>КАРТА ВЫКОВАНА В КУЗНИЦЕ!</b>\n"
+        f"👤 Мастер • {player_mention}\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
         f"🆕 «<b>{card['name']}</b>» (№{num})\n"
-        f"💎 Редкость • {get_rarity_emoji(rarity)} <b>{get_rarity_name(rarity)}</b>\n"
-        f"{format_card_bonuses(card)}\n\n"
+        f"💎 Редкость • {get_rarity_emoji(rarity)} <b>{get_rarity_name(rarity)}</b> <code>[{stars}]</code>\n"
+        f"{format_card_bonuses(card)}\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
         f"🧀 Потрачено: <b>{cost}</b> осколков"
     )
     await send_card_message(
@@ -1248,7 +1346,10 @@ async def cmd_cards(message: types.Message):
         return
 
     cooldowns.trigger(chat_id, user_id, "collection_cmd")
-    await render_collection_page(message, data, page=0, flt="all", as_new=True, user_id=user_id)
+    player_mention = format_player_mention(message.from_user)
+    await render_collection_page(
+        message, data, page=0, flt="all", as_new=True, user_id=user_id, player_mention=player_mention
+    )
 
 
 @router.message(Command("sets", "сеты"))
@@ -1268,8 +1369,13 @@ async def cmd_sets(message: types.Message):
 
     cooldowns.trigger(chat_id, user_id, "collection_cmd")
     meme_cards = data.get("meme_cards", {}) or {}
+    player_mention = format_player_mention(message.from_user)
 
-    lines = ["📚 <b>ТЕМАТИЧЕСКИЕ СЕТЫ КАРТОЧЕК</b>\n"]
+    lines = [
+        "📚 <b>ТЕМАТИЧЕСКИЕ СЕТЫ КАРТОЧЕК</b>",
+        f"👤 Игрок • {player_mention}",
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n",
+    ]
     for s in CARD_SETS.values():
         have = sum(1 for cid in s["cards"] if meme_cards.get(cid, 0) > 0)
         total = len(s["cards"])
@@ -1293,7 +1399,6 @@ async def callback_card_page(callback: CallbackQuery):
     raw_data = callback.data.removeprefix("card_page_")
     parts = raw_data.split("_")
 
-    # Формат: card_page_{page}_{filter}_{owner_id} или старый card_page_{page}_{owner_id}
     flt = "all"
     if len(parts) >= 3 and parts[-1].isdigit():
         owner_id = int(parts[-1])
@@ -1324,7 +1429,10 @@ async def callback_card_page(callback: CallbackQuery):
     if data.get("is_banned"):
         return await callback.answer("Вы забанены.", show_alert=True)
 
-    await render_collection_page(callback.message, data, page=page, flt=flt, as_new=False, user_id=user_id)
+    player_mention = format_player_mention(callback.from_user)
+    await render_collection_page(
+        callback.message, data, page=page, flt=flt, as_new=False, user_id=user_id, player_mention=player_mention
+    )
     await callback.answer()
 
 
@@ -1361,6 +1469,7 @@ async def render_collection_page(
     flt: str = "all",
     as_new: bool = False,
     user_id: Optional[int] = None,
+    player_mention: Optional[str] = None,
 ):
     meme_cards = data.get("meme_cards", {}) or {}
     opened_count = sum(1 for count in meme_cards.values() if count > 0)
@@ -1379,16 +1488,26 @@ async def render_collection_page(
     progress_bar = make_progress_bar(opened_count, TOTAL_CARDS, 10)
     pct = round((opened_count / TOTAL_CARDS) * 100, 1)
 
+    rarity_summary = " ".join(
+        f"{get_rarity_emoji(r)}{sum(1 for k in CARDS_BY_RARITY.get(r, []) if meme_cards.get(k, 0) > 0)}"
+        for r in RARITY_ORDER
+    )
+
+    owner_line = f"👤 Владелец • {player_mention}\n" if player_mention else ""
     lines = [
-        "🎒 <b>КОЛЛЕКЦИЯ КАРТОЧЕК</b> 🎒\n",
+        "🎒 <b>КОЛЛЕКЦИЯ КАРТОЧЕК</b> 🎒",
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈",
+        f"{owner_line}"
         f"[{progress_bar}] <b>{opened_count}/{TOTAL_CARDS}</b> ({pct}%)",
+        f"🏷 {rarity_summary}",
         f"📈 Бонус: <b>+{total_mult}%</b> к /bonus | <b>+{fmt_num(total_flat)}</b> сыр./день",
         f"🧀 Осколки: <b>{fmt_num(shards)}</b> | 📦 Кейсов: <b>{data.get('opened_cases_count', 0)}</b>",
     ]
     if fav_id and fav_id in CARDS:
         lines.append(f"⭐️ Витрина: <b>{CARDS[fav_id]['name']}</b>")
 
-    lines.append(f"\n🔎 Фильтр: <b>{FILTER_LABELS.get(flt, 'Все')}</b> • Стр. <b>{page + 1}/{total_pages}</b>:")
+    lines.append("┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈")
+    lines.append(f"🔎 Фильтр: <b>{FILTER_LABELS.get(flt, 'Все')}</b> • Стр. <b>{page + 1}/{total_pages}</b>:")
 
     if not page_keys:
         lines.append("\n<i>По этому фильтру карточек пока нет.</i>")
@@ -1416,7 +1535,6 @@ async def render_collection_page(
     uid_suffix = f"_{user_id}" if user_id is not None else ""
     builder = InlineKeyboardBuilder()
 
-    # Навигация
     if page > 0:
         builder.button(text="⬅️ Назад", callback_data=f"card_page_{page - 1}_{flt}{uid_suffix}")
     else:
@@ -1429,12 +1547,10 @@ async def render_collection_page(
     else:
         builder.button(text="🛑 Конец", callback_data="none")
 
-    # Фильтры
     for f_key, f_label in FILTER_LABELS.items():
         mark = "• " if f_key == flt else ""
         builder.button(text=f"{mark}{f_label}", callback_data=f"card_page_0_{f_key}{uid_suffix}")
 
-    # Действия
     builder.button(text="🛒 Кейсы", callback_data=f"card_shop_back{uid_suffix}")
     builder.button(text="🔨 Кузница", callback_data=f"card_forge{uid_suffix}")
     builder.adjust(3, 4, 2)
@@ -1446,7 +1562,8 @@ async def render_collection_page(
         try:
             await message.edit_text(text, reply_markup=markup)
         except Exception:
-            pass
+            # Если предыдущее сообщение было с фото (из карточки нажали «Коллекция»), шлём новым текстом
+            await message.answer(text, reply_markup=markup)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1479,14 +1596,11 @@ async def cmd_card_info(message: types.Message):
     query = parts[1].strip()
     card_key: Optional[str] = None
 
-    clean_query = query.lower().removeprefix("meme_").removeprefix("#").removeprefix("№").strip()
-    if clean_query.isdigit():
-        num = int(clean_query)
+    if query.isdigit():
+        num = int(query)
         candidate = f"meme_{num}"
         if candidate in CARDS:
             card_key = candidate
-    elif query.lower() in CARDS:
-        card_key = query.lower()
     else:
         q_low = query.lower()
         for k in SORTED_CARD_KEYS:
@@ -1495,8 +1609,9 @@ async def cmd_card_info(message: types.Message):
                 break
 
     if not card_key:
+        safe_q = html.escape(query)
         return await message.answer(
-            f"Карточка «<b>{query}</b>» не найдена. Введите номер от 1 до {TOTAL_CARDS} или точное слово из названия."
+            f"Карточка «<b>{safe_q}</b>» не найдена. Введите номер от 1 до {TOTAL_CARDS} или точное слово из названия."
         )
 
     cooldowns.trigger(chat_id, user_id, "card_info")
@@ -1505,11 +1620,15 @@ async def cmd_card_info(message: types.Message):
     card_num = card_key.removeprefix("meme_")
     count = (data.get("meme_cards", {}) or {}).get(card_key, 0)
     rarity = card_info["rarity"]
+    stars = get_rarity_stars(rarity)
     status_str = f"🎒 В инвентаре • <b>{count} шт.</b>" if count > 0 else "🔒 Статус • <i>Не открыта</i>"
+    player_mention = format_player_mention(message.from_user)
 
     text = (
-        f"🃏 Карточка «<b>{card_info['name']}</b>» (№{card_num})\n\n"
-        f"💎 Редкость • {get_rarity_emoji(rarity)} <b>{get_rarity_name(rarity)}</b>\n"
+        f"🃏 «<b>{card_info['name']}</b>» (№{card_num})\n"
+        f"👤 Осматривает • {player_mention}\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"💎 Редкость • {get_rarity_emoji(rarity)} <b>{get_rarity_name(rarity)}</b> <code>[{stars}]</code>\n"
         f"📜 Описание • <i>{card_info['description']}</i>\n\n"
         f"{format_card_bonuses(card_info)}\n"
         f"{status_str}"
@@ -1526,7 +1645,6 @@ async def callback_set_favorite(callback: CallbackQuery):
         return await callback.answer()
 
     raw = callback.data.removeprefix("card_fav_")
-    # Формат: meme_123_user_id
     parts = raw.rsplit("_", 1)
     if len(parts) != 2 or not parts[1].isdigit():
         return await callback.answer("Ошибка.", show_alert=True)
@@ -1596,25 +1714,23 @@ async def cmd_card_duel(message: types.Message):
 
     c1 = _pick_best_or_fav_card(p1_data)
     c2 = _pick_best_or_fav_card(p2_data)
+    p1_mention = format_player_mention(message.from_user)
+    p2_mention = format_player_mention(target)
+
     if not c1:
         return await message.answer("У вас нет ни одной карты! Откройте <code>/бк</code> или <code>/cases</code>.")
     if not c2:
-        return await message.answer(f"У <b>{target.full_name}</b> пока нет ни одной карты для дуэли.")
+        return await message.answer(f"У {p2_mention} пока нет ни одной карты для дуэли.")
 
     cooldowns.trigger(chat_id, user_id, "duel")
-
-    now_mono = time.monotonic()
-    expired_duels = [k for k, v in ACTIVE_DUELS.items() if v.get("expires", 0) < now_mono]
-    for k in expired_duels:
-        ACTIVE_DUELS.pop(k, None)
 
     duel_id = f"{user_id}_{target.id}_{int(time.time())}"
     ACTIVE_DUELS[duel_id] = {
         "chat_id": chat_id,
         "p1_id": user_id,
-        "p1_name": message.from_user.full_name,
+        "p1_mention": p1_mention,
         "p2_id": target.id,
-        "p2_name": target.full_name,
+        "p2_mention": p2_mention,
         "expires": time.monotonic() + 90,
     }
 
@@ -1624,8 +1740,9 @@ async def cmd_card_duel(message: types.Message):
     builder.adjust(2)
 
     await message.answer(
-        f"⚔️ <b>ВЫЗОВ НА КАРТОЧНУЮ ДУЭЛЬ!</b>\n\n"
-        f"<b>{message.from_user.full_name}</b> вызывает <b>{target.full_name}</b> на битву свинок!\n"
+        f"⚔️ <b>ВЫЗОВ НА КАРТОЧНУЮ ДУЭЛЬ!</b>\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"{p1_mention} вызывает {p2_mention} на битву свинок!\n"
         f"🏆 Награда победителю: <b>+15 🧀 Сырных Осколков</b>\n"
         f"<i>Сражаются карты с Витрины (или сильнейшие из коллекции).</i>",
         reply_markup=builder.as_markup(),
@@ -1657,7 +1774,7 @@ async def callback_card_duel(callback: CallbackQuery):
     ACTIVE_DUELS.pop(duel_id, None)
     if action == "dec":
         try:
-            await callback.message.edit_text(f"🏃 <b>{duel['p2_name']}</b> уклонился от карточной дуэли.")
+            await callback.message.edit_text(f"🏃 {duel['p2_mention']} уклонился от карточной дуэли.")
         except Exception:
             pass
         return await callback.answer("Вы отказались.")
@@ -1674,23 +1791,31 @@ async def callback_card_duel(callback: CallbackQuery):
     c1, c2 = CARDS[c1_id], CARDS[c2_id]
     roll1 = int(c1["power"] * random.uniform(0.85, 1.25))
     roll2 = int(c2["power"] * random.uniform(0.85, 1.25))
+    max_roll = max(1, roll1, roll2)
+
+    bar1 = make_progress_bar(roll1, max_roll, 8)
+    bar2 = make_progress_bar(roll2, max_roll, 8)
 
     if roll1 >= roll2:
-        winner_id, winner_name, winner_data = duel["p1_id"], duel["p1_name"], p1_data
-        outcome = f"🏆 Победил <b>{winner_name}</b>!"
+        winner_id, winner_mention, winner_data = duel["p1_id"], duel["p1_mention"], p1_data
     else:
-        winner_id, winner_name, winner_data = duel["p2_id"], duel["p2_name"], p2_data
-        outcome = f"🏆 Победил <b>{winner_name}</b>!"
+        winner_id, winner_mention, winner_data = duel["p2_id"], duel["p2_mention"], p2_data
 
     new_shards = int(winner_data.get("card_shards", 0)) + 15
     await update_user_field(chat_id, winner_id, "card_shards", new_shards)
     invalidate_user_cache(chat_id, winner_id)
 
     text = (
-        "⚔️ <b>ИТОГИ КАРТОЧНОЙ ДУЭЛИ</b> ⚔️\n\n"
-        f"👤 <b>{duel['p1_name']}</b>: {get_rarity_emoji(c1['rarity'])} {c1['name']} — <b>{roll1}</b>⚡\n"
-        f"👤 <b>{duel['p2_name']}</b>: {get_rarity_emoji(c2['rarity'])} {c2['name']} — <b>{roll2}</b>⚡\n\n"
-        f"{outcome}\n"
+        "⚔️ <b>ИТОГИ КАРТОЧНОЙ ДУЭЛИ</b> ⚔️\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"👤 {duel['p1_mention']}\n"
+        f"   {get_rarity_emoji(c1['rarity'])} {c1['name']}\n"
+        f"   [{bar1}] <b>{roll1} ⚡</b>\n\n"
+        f"👤 {duel['p2_mention']}\n"
+        f"   {get_rarity_emoji(c2['rarity'])} {c2['name']}\n"
+        f"   [{bar2}] <b>{roll2} ⚡</b>\n"
+        "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈\n"
+        f"🏆 Победил(а) {winner_mention}!\n"
         f"🎁 Приз: <b>+15 🧀 Сырных Осколков</b>"
     )
     try:
