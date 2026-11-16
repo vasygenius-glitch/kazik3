@@ -491,36 +491,53 @@ def roll_card_from_case(
 
 
 ASSETS_ZIP_URL = "https://github.com/vasygenius-glitch/kazik3/releases/download/v2.0-cards-assets/cards_assets_opt.zip"
+CARDS_ASSETS_VERSION = "v2.2_semantic_match"
 _ASSETS_INITIALIZED = False
 _ASSETS_LOCK = threading.Lock()
 
 
-def ensure_cards_assets() -> bool:
-    """Гарантирует наличие всех 200 изображений карточек.
-    Если локальные файлы отсутствуют (например, свежий контейнер на Hugging Face Spaces),
+def ensure_cards_assets(force: bool = False) -> bool:
+    """Гарантирует наличие всех 200 изображений карточек с точным тематическим соответствием.
+    Если локальные файлы отсутствуют или устарели (например, свежий контейнер на Hugging Face Spaces),
     автоматически скачивает компактный архив из GitHub Release и распаковывает."""
     global _ASSETS_INITIALIZED
-    if _ASSETS_INITIALIZED:
+    if _ASSETS_INITIALIZED and not force:
         return True
 
     with _ASSETS_LOCK:
-        if _ASSETS_INITIALIZED:
+        if _ASSETS_INITIALIZED and not force:
             return True
 
         pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
         os.makedirs(pig_dir, exist_ok=True)
         os.makedirs(CARDS_ASSETS_DIR, exist_ok=True)
 
+        version_file = os.path.join(CARDS_ASSETS_DIR, ".assets_version")
+        current_ver = ""
+        if os.path.exists(version_file):
+            try:
+                with open(version_file, "r", encoding="utf-8") as vf:
+                    current_ver = vf.read().strip()
+            except Exception:
+                current_ver = ""
+
         existing_jpg = [
             f for f in os.listdir(pig_dir)
             if f.startswith("pig_") and (f.endswith(".jpg") or f.endswith(".webp"))
         ] if os.path.exists(pig_dir) else []
 
-        if len(existing_jpg) >= 200:
+        if not force and current_ver == CARDS_ASSETS_VERSION and len(existing_jpg) >= 200:
             _ASSETS_INITIALIZED = True
             return True
 
         zip_path = os.path.join(CARDS_ASSETS_DIR, "cards_assets_opt.zip")
+        # Если версия не совпадает, перекачиваем актуальный архив
+        if current_ver != CARDS_ASSETS_VERSION and os.path.exists(zip_path):
+            try:
+                os.remove(zip_path)
+            except Exception:
+                pass
+
         if not os.path.exists(zip_path):
             try:
                 import urllib.request
@@ -549,26 +566,32 @@ def ensure_cards_assets() -> bool:
                         jpg_name = base + ".jpg"
                         jpg_path = os.path.join(pig_dir, jpg_name)
 
-                        if not os.path.exists(webp_path):
-                            with open(webp_path, "wb") as f:
-                                f.write(z.read(item))
+                        with open(webp_path, "wb") as f:
+                            f.write(z.read(item))
 
-                        if not os.path.exists(jpg_path):
-                            try:
-                                with Image.open(webp_path) as im:
-                                    im.convert("RGB").save(jpg_path, "JPEG", quality=85)
-                            except Exception:
-                                pass
+                        try:
+                            with Image.open(webp_path) as im:
+                                im.convert("RGB").save(jpg_path, "JPEG", quality=85)
+                        except Exception:
+                            pass
 
                         try:
                             num = int(base.split("_")[-1])
                             meme_path = os.path.join(CARDS_ASSETS_DIR, f"meme_{num}.jpg")
-                            if not os.path.exists(meme_path) and os.path.exists(jpg_path):
+                            if os.path.exists(jpg_path):
                                 shutil.copyfile(jpg_path, meme_path)
                         except Exception:
                             pass
-                logger.info("Все 200 изображений карточек успешно подготовлены!")
+
+                try:
+                    with open(version_file, "w", encoding="utf-8") as vf:
+                        vf.write(CARDS_ASSETS_VERSION)
+                except Exception:
+                    pass
+
+                logger.info("Все 200 изображений карточек успешно подготовлены (версия %s)!", CARDS_ASSETS_VERSION)
                 _PHOTO_PATH_CACHE.clear()
+                CARD_FILE_IDS.clear()
                 _ASSETS_INITIALIZED = True
                 return True
             except Exception as e:
