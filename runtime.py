@@ -1,6 +1,7 @@
 """Lifecycle management and non-sensitive health reporting for a single worker."""
 import asyncio
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Callable
