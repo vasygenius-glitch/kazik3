@@ -109,4 +109,8 @@ def create_health_app(status: RuntimeStatus):
     app.router.add_get("/", liveness)
     app.router.add_get("/health", readiness)
     app.router.add_get("/ready", readiness)
+
+    cards_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cards", "guinea_pigs")
+    os.makedirs(cards_dir, exist_ok=True)
+    app.router.add_static("/cards", cards_dir)
     return app

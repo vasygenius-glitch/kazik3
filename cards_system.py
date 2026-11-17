@@ -22,7 +22,7 @@ from typing import Optional
 
 from aiogram import F, Router, types
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, FSInputFile, InlineKeyboardMarkup
+from aiogram.types import BufferedInputFile, CallbackQuery, FSInputFile, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from firebase_admin import firestore_async
 
@@ -558,6 +558,26 @@ def find_card_photo(card_id: str) -> Optional[str]:
     return get_card_photo_source(card_id)
 
 
+def get_card_photo_url(card_id: str) -> Optional[str]:
+    """Возвращает прямой публичный HTTPS URL для фото карточки на сервере бота."""
+    host = os.environ.get("SPACE_HOST") or os.environ.get("PUBLIC_URL")
+    if not host and os.environ.get("SPACE_ID"):
+        space_id = os.environ.get("SPACE_ID", "")
+        if "/" in space_id:
+            user, repo = space_id.split("/", 1)
+            host = f"{user.lower().replace('_', '-')}-{repo.lower().replace('_', '-')}.hf.space"
+    if not host:
+        host = "dictortanibani-dicasdf.hf.space"
+
+    try:
+        num = int(card_id.split("_")[-1]) if "_" in card_id else int("".join(filter(str.isdigit, card_id)))
+    except (ValueError, IndexError):
+        num = 1
+
+    pig_key = f"pig_{((num - 1) % 200) + 1:03d}"
+    return f"https://{host}/cards/{pig_key}.jpg"
+
+
 def generate_card_image_fallback(card_id: str) -> str:
     """Устаревшая заглушка отключена — используются только реальные фотографии."""
     return ""
@@ -690,37 +710,33 @@ async def send_card_message(
             logger.warning("Ошибка кэша file_id для %s: %s", card_id, e)
             CARD_FILE_IDS.pop(card_id, None)
 
-    photo_source = get_card_photo_source(card_id)
-
-    if photo_source and not photo_source.startswith(("http://", "https://")) and os.path.exists(photo_source):
+    # 1. Сначала пробуем прямой публичный HTTPS URL карточки (минуя Cloudflare/reverse proxy multipart bug)
+    photo_url = get_card_photo_url(card_id)
+    if photo_url:
         try:
+            sent_msg = await message.answer_photo(photo=photo_url, caption=caption, reply_markup=reply_markup)
+            if sent_msg and sent_msg.photo:
+                CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
+            return
+        except Exception as e:
+            logger.warning("Ошибка отправки карточки %s по URL %s: %s", card_id, photo_url, e)
+
+    # 2. Если URL не сработал — пробуем локальный файл
+    photo_source = get_card_photo_source(card_id)
+    if photo_source and os.path.exists(photo_source):
+        try:
+            with open(photo_source, "rb") as f:
+                photo_bytes = f.read()
             sent_msg = await message.answer_photo(
-                photo=FSInputFile(photo_source), caption=caption, reply_markup=reply_markup
+                photo=BufferedInputFile(photo_bytes, filename=f"{card_id}.jpg"),
+                caption=caption,
+                reply_markup=reply_markup,
             )
             if sent_msg and sent_msg.photo:
                 CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
             return
         except Exception as e:
             logger.warning("Ошибка отправки локального фото %s: %s", photo_source, e)
-
-    if photo_source and photo_source.startswith(("http://", "https://")):
-        clean_url = photo_source.split("?")[0]
-        try:
-            sent_msg = await message.answer_photo(photo=clean_url, caption=caption, reply_markup=reply_markup)
-            if sent_msg and sent_msg.photo:
-                CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
-            return
-        except Exception as e:
-            logger.warning("Ошибка отправки URL фото %s: %s", clean_url, e)
-
-    default_pig_url = "https://images.unsplash.com/photo-1548767797-d8c844163c4c?w=800&auto=format&fit=crop"
-    try:
-        sent_msg = await message.answer_photo(photo=default_pig_url, caption=caption, reply_markup=reply_markup)
-        if sent_msg and sent_msg.photo:
-            CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
-        return
-    except Exception:
-        pass
 
     await message.answer(caption, reply_markup=reply_markup)
 
