@@ -7,6 +7,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN python -m pip install -r requirements.txt
 COPY --chown=1000:1000 . .
+RUN python scripts/prepare_cards.py
 RUN mkdir -p /app/data && chown -R 1000:1000 /app
 USER 1000
 EXPOSE 7860

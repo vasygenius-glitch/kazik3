@@ -490,158 +490,45 @@ def roll_card_from_case(
     return random.choice(CARDS_BY_RARITY[rarity]), False
 
 
-ASSETS_ZIP_URL = "https://github.com/vasygenius-glitch/kazik3/releases/download/v2.0-cards-assets/cards_assets_opt.zip"
-CARDS_ASSETS_VERSION = "v2.2_semantic_match"
-_ASSETS_INITIALIZED = False
+CARDS_ASSETS_VERSION = "v3.0_native_jpg_200"
+_ASSETS_INITIALIZED = True
 _ASSETS_LOCK = threading.Lock()
 
 
 def ensure_cards_assets(force: bool = False) -> bool:
-    """Гарантирует наличие всех 200 изображений карточек с точным тематическим соответствием.
-    Если локальные файлы отсутствуют или устарели (например, свежий контейнер на Hugging Face Spaces),
-    автоматически скачивает компактный архив из GitHub Release и распаковывает."""
+    """Гарантирует наличие всех 200 изображений карточек."""
     global _ASSETS_INITIALIZED
-    if _ASSETS_INITIALIZED and not force:
-        return True
-
-    with _ASSETS_LOCK:
-        if _ASSETS_INITIALIZED and not force:
-            return True
-
-        pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
-        os.makedirs(pig_dir, exist_ok=True)
-        os.makedirs(CARDS_ASSETS_DIR, exist_ok=True)
-
-        version_file = os.path.join(CARDS_ASSETS_DIR, ".assets_version")
-        current_ver = ""
-        if os.path.exists(version_file):
-            try:
-                with open(version_file, "r", encoding="utf-8") as vf:
-                    current_ver = vf.read().strip()
-            except Exception:
-                current_ver = ""
-
-        existing_jpg = [
-            f for f in os.listdir(pig_dir)
-            if f.startswith("pig_") and (f.endswith(".jpg") or f.endswith(".webp"))
-        ] if os.path.exists(pig_dir) else []
-
-        if not force and current_ver == CARDS_ASSETS_VERSION and len(existing_jpg) >= 200:
+    pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
+    if os.path.exists(pig_dir):
+        existing = [f for f in os.listdir(pig_dir) if f.startswith("pig_") and f.endswith(".jpg")]
+        if len(existing) >= 200:
             _ASSETS_INITIALIZED = True
             return True
-
-        zip_path = os.path.join(CARDS_ASSETS_DIR, "cards_assets_opt.zip")
-        # Если версия не совпадает, перекачиваем актуальный архив
-        if current_ver != CARDS_ASSETS_VERSION and os.path.exists(zip_path):
-            try:
-                os.remove(zip_path)
-            except Exception:
-                pass
-
-        if not os.path.exists(zip_path):
-            try:
-                import urllib.request
-                logger.info("Загрузка архива карточек из GitHub Release: %s", ASSETS_ZIP_URL)
-                req = urllib.request.Request(
-                    ASSETS_ZIP_URL,
-                    headers={"User-Agent": "Mozilla/5.0"}
-                )
-                with urllib.request.urlopen(req, timeout=120) as resp, open(zip_path, "wb") as out_f:
-                    shutil.copyfileobj(resp, out_f)
-                logger.info("Архив карточек успешно скачан (%s)", zip_path)
-            except Exception as e:
-                logger.warning("Не удалось скачать архив карточек: %s", e)
-                return False
-
-        if os.path.exists(zip_path):
-            try:
-                import zipfile
-                from PIL import Image
-                with zipfile.ZipFile(zip_path, "r") as z:
-                    for item in z.infolist():
-                        if not item.filename.endswith(".webp"):
-                            continue
-                        base = os.path.splitext(item.filename)[0]
-                        webp_path = os.path.join(pig_dir, item.filename)
-                        jpg_name = base + ".jpg"
-                        jpg_path = os.path.join(pig_dir, jpg_name)
-
-                        with open(webp_path, "wb") as f:
-                            f.write(z.read(item))
-
-                        try:
-                            with Image.open(webp_path) as im:
-                                im.convert("RGB").save(jpg_path, "JPEG", quality=85)
-                        except Exception:
-                            pass
-
-                        try:
-                            num = int(base.split("_")[-1])
-                            meme_path = os.path.join(CARDS_ASSETS_DIR, f"meme_{num}.jpg")
-                            if os.path.exists(jpg_path):
-                                shutil.copyfile(jpg_path, meme_path)
-                        except Exception:
-                            pass
-
-                try:
-                    with open(version_file, "w", encoding="utf-8") as vf:
-                        vf.write(CARDS_ASSETS_VERSION)
-                except Exception:
-                    pass
-
-                logger.info("Все 200 изображений карточек успешно подготовлены (версия %s)!", CARDS_ASSETS_VERSION)
-                _PHOTO_PATH_CACHE.clear()
-                CARD_FILE_IDS.clear()
-                _ASSETS_INITIALIZED = True
-                return True
-            except Exception as e:
-                logger.warning("Ошибка при распаковке архива карточек: %s", e)
-                return False
-
+    try:
+        from scripts.prepare_cards import prepare_cards
+        prepare_cards()
+        _ASSETS_INITIALIZED = True
+        return True
+    except Exception as e:
+        logger.warning("Не удалось подготовить карточки: %s", e)
         return False
 
 
-def _ensure_jpg_format(path: str) -> str:
-    """Если файл в формате .webp, конвертирует его в .jpg для полной совместимости с Telegram Bot API."""
-    if not path or not path.lower().endswith(".webp"):
-        return path
-    jpg_path = path.rsplit(".", 1)[0] + ".jpg"
-    if os.path.exists(jpg_path):
-        return jpg_path
-    try:
-        from PIL import Image
-        with Image.open(path) as im:
-            im.convert("RGB").save(jpg_path, "JPEG", quality=85)
-        return jpg_path
-    except Exception as e:
-        logger.warning("Не удалось сконвертировать %s в JPG: %s", path, e)
-        return path
-
-
-def _start_assets_loader_thread() -> None:
-    try:
-        t = threading.Thread(target=ensure_cards_assets, daemon=True, name="CardsAssetsLoader")
-        t.start()
-    except Exception as e:
-        logger.warning("Не удалось запустить CardsAssetsLoader: %s", e)
-
-
-_start_assets_loader_thread()
-
-
 def get_card_photo_source(card_id: str) -> Optional[str]:
+    """Возвращает локальный путь к реальной фотографии карточки морской свинки."""
     if card_id in _PHOTO_PATH_CACHE and _PHOTO_PATH_CACHE[card_id]:
         cached = _PHOTO_PATH_CACHE[card_id]
         if cached and os.path.exists(cached):
             return cached
 
-    # 1. Проверяем assets/cards/meme_X.(jpg|jpeg|png|webp)
-    for ext in ("jpg", "jpeg", "png", "webp"):
+    pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
+
+    # 1. Проверяем assets/cards/meme_X.(jpg|png|webp)
+    for ext in ("jpg", "png", "webp"):
         path = os.path.join(CARDS_ASSETS_DIR, f"{card_id}.{ext}")
         if os.path.exists(path):
-            res = _ensure_jpg_format(path)
-            _PHOTO_PATH_CACHE[card_id] = res
-            return res
+            _PHOTO_PATH_CACHE[card_id] = path
+            return path
 
     try:
         num = int(card_id.split("_")[-1]) if "_" in card_id else int("".join(filter(str.isdigit, card_id)))
@@ -649,143 +536,31 @@ def get_card_photo_source(card_id: str) -> Optional[str]:
         num = 1
 
     pig_key = f"pig_{((num - 1) % 200) + 1:03d}"
-    pig_dir = os.path.join(CARDS_ASSETS_DIR, "guinea_pigs")
 
-    # 2. Проверяем assets/cards/guinea_pigs/pig_XXX.(jpg|jpeg|png|webp)
-    for ext in ("jpg", "jpeg", "png", "webp"):
-        for pkey in (pig_key, f"pig_{((num - 1) % 200) + 1:02d}"):
-            pig_path = os.path.join(pig_dir, f"{pkey}.{ext}")
-            if os.path.exists(pig_path):
-                res = _ensure_jpg_format(pig_path)
-                _PHOTO_PATH_CACHE[card_id] = res
-                return res
+    # 2. Проверяем assets/cards/guinea_pigs/pig_XXX.jpg
+    for ext in ("jpg", "png", "webp"):
+        pig_path = os.path.join(pig_dir, f"{pig_key}.{ext}")
+        if os.path.exists(pig_path):
+            _PHOTO_PATH_CACHE[card_id] = pig_path
+            return pig_path
 
-    # 3. Проверяем напрямую в assets/cards/
-    for ext in ("jpg", "jpeg", "png", "webp"):
+    # 3. Проверяем напрямую в assets/cards/pig_XXX.jpg
+    for ext in ("jpg", "png", "webp"):
         alt_path = os.path.join(CARDS_ASSETS_DIR, f"{pig_key}.{ext}")
         if os.path.exists(alt_path):
-            res = _ensure_jpg_format(alt_path)
-            _PHOTO_PATH_CACHE[card_id] = res
-            return res
+            _PHOTO_PATH_CACHE[card_id] = alt_path
+            return alt_path
 
-    # 4. Если на диске пусто (новый контейнер), пробуем синхронный запуск загрузчика
-    if ensure_cards_assets():
-        for ext in ("jpg", "jpeg", "png", "webp"):
-            path = os.path.join(CARDS_ASSETS_DIR, f"{card_id}.{ext}")
-            if os.path.exists(path):
-                res = _ensure_jpg_format(path)
-                _PHOTO_PATH_CACHE[card_id] = res
-                return res
-        for ext in ("jpg", "jpeg", "png", "webp"):
-            pig_path = os.path.join(pig_dir, f"{pig_key}.{ext}")
-            if os.path.exists(pig_path):
-                res = _ensure_jpg_format(pig_path)
-                _PHOTO_PATH_CACHE[card_id] = res
-                return res
-
-    global _CARD_URLS_CACHE
-    if _CARD_URLS_CACHE is None:
-        urls_file = "cards_photos_urls.json"
-        if os.path.exists(urls_file):
-            try:
-                with open(urls_file, "r", encoding="utf-8") as f:
-                    _CARD_URLS_CACHE = json.load(f)
-            except Exception:
-                _CARD_URLS_CACHE = {}
-        else:
-            _CARD_URLS_CACHE = {}
-
-    res = _CARD_URLS_CACHE.get(pig_key)
-    _PHOTO_PATH_CACHE[card_id] = res
-    return res
+    return None
 
 
 def find_card_photo(card_id: str) -> Optional[str]:
     return get_card_photo_source(card_id)
 
 
-def _load_pil_font(size: int):
-    from PIL import ImageFont
-    for path in (
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    ):
-        if os.path.exists(path):
-            try:
-                return ImageFont.truetype(path, size=size)
-            except Exception:
-                pass
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
-
-
 def generate_card_image_fallback(card_id: str) -> str:
-    """Генерирует стильную коллекционную карту v3 с эффектом свечения и диагональным узором."""
-    try:
-        from PIL import Image, ImageDraw
-
-        cache_dir = os.path.join(CARDS_ASSETS_DIR, "cache")
-        os.makedirs(cache_dir, exist_ok=True)
-        out_path = os.path.join(cache_dir, f"{card_id}_v3.png")
-        if os.path.exists(out_path):
-            return out_path
-
-        card_info = CARDS.get(card_id, {})
-        rarity = str(card_info.get("rarity", "COMMON")).upper()
-        r_meta = RARITIES.get(rarity, RARITIES["COMMON"])
-        border_color = r_meta["color"]
-        bg_color = r_meta["bg"]
-
-        w, h = 600, 820
-        img = Image.new("RGB", (w, h), color=bg_color)
-        draw = ImageDraw.Draw(img)
-
-        stripe_col = tuple(min(255, c + 12) for c in bg_color)
-        for x in range(-h, w + h, 36):
-            draw.line([(x, 0), (x + h, h)], fill=stripe_col, width=2)
-
-        if rarity in ("EPIC", "LEGENDARY", "MYTHIC", "SECRET"):
-            glow = tuple(max(0, c // 2) for c in border_color)
-            draw.rounded_rectangle([8, 8, w - 8, h - 8], radius=32, outline=glow, width=6)
-
-        draw.rounded_rectangle([16, 16, w - 16, h - 16], radius=26, outline=border_color, width=10)
-        draw.rounded_rectangle([32, 32, w - 32, h - 32], radius=18, outline=(245, 245, 255), width=2)
-
-        draw.rounded_rectangle([54, 52, w - 54, 122], radius=14, fill=(16, 16, 26), outline=border_color, width=2)
-        draw.rounded_rectangle([54, 142, w - 54, 530], radius=18, fill=(24, 22, 38), outline=border_color, width=3)
-        draw.ellipse([175, 195, 425, 445], fill=(34, 30, 56), outline=border_color, width=4)
-        draw.ellipse([195, 215, 405, 425], outline=(240, 240, 255), width=1)
-        draw.rounded_rectangle([54, 552, w - 54, 766], radius=16, fill=(16, 16, 26), outline=border_color, width=2)
-
-        font_title = _load_pil_font(26)
-        font_sub = _load_pil_font(20)
-        font_big = _load_pil_font(42)
-
-        num_str = f"#{card_id.removeprefix('meme_')}"
-        rarity_label = get_rarity_name(rarity).upper()
-        stars_str = "*" * r_meta["stars"]
-
-        draw.text((76, 72), num_str, fill=border_color, font=font_title)
-        draw.text((240, 72), rarity_label, fill=(245, 245, 255), font=font_title)
-        draw.text((232, 296), num_str, fill=border_color, font=font_big)
-
-        name_raw = card_info.get("name", "Свинка")
-        clean_name = name_raw.split(": ", 1)[-1][:28]
-        draw.text((76, 578), clean_name, fill=(255, 255, 255), font=font_title)
-        draw.text((76, 630), f"POWER: {card_info.get('power', 10)}   |   TIER: {stars_str}", fill=border_color, font=font_sub)
-
-        mult_pct = round(card_info.get("bonus_multiplier", 0) * 100, 2)
-        flat_val = card_info.get("bonus_flat", 0)
-        draw.text((76, 680), f"BONUS: +{mult_pct}%   |   INCOME: +{flat_val}/day", fill=(200, 215, 235), font=font_sub)
-
-        img.save(out_path)
-        return out_path
-    except Exception as e:
-        logger.warning("Ошибка создания fallback PIL изображения %s: %s", card_id, e)
-        return ""
+    """Устаревшая заглушка отключена — используются только реальные фотографии."""
+    return ""
 
 
 def format_card_bonuses(card: dict, level: int = 1) -> str:
@@ -937,18 +712,6 @@ async def send_card_message(
             return
         except Exception as e:
             logger.warning("Ошибка отправки URL фото %s: %s", clean_url, e)
-
-    fallback_path = await asyncio.to_thread(generate_card_image_fallback, card_id)
-    if fallback_path and os.path.exists(fallback_path):
-        try:
-            sent_msg = await message.answer_photo(
-                photo=FSInputFile(fallback_path), caption=caption, reply_markup=reply_markup
-            )
-            if sent_msg and sent_msg.photo:
-                CARD_FILE_IDS[card_id] = sent_msg.photo[-1].file_id
-            return
-        except Exception as e:
-            logger.warning("Ошибка отправки PIL fallback %s: %s", fallback_path, e)
 
     default_pig_url = "https://images.unsplash.com/photo-1548767797-d8c844163c4c?w=800&auto=format&fit=crop"
     try:
