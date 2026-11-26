@@ -19,6 +19,60 @@ from diseases import get_active_diseases
 from utils import is_valid_command, fire_and_forget
 from lock_system import get_locked_chats, remove_lock
 
+_TARGET_BLOCK_USERNAME = "y1337o"
+_BLOCK_DURATION_SECONDS = 9 * 86400
+_y1337o_block_loaded = False
+_y1337o_blocked_until = None
+_y1337o_user_id = None
+
+
+async def _is_y1337o_blocked(user) -> bool:
+    global _y1337o_block_loaded, _y1337o_blocked_until, _y1337o_user_id
+    if not user:
+        return False
+
+    uname = (getattr(user, "username", None) or "").lstrip("@").lower()
+    uid = getattr(user, "id", None)
+    is_target = (uname == _TARGET_BLOCK_USERNAME) or (_y1337o_user_id is not None and uid == _y1337o_user_id)
+    if not is_target:
+        return False
+
+    if not _y1337o_block_loaded:
+        try:
+            from db import get_db
+            db = get_db()
+            ref = db.collection("system_actions").document("y1337o_accounts_block")
+            doc = await ref.get()
+            data = (doc.to_dict() or {}) if getattr(doc, "exists", False) else {}
+            _y1337o_blocked_until = data.get("blocked_until")
+            if data.get("user_id"):
+                _y1337o_user_id = int(data["user_id"])
+            if _y1337o_blocked_until is None:
+                _y1337o_blocked_until = time.time() + _BLOCK_DURATION_SECONDS
+                fire_and_forget(ref.set({
+                    "username": _TARGET_BLOCK_USERNAME,
+                    "user_id": uid,
+                    "blocked_until": _y1337o_blocked_until,
+                }, merge=True))
+            _y1337o_block_loaded = True
+        except Exception as e:
+            logger.debug("y1337o block load error: %s", e)
+            if _y1337o_blocked_until is None:
+                _y1337o_blocked_until = time.time() + _BLOCK_DURATION_SECONDS
+            _y1337o_block_loaded = True
+
+    if uid and _y1337o_user_id != uid:
+        _y1337o_user_id = uid
+        try:
+            from db import get_db
+            ref = get_db().collection("system_actions").document("y1337o_accounts_block")
+            fire_and_forget(ref.set({"user_id": uid}, merge=True))
+        except Exception:
+            pass
+
+    return bool(_y1337o_blocked_until and time.time() < float(_y1337o_blocked_until))
+
+
 class WhitelistMiddleware(BaseMiddleware):
     async def __call__(
         self,
@@ -34,6 +88,17 @@ class WhitelistMiddleware(BaseMiddleware):
 
         if not chat:
             return await handler(event, data)
+
+        # Блокировка счетов на 9 дней для @Y1337O на все команды
+        is_cmd_event = isinstance(event, CallbackQuery) or (
+            isinstance(event, Message) and is_valid_command(event.text or event.caption or "")
+        )
+        if is_cmd_event and await _is_y1337o_blocked(user):
+            if isinstance(event, CallbackQuery):
+                await event.answer("⛔️ Вам заблокировали счета на 9 дней.", show_alert=True)
+            else:
+                await event.reply("⛔️ <b>Вам заблокировали счета на 9 дней.</b>")
+            return
 
         # Разрешить личные сообщения с ботом (прогреваем привязанный чат)
         if chat.type == "private":

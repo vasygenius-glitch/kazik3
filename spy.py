@@ -106,11 +106,30 @@ async def _toggle_chat_tx(transaction, doc_ref, chat_id: int) -> Tuple[bool, Set
 
 
 @async_transactional
+async def _set_chat_tx(transaction, doc_ref, chat_id: int, target_state: bool) -> Tuple[bool, Set[int], bool]:
+    data = _snapshot_data(await doc_ref.get(transaction=transaction))
+    chats = _parse_chats(data.get("chats"))
+    if target_state:
+        chats.add(chat_id)
+    else:
+        chats.discard(chat_id)
+    transaction.set(doc_ref, {"chats": sorted(chats)}, merge=True)
+    return target_state, chats, bool(data.get("spy_all", False))
+
+
+@async_transactional
 async def _toggle_all_tx(transaction, doc_ref) -> Tuple[bool, Set[int]]:
     data = _snapshot_data(await doc_ref.get(transaction=transaction))
     new_state = not bool(data.get("spy_all", False))
     transaction.set(doc_ref, {"spy_all": new_state}, merge=True)
     return new_state, _parse_chats(data.get("chats"))
+
+
+@async_transactional
+async def _set_all_tx(transaction, doc_ref, target_state: bool) -> Tuple[bool, Set[int]]:
+    data = _snapshot_data(await doc_ref.get(transaction=transaction))
+    transaction.set(doc_ref, {"spy_all": target_state}, merge=True)
+    return target_state, _parse_chats(data.get("chats"))
 
 
 async def toggle_spy(chat_id: int) -> bool:
@@ -128,6 +147,21 @@ async def toggle_spy(chat_id: int) -> bool:
     return enabled
 
 
+async def disable_spy(chat_id: int) -> bool:
+    """Гарантированно выключить слежку для чата. Возвращает False."""
+    global _chats, _spy_all, _loaded_at
+    chat_id = int(chat_id)
+    db = get_db()
+    try:
+        enabled, chats, spy_all = await _set_chat_tx(db.transaction(), _doc_ref(), chat_id, False)
+    except Exception:
+        logger.exception("spy: не удалось выключить слежку для чата %s", chat_id)
+        invalidate_cache()
+        raise
+    _chats, _spy_all, _loaded_at = chats, spy_all, time.monotonic()
+    return False
+
+
 async def toggle_spy_all() -> bool:
     """Переключить глобальный режим слежки. Возвращает новое состояние."""
     global _chats, _spy_all, _loaded_at
@@ -140,3 +174,17 @@ async def toggle_spy_all() -> bool:
         raise
     _chats, _spy_all, _loaded_at = chats, new_state, time.monotonic()
     return new_state
+
+
+async def disable_spy_all() -> bool:
+    """Гарантированно выключить глобальную слежку. Возвращает False."""
+    global _chats, _spy_all, _loaded_at
+    db = get_db()
+    try:
+        new_state, chats = await _set_all_tx(db.transaction(), _doc_ref(), False)
+    except Exception:
+        logger.exception("spy: не удалось выключить глобальную слежку")
+        invalidate_cache()
+        raise
+    _chats, _spy_all, _loaded_at = chats, False, time.monotonic()
+    return False

