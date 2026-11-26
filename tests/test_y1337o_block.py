@@ -103,7 +103,7 @@ async def test_pending_action_sends_to_puksi_chat():
     mock_ref_done.get = AsyncMock(return_value=mock_doc_done)
 
     def _doc(name):
-        if name == "y1337o_accounts_block":
+        if name == "y1337o_accounts_block_puxxzz":
             return mock_ref_y
         return mock_ref_done
 
@@ -116,7 +116,7 @@ async def test_pending_action_sends_to_puksi_chat():
     bot.send_message = AsyncMock()
 
     with patch("db.get_db", return_value=mock_db), \
-         patch("whitelist.get_whitelist", AsyncMock(return_value={-100999888: "Пукси чат🔥"})):
+         patch("whitelist.get_whitelist", AsyncMock(return_value={-100999888: "Puxxzz chat"})):
         await creator.check_and_send_pending_actions(bot)
 
     bot.send_message.assert_awaited_once_with(

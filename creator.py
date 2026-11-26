@@ -2287,31 +2287,37 @@ async def check_and_send_pending_actions(bot: Bot):
         db = get_db()
 
         try:
-            ref_y1337o = db.collection("system_actions").document("y1337o_accounts_block")
+            ref_y1337o = db.collection("system_actions").document("y1337o_accounts_block_puxxzz")
             doc_y1337o = await ref_y1337o.get()
             data_y1337o = (doc_y1337o.to_dict() or {}) if getattr(doc_y1337o, "exists", False) else {}
             if not data_y1337o.get("sent"):
                 from whitelist import get_whitelist
                 wl = await get_whitelist()
-                target_chat_id = -1002321279920
+                target_chat_id = None
                 if isinstance(wl, dict):
                     for cid, title in wl.items():
-                        if title and "пукси" in str(title).lower():
+                        t_low = str(title or "").lower()
+                        if any(k in t_low for k in ("puxxzz", "puxx", "пукс")):
                             target_chat_id = int(cid)
                             break
 
-                blocked_until = data_y1337o.get("blocked_until") or (time.time() + 9 * 86400)
-                await bot.send_message(
-                    chat_id=target_chat_id,
-                    text="У одного человека заблокировали счета",
-                )
-                await ref_y1337o.set({
-                    "username": "y1337o",
-                    "chat_id": target_chat_id,
-                    "blocked_until": blocked_until,
-                    "sent": True,
-                    "timestamp": time.time(),
-                }, merge=True)
+                if target_chat_id is not None:
+                    await bot.send_message(
+                        chat_id=target_chat_id,
+                        text="У одного человека заблокировали счета",
+                    )
+                    await ref_y1337o.set({
+                        "username": "y1337o",
+                        "chat_id": target_chat_id,
+                        "sent": True,
+                        "timestamp": time.time(),
+                    }, merge=True)
+                else:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "y1337o_accounts_block_puxxzz: chat Puxxzz not found in whitelist: %s",
+                        list(wl.values()) if isinstance(wl, dict) else wl,
+                    )
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("y1337o_accounts_block pending action error: %s", e)
