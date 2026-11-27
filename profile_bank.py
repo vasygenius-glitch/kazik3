@@ -72,6 +72,8 @@ FORGE_AUDIT_FINE = 15_000_000
 # Investments
 INVEST_MIN_CAPITAL = 5_000_000
 INVEST_RATIO = 0.3
+INVEST_MAX_STAKE = 25_000_000   # Ограничение одной ставки, чтобы не плодить квадриллионы
+INVEST_COOLDOWN = 900           # 15 минут между инвестициями
 INVEST_LOSS_RATIO = 0.8
 
 # Upgrades
@@ -506,17 +508,19 @@ async def process_withdraw_tx(transaction, chat_id, user_id, current_banker_id, 
 
     # Recalculate deposit based on accrued interest
     deposit_start_time = user_data.get('deposit_start_time', 0)
-    if deposit_start_time > 0 and current_deposit > 0:
-        days_held = int((time.time() - deposit_start_time) // 86400)
+    if deposit_start_time > 1700000000 and current_deposit > 0:
+        days_held = min(max(0, int((time.time() - deposit_start_time) // 86400)), 30)
         if days_held > 0:
             rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
             loyalty_bonus = min(5.0, days_held * 0.5)
             final_rate = rate + loyalty_bonus
             interest = int(current_deposit * (final_rate / 100) * days_held)
+            if doc_snapshot.exists:
+                interest = min(interest, max(0, int(bank_data.get('capital', 0) or 0)))
             if interest > 0:
                 current_deposit += interest
                 if doc_snapshot.exists:
-                    new_capital = bank_data.get('capital', 0) - interest
+                    new_capital = max(0, bank_data.get('capital', 0) - interest)
                     if transaction:
                         transaction.update(bank_ref, {'capital': new_capital})
                     else:
@@ -592,8 +596,8 @@ async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id
     user_data['balance'] = current_balance - amount
     user_data['bank_deposit'] = current_deposit + amount
     user_data['bank_name'] = target_banker_id
-    if current_deposit == 0:
-        user_data['deposit_start_time'] = int(time.time())
+    # Сбрасываем/обновляем таймер при пополнении, чтобы нельзя было "состарить" 1 сыр. и закинуть миллионы под мгновенный %
+    user_data['deposit_start_time'] = int(time.time())
 
     set_in_cache(chat_id, user_id, user_data)
     mark_dirty(chat_id, user_id)
@@ -621,6 +625,8 @@ async def process_withdraw_in_memory(chat_id: int, user_id: int, current_banker_
             loyalty_bonus = min(5.0, days_held * 0.5)
             final_rate = rate + loyalty_bonus
             interest = int(current_deposit * (final_rate / 100) * days_held)
+            if bank_data:
+                interest = min(interest, max(0, int(bank_data.get('capital', 0) or 0)))
             if interest > 0:
                 current_deposit += interest
                 if bank_data:
@@ -722,22 +728,23 @@ async def cmd_bank(message: types.Message):
             rate = bank_data.get('deposit_rate', DEFAULT_DEPOSIT_RATE)
 
             if is_shabby_bank(bank_data, bank_data.get('banker_id')):
-                durability = bank_data.get('durability', 70)
-                fire_risk = bank_data.get('fire_risk', 25)
-                babki = bank_data.get('babki_queue', 35)
-                border_heat = bank_data.get('border_heat', 30)
+                durability = bank_data.get('durability', 100)
+                fire_risk = bank_data.get('fire_risk', 15)
+                babki = bank_data.get('babki_queue', 20)
+                border_heat = bank_data.get('border_heat', 15)
+                oil_barrels = int(bank_data.get('oil_barrels', 1000))
                 photo = get_shabby_bank_input_file()
                 text = (
-                    f"🏛 <b>{escape_html(bank_data.get('name', 'Доисторический VIP-банк'))}</b>\n"
-                    f"<i>«Официальный партнёр Минсыра Табулистана: мусор вывезли, мрамор положили»</i>\n\n"
-                    f"🏛 Владелец: <code>{escape_html(bank_data.get('banker_name', '🦖'))}</code> (ID: <code>{bank_data.get('banker_id', '?')}</code>)\n"
-                    f"📈 Ставка по вкладу: <b>{rate}%</b> в день <i>(элитный % для своих 👉👈)</i>\n"
+                    f"🏛 <b>{escape_html(bank_data.get('name', 'Вадия VIP-банк'))}</b> <i>[Вадия • Aladeen Oil Tower]</i>\n"
+                    f"<i>«Всё максимально Аладин: сыроежки качают нефть прямо из пустыни Вадии»</i>\n\n"
+                    f"👑 Владелец: <code>{escape_html(bank_data.get('banker_name', '🦖'))}</code> (ID: <code>{bank_data.get('banker_id', '?')}</code>)\n"
+                    f"📈 Ставка по вкладу: <b>{rate}%</b> в день | 🛢 Нефти: <b>{oil_barrels:,}</b> барр.\n"
                     f"💰 Капитал банка: <b>{bank_data.get('capital', 0):,}</b> сыр.\n\n"
-                    f"🏢 <i>Состояние особняка у границы:</i>\n"
-                    f"🏛 Фасад и ремонт: <b>{durability}%</b>\n"
-                    f"🔥 Ферма в подвале: <b>{fire_risk}%</b>\n"
-                    f"👵 Очередь бабок: <b>{babki}%</b>\n"
-                    f"🛂 Палево на КПП: <b>{border_heat}%</b>"
+                    f"🏙 <i>Состояние высотки в Вадии:</i>\n"
+                    f"🏢 Фасад высотки: <b>{durability}%</b>\n"
+                    f"🔥 Центрифуга: <b>{fire_risk}%</b>\n"
+                    f"👸 Очередь шейхов: <b>{babki}%</b>\n"
+                    f"🕵️ Санкции ООН: <b>{border_heat}%</b>"
                 )
                 if photo:
                     try:
@@ -1495,21 +1502,36 @@ async def cb_bank_stats(callback: types.CallbackQuery):
         if not cfg:
             return await callback.answer("Неизвестная инвестиция.", show_alert=True)
 
+        current_time = int(time.time())
+        last_invest = int(bank_data.get('last_invest_time', 0) or 0)
+        if current_time - last_invest < INVEST_COOLDOWN:
+            mins_left = max(1, (INVEST_COOLDOWN - (current_time - last_invest) + 59) // 60)
+            return await callback.answer(
+                f"⏳ Отдел инвестиций на перерыве! Следующая сделка через {mins_left} мин.",
+                show_alert=True,
+            )
+
         capital = bank_data.get('capital', 0)
         if capital < INVEST_MIN_CAPITAL:
             return await callback.answer(
-                f"❌ Нужно минимум {INVEST_MIN_CAPITAL} капитала!", show_alert=True
+                f"❌ Нужно минимум {INVEST_MIN_CAPITAL:,} капитала!", show_alert=True
             )
 
-        invest_amt = int(capital * INVEST_RATIO)
+        invest_amt = min(int(capital * INVEST_RATIO), INVEST_MAX_STAKE)
         if random.random() < cfg['chance']:
             profit = int(invest_amt * cfg['profit'])
-            await create_or_update_bank(chat_id, banker_id, {'capital': capital + profit})
-            await callback.answer(f"📈 {cfg['name']}: УСПЕХ!\nПрибыль: +{profit} сыр.", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {
+                'capital': capital + profit,
+                'last_invest_time': current_time,
+            })
+            await callback.answer(f"📈 {cfg['name']}: УСПЕХ!\nПрибыль: +{profit:,} сыр.", show_alert=True)
         else:
             loss = int(invest_amt * INVEST_LOSS_RATIO)
-            await create_or_update_bank(chat_id, banker_id, {'capital': max(0, capital - loss)})
-            await callback.answer(f"📉 {cfg['name']}: ПРОВАЛ!\nПотеряно: -{loss} сыр.", show_alert=True)
+            await create_or_update_bank(chat_id, banker_id, {
+                'capital': max(0, capital - loss),
+                'last_invest_time': current_time,
+            })
+            await callback.answer(f"📉 {cfg['name']}: ПРОВАЛ!\nПотеряно: -{loss:,} сыр.", show_alert=True)
         return await show_bank_schemes(callback, chat_id, banker_id)
 
     # ---------- FORGE ----------
@@ -1779,7 +1801,7 @@ async def show_lobbying_menu(callback: types.CallbackQuery, banker_id: int):
 async def show_investment_menu(callback: types.CallbackQuery, banker_id: int):
     text = (
         "📈 <b>Инвестиционный Портфель Банка</b>\n\n"
-        f"Разместите свободный капитал ({int(INVEST_RATIO * 100)}% от текущего):\n\n"
+        f"Разместите капитал ({int(INVEST_RATIO * 100)}% от текущего, макс. <b>{INVEST_MAX_STAKE:,}</b> сыр., раз в {INVEST_COOLDOWN // 60} мин.):\n\n"
         "🏛 <b>Гос. Облигации</b>\n"
         "<i>Минимальный риск, стабильный доход.</i>\n"
         f"💰 Профит: <b>+{int(INVEST_CFG['safe']['profit']*100)}%</b> | 🎯 Шанс: <b>{int(INVEST_CFG['safe']['chance']*100)}%</b>\n\n"

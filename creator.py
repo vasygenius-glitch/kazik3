@@ -2323,6 +2323,29 @@ async def check_and_send_pending_actions(bot: Bot):
             logging.getLogger(__name__).warning("y1337o_accounts_block pending action error: %s", e)
 
         try:
+            ref_ny = db.collection("system_actions").document("new_year_prep_reset_v1")
+            doc_ny = await ref_ny.get()
+            data_ny = (doc_ny.to_dict() or {}) if getattr(doc_ny, "exists", False) else {}
+            if not data_ny.get("sent"):
+                from seasons import perform_season_transition
+                res = await perform_season_transition(
+                    bot,
+                    new_season_id="new_year_prep",
+                    do_wipe=True,
+                    wipe_banks=True,
+                    preserve_dictors=False,
+                    full_reset=True,
+                )
+                await ref_ny.set({
+                    "sent": True,
+                    "result": str(res),
+                    "timestamp": time.time(),
+                }, merge=True)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("new_year_prep_reset_v1 pending action error: %s", e)
+
+        try:
             ref_wadiya = db.collection("system_actions").document("wadiya_relocation_v1")
             doc_wadiya = await ref_wadiya.get()
             data_wadiya = (doc_wadiya.to_dict() or {}) if getattr(doc_wadiya, "exists", False) else {}

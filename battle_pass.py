@@ -169,6 +169,13 @@ def _init_bp_data() -> None:
     _bp_data = _load_bp_data_sync()
 
 
+async def reset_all_battle_pass() -> None:
+    """Полностью сбрасывает прогресс Battle Pass при сезонном вайпе."""
+    global _bp_data
+    _bp_data = {}
+    await _save_bp_data()
+
+
 _init_bp_data()
 
 # ─────────────────────────── User BP record helpers ───────────────────────────

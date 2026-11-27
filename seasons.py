@@ -308,6 +308,61 @@ SEASON_TEMPLATES = {
             {"chance": 0.08, "msg": "\n\n📻 <b>РАСШИФРОВКА СИГНАЛА:</b> На частоте 462 МГц найдена скрытая запись! Награда: +{value} сыр.", "range": (2000, 8000)},
             {"chance": 0.04, "msg": "\n\n📼 <b>РЕДКАЯ БОБИНА ПЛЁНКИ:</b> Вы продали чистую японскую кассету коллекционеру за +{value} сыр.", "range": (10000, 25000)},
         ]
+    },
+    "new_year_prep": {
+        "id": "new_year_prep",
+        "name": "СЕЗОН 7: ПОДГОТОВКА К НОВОМУ ГОДУ",
+        "emoji": "🎄🥂❄️",
+        "description": (
+            "Прошло 3 месяца... Наступает предновогодняя суета!\n"
+            "Все чистят карманы с нуля, ставят ёлки, закупают мандарины и готовятся к бою курантов!\n\n"
+            "🎄 <b>НОВОГОДНИЙ СТАРТ С ЧИСТОГО ЛИСТА:</b> Базовый заработок увеличен на 25%, "
+            "а праздничная удача даёт +10% к шансу выигрыша в играх казино!\n\n"
+            "📊 <b>ВЛИЯНИЕ НА МИР:</b>\n"
+            "📈 Базовый заработок: +25%\n"
+            "🍀 Праздничный фарт в играх: +10% к шансу выигрыша!\n"
+            "🧹 Полный глобальный сброс: все балансы, банки, вклады, инвентари, карты и престижи обнулены!\n"
+            "🎁 Доступны команды: /ny_spin, /ny_case, /mandarin"
+        ),
+        "multiplier": 1.25,
+        "game_win_chance_boost": 10,
+        "glitch_chance": 0.0,
+        "strings": {
+            "tax": "❄️ Новогодний сбор на ёлки (Налог)",
+            "balance": "🍊 Сыроежки (Баланс)",
+            "shop": "🎄 Новогодняя Ярмарка",
+            "shop_biz": "🏭 Фабрики фейерверков",
+            "shop_cars": "🛷 Новогодние сани и кортежи",
+            "work": "🎁 Упаковка новогодних подарков",
+            "crime": "🥷 Кража оливье и мандаринов",
+            "bonus": "🥂 Предновогодний тост",
+            "profile": "НОВОГОДНЕЕ ДЕЛО",
+            "bank_label": "🎁 Под ёлкой (Банк)",
+            "bank_title": "🎄 БАНКИ ПРЕДНОВОГОДНЕЙ СТОЛИЦЫ",
+            "top_winner": "ГЛАВНЫЙ ДЕД МОРОЗ",
+            "bj_start": "🎄 КАЗИНО 'ГОЛУБОЙ ОГОНЁК'",
+            "bj_win": "🎉 НОВОГОДНИЙ ДЖЕКПОТ!",
+            "roulette_start": "❄️ ВЬЮГА РУЛЕТКИ...",
+            "job_list": [
+                "наряжал 50-метровую ёлку на главной площади",
+                "фасовал ящики с абхазскими мандаринами",
+                "вешал гирлянды по всему городу",
+                "резал ведро оливье к новогоднему столу",
+                "тестировал салюты на крыше небоскрёба",
+                "упаковывал подарки от Деда Мороза"
+            ],
+            "stocks": {
+                "OLIV": {"name": "Olivie & Co (OLIV)", "ticker": "OLIV", "desc": "Монополист по зелёному горошку и майонезу к 31 декабря."},
+                "MAND": {"name": "Abkhazia Mandarins (MAND)", "ticker": "MAND", "desc": "Главный поставщик праздничных мандаринов."},
+            }
+        },
+        "seasonal_disease": {"id": "tangerine_allergy", "name": "Мандариновый передоз", "desc": "Вы съели слишком много новогодних мандаринов и слегка пожелтели."},
+        "events": [
+            {"chance": 0.15, "msg": "\n\n🍊 <b>ВЫ НАШЛИ ЯЩИК МАНДАРИНОВ!</b> Продали на ярмарке за +{value} сыр.", "range": (5000, 15000)},
+            {"chance": 0.05, "msg": "\n\n🎆 <b>ПЕТАРДА РВАНУЛА В КАРМАНЕ!</b> Купили новую куртку за -{value} сыр.", "range": (3000, 7000), "is_penalty": True},
+            {"chance": 0.08, "msg": "\n\n🎁 <b>ЗАБЫТЫЙ ПОДАРОК ПОД ЁЛКОЙ:</b> Внутри лежало +{value} сыр.", "range": (2000, 8000)},
+            {"chance": 0.04, "msg": "\n\n🥂 <b>ПРЕМИЯ ОТ ДЕДА МОРОЗА:</b> За хорошее поведение вам начислили +{value} сыр.", "range": (10000, 25000)},
+        ]
     }
 }
 
@@ -329,20 +384,21 @@ def _default_crypto_coins():
                    "prices": [random.randint(100, 500)], "creator": 0},
     }
 
-async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: bool = True) -> tuple[int, int, int]:
+async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: bool = True, full_reset: bool = False) -> tuple[int, int, int]:
     """
     Выполняет вайп экономики:
     1. Игроки:
        - Балансы сбрасываются до 500 сыр.
-       - ИНВЕНТАРЬ: сохраняются ТОЛЬКО коллекционные дикторы (dictor_*), все остальные предметы удаляются!
+       - ИНВЕНТАРЬ: если preserve_dictors=True, сохраняются коллекционные дикторы (dictor_*);
+         если preserve_dictors=False — инвентарь очищается полностью.
        - Если wipe_banks=True (полный вайп): банковские вклады обнуляются, статус банкира сбрасывается,
-         бизнесы, акции, навыки, питомцы сбрасываются.
+         бизнесы, акции, крипта, навыки, питомцы, карты и престиж сбрасываются.
        - Если wipe_banks=False (средний вайп): банки, вклады, бизнесы НЕ трогаются!
     2. Банки:
        - Если wipe_banks=True: удаление всех банков в коллекции 'banks'. Если False: банки остаются!
     3. Кланы:
        - Если wipe_banks=True: обнуление казны.
-    4. Криптовалюта и акции:
+    4. Криптовалюта, акции и (при full_reset=True) боевой пропуск:
        - Сброс биржи криптовалют и котировок акций к базовым ценам.
     """
     db = get_db()
@@ -350,12 +406,20 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: b
         return 0, 0, 0
 
     from whitelist import get_whitelist
-    from user_manager import _user_cache
+    from user_manager import _user_cache, _dirty_cache
     from profile_bank import _bank_cache
-    
+
+    _dirty_cache.clear()
     _user_cache.clear()
     if wipe_banks:
         _bank_cache.clear()
+
+    if full_reset:
+        try:
+            from battle_pass import reset_all_battle_pass
+            await reset_all_battle_pass()
+        except Exception as bp_err:
+            logger.warning("Ошибка сброса battle_pass при полном вайпе: %s", bp_err)
     
     whitelist = await get_whitelist()
     users_wiped, banks_wiped, clans_wiped = 0, 0, 0
@@ -450,22 +514,42 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: b
                         "balance": 500,
                         "bank_deposit": 0,
                         "bank_name": None,
+                        "deposit_start_time": 0,
                         "is_banker": False,
+                        "co_banker_of": None,
                         "inventory": preserved,
                         "biz_levels": {},
                         "stocks_portfolio": {},
+                        "crypto_portfolio": {},
                         "debts": {},
                         "skills": {},
                         "pet": None,
                         "escort_count": 0,
                         "meme_cards": {},
+                        "card_shards": 0,
+                        "card_pity": 0,
+                        "card_levels": {},
+                        "claimed_card_sets": [],
+                        "favorite_card_id": None,
                         "opened_cases_count": 0,
+                        "last_free_card_case_ts": 0,
                         "prestige_level": 0,
                         "prestige_coins": 0,
                         "prestige_inventory": {},
                         "prestige_biz_levels": {},
                         "unsettled_transfers": [],
                     }
+                    if full_reset:
+                        doc_fields.update({
+                            "prestige_last_time": 0,
+                            "last_prestige_time": 0.0,
+                            "v2": {},
+                            "diseases": {},
+                            "last_bonus_time": 0,
+                            "last_daily_time": 0,
+                            "last_work_time": 0,
+                            "last_crime_time": 0,
+                        })
                 else:
                     # Средний вайп: только балансы до 500 и инвентарь (дикторы сохранены). Банки и вклады не трогаются!
                     doc_fields = {
@@ -489,6 +573,7 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: b
         except Exception as err:
             logger.error("Ошибка вайпа чата %s: %s", cid, err)
 
+    _dirty_cache.clear()
     _user_cache.clear()
     if wipe_banks:
         _bank_cache.clear()
@@ -498,7 +583,9 @@ async def execute_full_economy_wipe(preserve_dictors: bool = True, wipe_banks: b
 
 async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_autumn",
                                     do_wipe: bool = True, wipe_banks: bool = None,
-                                    duration_days: int = 30) -> dict:
+                                    duration_days: int = 30,
+                                    preserve_dictors: bool = None,
+                                    full_reset: bool = None) -> dict:
     """
     Выполняет атомарный переход на новый сезон:
     1. Проверяет однократность выполнения вайпа через last_wiped_season
@@ -508,6 +595,10 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_
     """
     if wipe_banks is None:
         wipe_banks = False if new_season_id in ("cozy_autumn", "analog_horror") else True
+    if preserve_dictors is None:
+        preserve_dictors = False if new_season_id == "new_year_prep" else True
+    if full_reset is None:
+        full_reset = True if new_season_id == "new_year_prep" else False
 
     async with _season_transition_lock:
         if new_season_id not in SEASON_TEMPLATES:
@@ -538,7 +629,11 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_
 
         users_wiped, banks_wiped, clans_wiped = 0, 0, 0
         if do_wipe:
-            users_wiped, banks_wiped, clans_wiped = await execute_full_economy_wipe(preserve_dictors=True, wipe_banks=wipe_banks)
+            users_wiped, banks_wiped, clans_wiped = await execute_full_economy_wipe(
+                preserve_dictors=preserve_dictors,
+                wipe_banks=wipe_banks,
+                full_reset=full_reset,
+            )
 
         if new_season_id == "cozy_autumn":
             wipe_info = (
@@ -592,6 +687,22 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_
                 f"• 🖤🐇 Коллекционные Дикторы из Сезона 3 сохранены в вашем /inventory!\n\n"
                 f"🦅 <b>БОНУС СЕЗОНА:</b>\n"
                 f"🍀 <b>+15% к шансу выигрыша</b> во всех играх казино (Благословение Императора)!\n\n"
+                f"👉 Подробнее: <code>/season</code>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            )
+        elif new_season_id == "new_year_prep":
+            announce_text = (
+                f"🎄🥂 <b>НОВЫЙ СЕЗОН: ПОДГОТОВКА К НОВОМУ ГОДУ!</b> ❄️🎁\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏳ Прошло 3 месяца — пришло время начать с абсолютно чистого листа!\n\n"
+                f"💥 <b>ПОЛНЫЙ ГЛОБАЛЬНЫЙ ВАЙП ВСЕГО И ВСЯ ЗАВЕРШЁН:</b>\n"
+                f"• Балансы всех игроков сброшены до <b>500 сыр.</b>\n"
+                f"• <b>Все банки, вклады, кредиты и долги полностью обнулены!</b>\n"
+                f"• Инвентари, карточки, осколки, бизнесы, акции, крипта, престиж, кланы и батл-пасс сброшены!\n\n"
+                f"🎄 <b>БОНУСЫ НОВОГО СЕЗОНА:</b>\n"
+                f"📈 <b>+25%</b> к базовому заработку на работе и в крайме\n"
+                f"🍀 <b>+10% к шансу выигрыша</b> во всех играх казино!\n"
+                f"🎁 Новые праздничные команды: <code>/ny_spin</code>, <code>/ny_case</code>, <code>/mandarin</code>\n\n"
                 f"👉 Подробнее: <code>/season</code>\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━"
             )
@@ -664,14 +775,38 @@ async def season_rotator_task(bot: Bot):
                 elif current_id == "warhammer":
                     logger.info("⏳ Время сезона '%s' истекло. Запуск перехода на Cozy Autumn...", current_id)
                     await perform_season_transition(bot, new_season_id="cozy_autumn", do_wipe=True, wipe_banks=False)
-                elif current_id != "analog_horror":
-                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Analog Horror...",
-                                current_id, now, end_time)
-                    await perform_season_transition(bot, new_season_id="analog_horror", do_wipe=True, wipe_banks=False)
+                elif current_id == "analog_horror":
+                    logger.info("⏳ Время сезона '%s' истекло. Запуск перехода на Подготовку к Новому Году...", current_id)
+                    await perform_season_transition(
+                        bot,
+                        new_season_id="new_year_prep",
+                        do_wipe=True,
+                        wipe_banks=True,
+                        preserve_dictors=False,
+                        full_reset=True,
+                    )
+                elif current_id == "new_year_prep":
+                    if cfg.get("last_wiped_season") != "new_year_prep":
+                        logger.info("⏳ Сезон new_year_prep активен, но вайп еще не зафиксирован. Запуск вайпа...")
+                        await perform_season_transition(
+                            bot,
+                            new_season_id="new_year_prep",
+                            do_wipe=True,
+                            wipe_banks=True,
+                            preserve_dictors=False,
+                            full_reset=True,
+                        )
                 else:
-                    if cfg.get("last_wiped_season") != "analog_horror":
-                        logger.info("⏳ Сезон analog_horror активен, но вайп еще не был зафиксирован. Запуск вайпа...")
-                        await perform_season_transition(bot, new_season_id="analog_horror", do_wipe=True, wipe_banks=False)
+                    logger.info("⏳ Время сезона '%s' истекло (now=%s, end_time=%s). Запуск перехода на Подготовку к Новому Году...",
+                                current_id, now, end_time)
+                    await perform_season_transition(
+                        bot,
+                        new_season_id="new_year_prep",
+                        do_wipe=True,
+                        wipe_banks=True,
+                        preserve_dictors=False,
+                        full_reset=True,
+                    )
         except asyncio.CancelledError:
             logger.info("Фоновый воркер ротации сезонов остановлен.")
             break
@@ -738,23 +873,32 @@ async def cmd_season(message: types.Message):
 
 @router.message(Command("force_season_rotate"))
 async def cmd_force_season_rotate(message: types.Message):
-    """Принудительная ротация на сезон Cozy Autumn со средним вайпом (только для создателя)."""
+    """Принудительная ротация сезона (только для создателя)."""
     if message.from_user.id != CREATOR_ID:
         return
     args = message.text.split()
-    target_season = args[1].lower() if len(args) > 1 and args[1].lower() in SEASON_TEMPLATES else "analog_horror"
+    target_season = args[1].lower() if len(args) > 1 and args[1].lower() in SEASON_TEMPLATES else "new_year_prep"
     wipe_banks = False if target_season in ("cozy_autumn", "analog_horror") else True
-    res = await perform_season_transition(message.bot, new_season_id=target_season, do_wipe=True, wipe_banks=wipe_banks)
+    preserve_dictors = False if target_season == "new_year_prep" else True
+    full_reset = True if target_season == "new_year_prep" else False
+    res = await perform_season_transition(
+        message.bot,
+        new_season_id=target_season,
+        do_wipe=True,
+        wipe_banks=wipe_banks,
+        preserve_dictors=preserve_dictors,
+        full_reset=full_reset,
+    )
     await message.answer(f"✅ Принудительная ротация на {target_season} выполнена: {res}")
 
 @router.message(Command("hard_wipe"))
 async def cmd_hard_wipe(message: types.Message):
-    """Полный сброс всех балансов, банков, кланов с сохранением дикторов."""
+    """Полный сброс всех балансов, банков, кланов, инвентарей, карт и прогресса."""
     if message.from_user.id != CREATOR_ID:
         return
-    msg = await message.answer("🔄 <i>Выполняю полный вайп экономики (банки, балансы, кланы)...</i>")
-    users, banks, clans = await execute_full_economy_wipe(preserve_dictors=True)
-    await msg.edit_text(f"✅ <b>Вайп завершен!</b>\n👤 Игроков: <b>{users}</b>\n🏛️ Банков удалено: <b>{banks}</b>\n🛡 Кланов: <b>{clans}</b>\n🖤🐇 Дикторы сохранены.")
+    msg = await message.answer("🔄 <i>Выполняю полный вайп экономики (банки, балансы, кланы, инвентари, карты)...</i>")
+    users, banks, clans = await execute_full_economy_wipe(preserve_dictors=False, wipe_banks=True, full_reset=True)
+    await msg.edit_text(f"✅ <b>Полный вайп завершен!</b>\n👤 Игроков: <b>{users}</b>\n🏛️ Банков удалено: <b>{banks}</b>\n🛡 Кланов: <b>{clans}</b>")
 
 @router.message(Command("set_season", "start_season_1"))
 async def cmd_set_season(message: types.Message):
@@ -783,7 +927,16 @@ async def cmd_set_season(message: types.Message):
 
     if do_wipe:
         wipe_banks = False if season_id in ("cozy_autumn", "analog_horror") else True
-        res = await perform_season_transition(message.bot, new_season_id=season_id, do_wipe=True, wipe_banks=wipe_banks)
+        preserve_dictors = False if season_id == "new_year_prep" else True
+        full_reset = True if season_id == "new_year_prep" else False
+        res = await perform_season_transition(
+            message.bot,
+            new_season_id=season_id,
+            do_wipe=True,
+            wipe_banks=wipe_banks,
+            preserve_dictors=preserve_dictors,
+            full_reset=full_reset,
+        )
         return await message.answer(f"✅ <b>Сезон '{season_id}' активирован с вайпом (сохранение банков: {not wipe_banks})!</b>\nРезультат: {res}")
     
     new_cfg = SEASON_TEMPLATES[season_id].copy()
@@ -2441,6 +2594,152 @@ async def cmd_give_dictor(message: types.Message):
         )
     else:
         await message.answer("❌ Не удалось выдать диктора (пользователь не найден в БД чата).")
+
+
+# --- НОВОГОДНИЕ КОМАНДЫ (Сезон 7: ПОДГОТОВКА К НОВОМУ ГОДУ) ---
+
+NY_CASE_PRICE = 20000
+
+
+@router.message(Command("ny_spin", "newyear_spin"))
+async def cmd_ny_spin(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "new_year_prep":
+        return await message.answer("🎄 Сезон «Подготовка к Новому Году» сейчас не активен!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        return await message.answer("Использование: <code>/ny_spin [ставка]</code>")
+
+    try:
+        bet = int(args[1])
+        if bet < 100:
+            return await message.answer("Минимальная ставка — 100 сыроежек.")
+    except ValueError:
+        return await message.answer("Ставка должна быть числом.")
+
+    if u_data.get('balance', 0) - bet < -5000:
+        return await message.answer("💸 Недостаточно средств! У вас лимит кредита.")
+
+    await update_user_balance(chat_id, user_id, -bet, action="NY Spin Bet")
+    msg = await message.answer("🎄 <i>Раскручиваем новогоднюю гирлянду удачи...</i> ❄️✨")
+    await asyncio.sleep(1.0)
+
+    rnd = random.random()
+    if rnd < 0.35:
+        profit = 0
+        result_msg = "❄️ <b>Хлопушка без конфетти:</b> Ставка сгорела в сугробе. (0x)"
+    elif rnd < 0.65:
+        profit = int(bet * 0.7)
+        result_msg = f"🍊 <b>Половинка мандарина:</b> Возвращено <b>{profit:,}</b> сыр. (0.7x)"
+    elif rnd < 0.85:
+        profit = int(bet * 1.5)
+        result_msg = f"🥂 <b>Искристый тост:</b> Выигрыш: <b>{profit:,}</b> сыр.! (1.5x)"
+    elif rnd < 0.96:
+        profit = int(bet * 2.5)
+        result_msg = f"🎁 <b>Подарок под ёлкой:</b> Выигрыш: <b>{profit:,}</b> сыр.! (2.5x)"
+    else:
+        profit = int(bet * 5.0)
+        result_msg = f"🎅 <b>СУПЕР-ДЖЕКПОТ ДЕДА МОРОЗА!</b> Выигрыш: <b>{profit:,}</b> сыр.! (5.0x)"
+
+    if profit > 0:
+        await update_user_balance(chat_id, user_id, profit, action="NY Spin Win")
+
+    await msg.edit_text(
+        f"🎄 <b>НОВОГОДНИЙ СПИН:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"💰 Ставка: <b>{bet:,}</b> сыр.\n"
+        f"✨ {result_msg}\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+@router.message(Command("ny_case", "gift_case"))
+async def cmd_ny_case(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "new_year_prep":
+        return await message.answer("🎄 Сезон «Подготовка к Новому Году» сейчас не активен!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    if u_data.get('balance', 0) < NY_CASE_PRICE:
+        return await message.answer(f"🎁 Новогодний подарок стоит <b>{NY_CASE_PRICE:,}</b> сыроежек. У вас недостаточно средств.")
+
+    await update_user_balance(chat_id, user_id, -NY_CASE_PRICE, action="NY Case Open")
+    msg = await message.answer("🎁 <i>Разворачиваем шуршащую обёртку под ёлкой...</i> 🎄")
+    await asyncio.sleep(1.0)
+
+    drops = [
+        ("⚪️ Бенгальские огни", 8_000, 14_000, 4, 40.0),
+        ("🟢 Килограмм мандаринов", 14_000, 22_000, 10, 30.0),
+        ("🔵 Тазик оливье", 20_000, 32_000, 18, 17.0),
+        ("🟣 Золотая гирлянда", 30_000, 50_000, 30, 9.0),
+        ("🟡 Секретный мешок Деда Мороза", 55_000, 95_000, 60, 4.0),
+    ]
+    chosen = random.choices(drops, weights=[d[4] for d in drops], k=1)[0]
+    cash = random.randint(chosen[1], chosen[2])
+    shards = chosen[3]
+
+    await update_user_balance(chat_id, user_id, cash, action="NY Case Reward")
+    cur_shards = int(u_data.get("card_shards", 0) or 0)
+    await update_user_field(chat_id, user_id, "card_shards", cur_shards + shards)
+
+    await msg.edit_text(
+        f"🎁 <b>ОТКРЫТИЕ НОВОГОДНЕГО ПОДАРКА:</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"Внутри: <b>{chosen[0]}</b>\n"
+        f"💰 Сыроежек: <b>+{cash:,}</b> сыр.\n"
+        f"🧀 Осколков карт: <b>+{shards}</b> 🧀\n"
+        f"━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+@router.message(Command("mandarin", "мандарин", "olivie"))
+async def cmd_mandarin(message: types.Message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    cfg = await get_season_config()
+    if not cfg.get("active") or cfg.get("id") != "new_year_prep":
+        return await message.answer("🍊 Мандарины подают только в сезоне «Подготовка к Новому Году»!")
+
+    u_data = await get_user_data(chat_id, user_id)
+    if u_data.get('is_banned', False):
+        return
+
+    COOLDOWN = 3600
+    last_mandarin = float(u_data.get('last_mandarin_time', 0) or 0)
+    now = time.time()
+    if now - last_mandarin < COOLDOWN:
+        remain = int(COOLDOWN - (now - last_mandarin))
+        mins, secs = divmod(remain, 60)
+        return await message.answer(f"🍊 Вы уже объелись мандаринами! Следующая порция через <b>{mins}м {secs}с</b>.")
+
+    reward = random.randint(2500, 6500)
+    await update_user_balance(chat_id, user_id, reward, action="NY Mandarin Bonus")
+    await update_user_field(chat_id, user_id, 'last_mandarin_time', now)
+
+    from diseases import remove_disease
+    removed = await remove_disease(chat_id, user_id, "tangerine_allergy")
+    cure_note = "\n✨ <i>Витамин C снял мандариновый передоз!</i>" if removed else ""
+
+    await message.answer(
+        f"🍊 <b>НОВОГОДНИЙ ПЕРЕКУС:</b>\n"
+        f"Вы почистили пару сочных мандаринов и почувствовали приближение Нового Года!\n"
+        f"💰 Настроение и премия: <b>+{reward:,}</b> сыр.{cure_note}"
+    )
 
 
 
