@@ -2322,6 +2322,76 @@ async def check_and_send_pending_actions(bot: Bot):
             import logging
             logging.getLogger(__name__).warning("y1337o_accounts_block pending action error: %s", e)
 
+        try:
+            ref_wadiya = db.collection("system_actions").document("wadiya_relocation_v1")
+            doc_wadiya = await ref_wadiya.get()
+            data_wadiya = (doc_wadiya.to_dict() or {}) if getattr(doc_wadiya, "exists", False) else {}
+            if not data_wadiya.get("sent"):
+                from whitelist import get_whitelist
+                from shabby_bank import (
+                    is_shabby_bank,
+                    check_and_apply_shabby_decay,
+                    format_wadiya_relocation_announcement,
+                    get_shabby_bank_input_file,
+                )
+                from profile_bank import invalidate_bank_cache
+
+                wl = await get_whitelist()
+                candidate_chats = set(int(c) for c in wl.keys()) if isinstance(wl, dict) else set()
+                candidate_chats.add(-1002321279920)
+
+                migrated_records = []
+                for cid in candidate_chats:
+                    try:
+                        banks_ref = db.collection("chats").document(str(cid)).collection("banks")
+                        docs_raw = await banks_ref.get()
+                        docs = []
+                        if hasattr(docs_raw, "__aiter__"):
+                            async for d in docs_raw:
+                                docs.append(d)
+                        else:
+                            for d in docs_raw:
+                                docs.append(d)
+
+                        for bdoc in docs:
+                            bdata = bdoc.to_dict() or {}
+                            try:
+                                bid = int(bdata.get("banker_id") or bdoc.id)
+                            except (TypeError, ValueError):
+                                continue
+                            if not is_shabby_bank(bdata, bid) or bdata.get("wadiya_relocated"):
+                                continue
+
+                            updates, _ = check_and_apply_shabby_decay(bdata)
+                            if updates and updates.get("wadiya_relocated"):
+                                await banks_ref.document(str(bdoc.id)).set(updates, merge=True)
+                                bdata.update(updates)
+                                invalidate_bank_cache(cid, bid, bdata.get("name"))
+
+                                fee = int(updates.get("wadiya_relocation_paid", 0))
+                                announce_text = format_wadiya_relocation_announcement(bdata, fee)
+                                photo = get_shabby_bank_input_file()
+                                if photo:
+                                    try:
+                                        await bot.send_photo(chat_id=cid, photo=photo, caption=announce_text)
+                                    except Exception:
+                                        await bot.send_message(chat_id=cid, text=announce_text)
+                                else:
+                                    await bot.send_message(chat_id=cid, text=announce_text)
+
+                                migrated_records.append({"chat_id": cid, "banker_id": bid, "paid": fee})
+                    except Exception as chat_err:
+                        logging.getLogger(__name__).warning("wadiya migration error for chat %s: %s", cid, chat_err)
+
+                await ref_wadiya.set({
+                    "sent": True,
+                    "migrated": migrated_records,
+                    "timestamp": time.time(),
+                }, merge=True)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("wadiya_relocation_v1 pending action error: %s", e)
+
         ref_90m = db.collection("system_actions").document("chiki_brik_elliot_90m")
         doc_90m = await ref_90m.get()
         data_90m = doc_90m.to_dict() or {}

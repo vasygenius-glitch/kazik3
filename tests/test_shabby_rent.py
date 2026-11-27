@@ -167,3 +167,164 @@ async def test_cmd_bank_stats_caption_safety():
     caption_arg = msg_edit.edit_caption.call_args[1]["caption"]
     assert len(caption_arg) <= 1024
 
+
+def test_wadiya_one_time_relocation_40_percent():
+    from shabby_bank import check_and_apply_shabby_decay
+
+    bank_data = {
+        "capital": 1_000_000,
+        "durability": 60,
+        "rent_paid_until": int(time.time()) - 500,
+        "last_incident_time": int(time.time()) - 5000,
+    }
+
+    updates, text = check_and_apply_shabby_decay(bank_data)
+    assert updates["wadiya_relocated"] is True
+    assert updates["wadiya_relocation_paid"] == 400_000
+    assert updates["capital"] == 600_000
+    assert updates["durability"] == 100
+    assert updates["oil_barrels"] == 1000
+    assert "40%" in text
+    assert "ВАДИЯ" in text.upper()
+
+    # Second run must NOT deduct 40% again
+    bank_data.update(updates)
+    updates2, _ = check_and_apply_shabby_decay(bank_data)
+    assert "wadiya_relocated" not in updates2
+    assert updates2.get("capital", 600_000) == 600_000
+
+
+@pytest.mark.asyncio
+async def test_wadiya_aladeen_verdict_and_oil():
+    bank_data = {
+        "capital": 500_000,
+        "oil_barrels": 1000,
+        "last_aladeen_time": 0,
+        "inspection_anger": 50,
+    }
+    ok, msg, updates = await execute_shabby_repair(1, 6896326008, "aladeen", bank_data)
+    assert ok is True
+    assert "АЛАДИН" in msg.upper() or "ШПИЛЮ" in msg.upper()
+    assert "last_aladeen_time" in updates
+
+    # Cooldown check
+    bank_data.update(updates)
+    ok2, msg2, _ = await execute_shabby_repair(1, 6896326008, "aladeen", bank_data)
+    assert ok2 is False
+    assert "мин." in msg2
+
+
+@pytest.mark.asyncio
+async def test_wadiya_relocation_posts_chat_announcement():
+    from profile_bank import generate_bank_main_stats
+    from shabby_bank import format_wadiya_relocation_announcement
+
+    bank_data = {
+        "banker_id": 6896326008,
+        "banker_name": "Диктор",
+        "name": "Доисторический",
+        "is_shabby": True,
+        "capital": 1_000_000,
+        "rent_paid_until": int(time.time()) + 10000,
+    }
+
+    sample = format_wadiya_relocation_announcement({**bank_data, "capital": 600_000}, 400_000)
+    assert len(sample) <= 1024
+    assert "Доисторический" in sample
+    assert "ВАДИ" in sample.upper()
+
+    mock_bot = MagicMock()
+    mock_bot.send_photo = AsyncMock()
+    mock_bot.send_message = AsyncMock()
+
+    mock_query = MagicMock()
+    mock_query.where.return_value = mock_query
+    mock_query.get = AsyncMock(return_value=[])
+    mock_col = MagicMock()
+    mock_col.where.return_value = mock_query
+    mock_chat_doc = MagicMock()
+    mock_chat_doc.collection.return_value = mock_col
+    mock_db = MagicMock()
+    mock_db.collection.return_value.document.return_value = mock_chat_doc
+
+    with patch("profile_bank.get_db", return_value=mock_db), \
+         patch("profile_bank.create_or_update_bank", new=AsyncMock()), \
+         patch("profile_bank.get_shabby_bank_input_file", return_value="mock_photo"):
+        await generate_bank_main_stats(-1002321279920, 6896326008, bank_data, bot=mock_bot)
+
+    mock_bot.send_photo.assert_awaited_once()
+    assert mock_bot.send_photo.call_args.kwargs["chat_id"] == -1002321279920
+    assert "Доисторический" in mock_bot.send_photo.call_args.kwargs["caption"]
+
+
+@pytest.mark.asyncio
+async def test_startup_wadiya_migration_cleans_40_percent_and_announces():
+    import creator
+
+    mock_doc_y = MagicMock(exists=True)
+    mock_doc_y.to_dict.return_value = {"sent": True}
+    mock_doc_w = MagicMock(exists=False)
+    mock_doc_w.to_dict.return_value = {}
+    mock_doc_done = MagicMock(exists=True)
+    mock_doc_done.to_dict.return_value = {"sent": True}
+
+    mock_ref_w = MagicMock()
+    mock_ref_w.get = AsyncMock(return_value=mock_doc_w)
+    mock_ref_w.set = AsyncMock()
+    mock_ref_done = MagicMock()
+    mock_ref_done.get = AsyncMock(return_value=mock_doc_done)
+
+    def _sys_doc(name):
+        if name == "wadiya_relocation_v1":
+            return mock_ref_w
+        return mock_ref_done
+
+    bank_doc = MagicMock()
+    bank_doc.id = "6896326008"
+    bank_doc.to_dict.return_value = {
+        "banker_id": 6896326008,
+        "banker_name": "Диктор",
+        "name": "Доисторический",
+        "capital": 1_000_000,
+        "is_shabby": True,
+    }
+    bank_doc_ref = MagicMock()
+    bank_doc_ref.set = AsyncMock()
+
+    banks_col = MagicMock()
+    banks_col.get = AsyncMock(return_value=[bank_doc])
+    banks_col.document.return_value = bank_doc_ref
+
+    chat_doc = MagicMock()
+    chat_doc.collection.return_value = banks_col
+
+    sys_col = MagicMock()
+    sys_col.document.side_effect = _sys_doc
+    chats_col = MagicMock()
+    chats_col.document.return_value = chat_doc
+
+    def _col(name):
+        if name == "system_actions":
+            return sys_col
+        return chats_col
+
+    mock_db = MagicMock()
+    mock_db.collection.side_effect = _col
+
+    bot = MagicMock()
+    bot.send_photo = AsyncMock()
+    bot.send_message = AsyncMock()
+
+    with patch("db.get_db", return_value=mock_db), \
+         patch("whitelist.get_whitelist", AsyncMock(return_value={-1002321279920: "Main"})):
+        await creator.check_and_send_pending_actions(bot)
+
+    bank_doc_ref.set.assert_awaited_once()
+    saved_updates = bank_doc_ref.set.call_args[0][0]
+    assert saved_updates["capital"] == 600_000
+    assert saved_updates["wadiya_relocation_paid"] == 400_000
+    assert saved_updates["wadiya_relocated"] is True
+    bot.send_photo.assert_awaited_once()
+    assert "Доисторический" in bot.send_photo.call_args.kwargs["caption"]
+    mock_ref_w.set.assert_awaited_once()
+

@@ -22,6 +22,7 @@ from shabby_bank import (
     get_shabby_bank_input_file,
     check_and_apply_shabby_decay,
     format_shabby_bank_stats,
+    format_wadiya_relocation_announcement,
     get_shabby_bank_kb,
     execute_shabby_repair,
     get_shabby_guide_text,
@@ -438,11 +439,11 @@ async def process_deposit_tx(transaction, chat_id, user_id, target_banker_id, am
 
     if is_shabby_bank(bank_data, target_banker_id):
         if not bank_data.get('power_grid', True):
-            raise ValueError("❌ В «Доисторическом банке» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
-        if bank_data.get('durability', 35) <= 10:
-            raise ValueError("❌ В здании «Доисторического банка» обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
-        if bank_data.get('babki_queue', 75) >= 85:
-            raise ValueError("❌ Вход в банк наглухо перекрыт орущими бабками с квитанциями за 1998 год! Банкир должен сначала разогнать очередь!")
+            raise ValueError("❌ В высотке «Вадия VIP-Банк» блэкаут на 88-м этаже! Приём вкладов на стопе, пока магнат не врубит генератор!")
+        if bank_data.get('durability', 100) <= 15:
+            raise ValueError("❌ Шпиль «Aladeen Oil Tower» затупился! Аладин опечатал кассу до заточки фасада!")
+        if bank_data.get('babki_queue', 20) >= 85:
+            raise ValueError("❌ Парковку у высотки наглухо перекрыли шейхи на золотых Геликах! Сначала угостите их коктейлями!")
 
     user_snapshot = await safe_get_snapshot(transaction, user_ref)
     user_data = user_snapshot.to_dict() if user_snapshot and user_snapshot.exists else {}
@@ -565,11 +566,11 @@ async def process_deposit_in_memory(chat_id: int, user_id: int, target_banker_id
 
     if is_shabby_bank(bank_data, target_banker_id):
         if not bank_data.get('power_grid', True):
-            raise ValueError("❌ В «Доисторическом банке» выбило пробки! Электронные счетчики не работают, пока банкир не включит рубильник!")
-        if bank_data.get('durability', 35) <= 10:
-            raise ValueError("❌ В здании «Доисторического банка» обвалился потолок прямо на кассу! Прием вкладов приостановлен до починки крыши!")
-        if bank_data.get('babki_queue', 75) >= 85:
-            raise ValueError("❌ Вход в банк наглухо перекрыт орущими бабками с квитанциями за 1998 год! Банкир должен сначала разогнать очередь!")
+            raise ValueError("❌ В высотке «Вадия VIP-Банк» блэкаут на 88-м этаже! Приём вкладов на стопе, пока магнат не врубит генератор!")
+        if bank_data.get('durability', 100) <= 15:
+            raise ValueError("❌ Шпиль «Aladeen Oil Tower» затупился! Аладин опечатал кассу до заточки фасада!")
+        if bank_data.get('babki_queue', 20) >= 85:
+            raise ValueError("❌ Парковку у высотки наглухо перекрыли шейхи на золотых Геликах! Сначала угостите их коктейлями!")
 
     user_data = await get_user_data(chat_id, user_id)
     current_balance = int(user_data.get('balance', 0) or 0)
@@ -1126,7 +1127,7 @@ def get_bank_stats_kb(banker_id: int):
 
 
 # ===================== ГЛАВНАЯ СТАТИСТИКА БАНКА =====================
-async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) -> str:
+async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict, bot: Bot = None) -> str:
     actual_banker_id = bank_data.get('banker_id', user_id)
     current_time = int(time.time())
     audit_risk = bank_data.get('audit_risk_until', 0)
@@ -1191,6 +1192,22 @@ async def generate_bank_main_stats(chat_id: int, user_id: int, bank_data: dict) 
         if updates:
             bank_data.update(updates)
             await create_or_update_bank(chat_id, actual_banker_id, updates)
+            if updates.get("wadiya_relocated") and bot is not None and int(chat_id) < 0:
+                try:
+                    announce_text = format_wadiya_relocation_announcement(
+                        bank_data,
+                        int(updates.get("wadiya_relocation_paid", 0)),
+                    )
+                    photo = get_shabby_bank_input_file()
+                    if photo:
+                        try:
+                            await bot.send_photo(chat_id=chat_id, photo=photo, caption=announce_text)
+                        except Exception:
+                            await bot.send_message(chat_id=chat_id, text=announce_text)
+                    else:
+                        await bot.send_message(chat_id=chat_id, text=announce_text)
+                except Exception as ann_err:
+                    logger.warning("Failed to send Wadiya relocation announcement: %s", ann_err)
         return format_shabby_bank_stats(
             chat_id=chat_id,
             user_id=actual_banker_id,
@@ -1238,7 +1255,7 @@ async def cmd_bank_stats(message: types.Message):
     if not bank_data:
         return await message.answer("❌ У вас нет открытого банка.")
 
-    text = await generate_bank_main_stats(chat_id, user_id, bank_data)
+    text = await generate_bank_main_stats(chat_id, user_id, bank_data, bot=message.bot)
 
     actual_banker_id = bank_data.get('banker_id', user_id)
     kb = get_shabby_bank_kb(actual_banker_id, bank_data) if is_shabby_bank(bank_data, user_id) else get_bank_stats_kb(actual_banker_id)
@@ -1347,7 +1364,7 @@ async def cb_shabby_bank(callback: types.CallbackQuery):
     clean_msg = msg.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
     await callback.answer(clean_msg[:190], show_alert=True)
 
-    text = await generate_bank_main_stats(chat_id, banker_id, bank_data)
+    text = await generate_bank_main_stats(chat_id, banker_id, bank_data, bot=callback.bot)
     kb = get_shabby_bank_kb(banker_id, bank_data)
     await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
 
@@ -1389,7 +1406,7 @@ async def cb_bank_stats(callback: types.CallbackQuery):
 
     # ---------- MAIN ----------
     if action == "main":
-        text = await generate_bank_main_stats(chat_id, banker_id, bank_data)
+        text = await generate_bank_main_stats(chat_id, banker_id, bank_data, bot=callback.bot)
         kb = get_shabby_bank_kb(banker_id, bank_data) if is_shabby_bank(bank_data, banker_id) else get_bank_stats_kb(banker_id)
         await _safe_edit_bank_msg(callback.message, text, reply_markup=kb)
         return await callback.answer()
@@ -1517,9 +1534,9 @@ async def cb_bank_stats(callback: types.CallbackQuery):
                 'inspection_anger': anger
             })
             await callback.answer(
-                f"🖨 ДР-Р-Р... Старый советский станок задымил на всю Алмазную!\n"
+                f"🖨 ДР-Р-Р... Золотой станок Аладина задымил в пентхаусе Вадии!\n"
                 f"+{FORGE_AMOUNT:,} сыр. напечатано!\n"
-                f"🔥 Риск пожара взлетел до {fire}%! Срочно тушите!", show_alert=True
+                f"🔥 Нагрузка центрифуги взлетела до {fire}%! Срочно охладите!", show_alert=True
             )
             return await show_bank_schemes(callback, chat_id, banker_id)
 
@@ -1698,10 +1715,17 @@ async def show_bank_schemes(callback: types.CallbackQuery, chat_id: int, banker_
         lobby_status = f"✅ Активно: {types_map.get(lobby_type, 'Неизвестно')}"
 
     capital = bank_data.get('capital', 0)
+    oil_barrels = int(bank_data.get('oil_barrels', 1000)) if is_shabby_bank(bank_data, banker_id) else 0
+    wadiya_line = (
+        f"🛢 Резиденция: <b>Вадия • Aladeen Oil Tower</b> (<code>{oil_barrels:,}</code> барр.)\n"
+        if is_shabby_bank(bank_data, banker_id)
+        else ""
+    )
 
     text = (
         f"💼 <b>Теневые и политические схемы: {escape_html(bank_data.get('name', 'Банк'))}</b>\n\n"
-        f"💰 Капитал: <b>{capital}</b> сыр.\n"
+        f"💰 Капитал: <b>{capital:,}</b> сыр.\n"
+        f"{wadiya_line}"
         f"🕵️ Статус аудита: {audit_status}\n"
         f"📢 Статус лобби: {lobby_status}\n\n"
         f"📈 <b>Управление Инвестициями</b>\n"
