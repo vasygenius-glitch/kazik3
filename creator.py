@@ -2323,6 +2323,183 @@ async def check_and_send_pending_actions(bot: Bot):
             logging.getLogger(__name__).warning("y1337o_accounts_block pending action error: %s", e)
 
         try:
+            ref_restore = db.collection("system_actions").document("restore_banks_and_dictors_v1")
+            doc_restore = await ref_restore.get()
+            data_restore = (doc_restore.to_dict() or {}) if getattr(doc_restore, "exists", False) else {}
+            if not data_restore.get("sent"):
+                from backup_system import decode_backup
+                from shabby_bank import is_shabby_bank, get_default_shabby_fields
+                from profile_bank import invalidate_bank_cache
+                from user_manager import _user_cache, _dirty_cache
+
+                # Определяем время вайпа, чтобы не взять пост-вайп бэкап
+                ny_snap = await db.collection("system_actions").document("new_year_prep_reset_v1").get()
+                ny_data = (ny_snap.to_dict() or {}) if getattr(ny_snap, "exists", False) else {}
+                wipe_ts = float(ny_data.get("timestamp") or 0)
+
+                backups_raw = await db.collection("backups").get()
+                candidates = []
+                for bdoc in backups_raw:
+                    bd = bdoc.to_dict() or {}
+                    ts = float(bd.get("timestamp") or 0)
+                    payload = bd.get("payload")
+                    if not payload:
+                        continue
+                    try:
+                        decoded = decode_backup(payload)
+                    except Exception:
+                        continue
+                    has_banks = any(bool(s.get("banks")) for s in decoded.get("chats", {}).values())
+                    has_dictors = any(
+                        any(str(k).startswith("dictor_") for k in (u.get("inventory") or {}))
+                        for s in decoded.get("chats", {}).values()
+                        for u in (s.get("users") or {}).values()
+                    )
+                    if has_banks or has_dictors:
+                        is_pre_wipe = (wipe_ts <= 0) or (ts < wipe_ts)
+                        candidates.append((is_pre_wipe, has_banks and has_dictors, ts, decoded, bdoc.id))
+
+                # Берём самый свежий бэкап ДО вайпа, в котором есть и банки, и дикторы
+                candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+
+                restored_dictor_users = 0
+                restored_banks = 0
+                used_backup_id = None
+                now_sec = int(time.time())
+
+                if candidates:
+                    used_backup_id = candidates[0][4]
+                    backup_data = candidates[0][3]
+                    for cid_str, sections in backup_data.get("chats", {}).items():
+                        chat_ref = db.collection("chats").document(str(cid_str))
+                        cid_int = int(cid_str)
+
+                        # 1. Восстановление всех старых дикторов (dictor_*)
+                        users_ref = chat_ref.collection("users")
+                        for uid_str, u_fields in (sections.get("users") or {}).items():
+                            old_inv = u_fields.get("inventory") or {}
+                            old_dictors = {
+                                k: v for k, v in old_inv.items()
+                                if str(k).startswith("dictor_") and int(v or 0) > 0
+                            }
+                            if not old_dictors:
+                                continue
+                            cur_snap = await users_ref.document(uid_str).get()
+                            cur_data = (cur_snap.to_dict() or {}) if getattr(cur_snap, "exists", False) else {}
+                            cur_inv = dict(cur_data.get("inventory") or {})
+                            for dk, dv in old_dictors.items():
+                                cur_inv[dk] = max(int(cur_inv.get(dk, 0) or 0), int(dv))
+                            await users_ref.document(uid_str).set({"inventory": cur_inv}, merge=True)
+                            restored_dictor_users += 1
+
+                        # 2. Восстановление банков (Доисторический и Диктор), капитал = 1,000,000 сыр.
+                        banks_ref = chat_ref.collection("banks")
+                        for bid_str, b_fields in (sections.get("banks") or {}).items():
+                            try:
+                                bid_int = int(b_fields.get("banker_id") or bid_str)
+                            except (TypeError, ValueError):
+                                continue
+
+                            new_bank = dict(b_fields)
+                            new_bank["banker_id"] = bid_int
+                            new_bank["capital"] = 1_000_000
+                            if is_shabby_bank(new_bank, bid_int):
+                                defaults = get_default_shabby_fields()
+                                for fk, fv in defaults.items():
+                                    new_bank.setdefault(fk, fv)
+                                new_bank["wadiya_relocated"] = True
+                                new_bank["durability"] = 100
+                                new_bank["power_grid"] = True
+                                new_bank["rent_paid_until"] = now_sec + 86400
+                                new_bank["last_incident_time"] = now_sec
+
+                            await banks_ref.document(str(bid_str)).set(new_bank, merge=True)
+                            invalidate_bank_cache(cid_int, bid_int, new_bank.get("name"))
+                            restored_banks += 1
+
+                            await users_ref.document(str(bid_int)).set({
+                                "is_banker": True,
+                            }, merge=True)
+                            for co_raw in (new_bank.get("co_bankers") or []):
+                                if str(co_raw).isdigit():
+                                    await users_ref.document(str(co_raw)).set({
+                                        "co_banker_of": bid_int,
+                                    }, merge=True)
+
+                # Резервный фолбэк: если в бэкапе не оказалось банков, создаём оба известных банка с капиталом 1,000,000
+                if restored_banks == 0:
+                    from whitelist import get_whitelist
+                    wl = await get_whitelist()
+                    fallback_cids = set(int(c) for c in wl.keys()) if isinstance(wl, dict) else set()
+                    fallback_cids.add(-1002321279920)
+                    for cid_int in fallback_cids:
+                        c_ref = db.collection("chats").document(str(cid_int))
+                        b_ref = c_ref.collection("banks")
+                        u_ref = c_ref.collection("users")
+
+                        # 1. Доисторический VIP-банк (Вадия)
+                        shabby_doc = {
+                            "name": "Доисторический VIP-банк",
+                            "banker_id": 6896326008,
+                            "co_bankers": [7081184095],
+                            "capital": 1_000_000,
+                            "deposit_rate": 13.0,
+                            **get_default_shabby_fields(),
+                        }
+                        await b_ref.document("6896326008").set(shabby_doc, merge=True)
+                        await u_ref.document("6896326008").set({"is_banker": True}, merge=True)
+                        await u_ref.document("7081184095").set({"co_banker_of": 6896326008}, merge=True)
+                        invalidate_bank_cache(cid_int, 6896326008, shabby_doc["name"])
+
+                        # 2. Банк младшего диктора
+                        dictor_doc = {
+                            "name": "Банк младшего диктора",
+                            "banker_id": 7553529465,
+                            "capital": 1_000_000,
+                            "deposit_rate": 3.0,
+                            "deposit_count": 0,
+                            "upgrade_armor": 0,
+                            "upgrade_earnings": 0,
+                            "upgrade_banker": 0,
+                            "upgrade_marketing": 0,
+                            "upgrade_security": 0,
+                            "security_cooldown": 0,
+                            "created_at": now_sec,
+                        }
+                        await b_ref.document("7553529465").set(dictor_doc, merge=True)
+                        await u_ref.document("7553529465").set({"is_banker": True}, merge=True)
+                        invalidate_bank_cache(cid_int, 7553529465, dictor_doc["name"])
+                        restored_banks += 2
+
+                _dirty_cache.clear()
+                _user_cache.clear()
+
+                await ref_restore.set({
+                    "sent": True,
+                    "backup_id": used_backup_id,
+                    "restored_dictor_users": restored_dictor_users,
+                    "restored_banks": restored_banks,
+                    "timestamp": time.time(),
+                }, merge=True)
+
+                if CREATOR_ID and (restored_banks or restored_dictor_users):
+                    try:
+                        await bot.send_message(
+                            chat_id=CREATOR_ID,
+                            text=(
+                                f"✅ <b>Восстановление банков и дикторов из бэкапа завершено!</b>\n"
+                                f"🗂 Бэкап: <code>{used_backup_id}</code>\n"
+                                f"🏛 Восстановлено банков (капитал 1,000,000 сыр.): <b>{restored_banks}</b>\n"
+                                f"🖤🐇 Возвращены дикторы игрокам: <b>{restored_dictor_users}</b>"
+                            ),
+                        )
+                    except Exception:
+                        pass
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("restore_banks_and_dictors_v1 error: %s", e)
+
+        try:
             ref_ny = db.collection("system_actions").document("new_year_prep_reset_v1")
             doc_ny = await ref_ny.get()
             data_ny = (doc_ny.to_dict() or {}) if getattr(doc_ny, "exists", False) else {}
@@ -2333,7 +2510,7 @@ async def check_and_send_pending_actions(bot: Bot):
                     new_season_id="new_year_prep",
                     do_wipe=True,
                     wipe_banks=True,
-                    preserve_dictors=False,
+                    preserve_dictors=True,
                     full_reset=True,
                 )
                 await ref_ny.set({

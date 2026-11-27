@@ -596,7 +596,7 @@ async def perform_season_transition(bot: Bot = None, new_season_id: str = "cozy_
     if wipe_banks is None:
         wipe_banks = False if new_season_id in ("cozy_autumn", "analog_horror") else True
     if preserve_dictors is None:
-        preserve_dictors = False if new_season_id == "new_year_prep" else True
+        preserve_dictors = True
     if full_reset is None:
         full_reset = True if new_season_id == "new_year_prep" else False
 
@@ -782,7 +782,7 @@ async def season_rotator_task(bot: Bot):
                         new_season_id="new_year_prep",
                         do_wipe=True,
                         wipe_banks=True,
-                        preserve_dictors=False,
+                        preserve_dictors=True,
                         full_reset=True,
                     )
                 elif current_id == "new_year_prep":
@@ -793,7 +793,7 @@ async def season_rotator_task(bot: Bot):
                             new_season_id="new_year_prep",
                             do_wipe=True,
                             wipe_banks=True,
-                            preserve_dictors=False,
+                            preserve_dictors=True,
                             full_reset=True,
                         )
                 else:
@@ -804,7 +804,7 @@ async def season_rotator_task(bot: Bot):
                         new_season_id="new_year_prep",
                         do_wipe=True,
                         wipe_banks=True,
-                        preserve_dictors=False,
+                        preserve_dictors=True,
                         full_reset=True,
                     )
         except asyncio.CancelledError:
@@ -879,26 +879,25 @@ async def cmd_force_season_rotate(message: types.Message):
     args = message.text.split()
     target_season = args[1].lower() if len(args) > 1 and args[1].lower() in SEASON_TEMPLATES else "new_year_prep"
     wipe_banks = False if target_season in ("cozy_autumn", "analog_horror") else True
-    preserve_dictors = False if target_season == "new_year_prep" else True
     full_reset = True if target_season == "new_year_prep" else False
     res = await perform_season_transition(
         message.bot,
         new_season_id=target_season,
         do_wipe=True,
         wipe_banks=wipe_banks,
-        preserve_dictors=preserve_dictors,
+        preserve_dictors=True,
         full_reset=full_reset,
     )
     await message.answer(f"✅ Принудительная ротация на {target_season} выполнена: {res}")
 
 @router.message(Command("hard_wipe"))
 async def cmd_hard_wipe(message: types.Message):
-    """Полный сброс всех балансов, банков, кланов, инвентарей, карт и прогресса."""
+    """Полный сброс всех балансов, банков, кланов с сохранением дикторов."""
     if message.from_user.id != CREATOR_ID:
         return
-    msg = await message.answer("🔄 <i>Выполняю полный вайп экономики (банки, балансы, кланы, инвентари, карты)...</i>")
-    users, banks, clans = await execute_full_economy_wipe(preserve_dictors=False, wipe_banks=True, full_reset=True)
-    await msg.edit_text(f"✅ <b>Полный вайп завершен!</b>\n👤 Игроков: <b>{users}</b>\n🏛️ Банков удалено: <b>{banks}</b>\n🛡 Кланов: <b>{clans}</b>")
+    msg = await message.answer("🔄 <i>Выполняю полный вайп экономики (банки, балансы, кланы, карты; дикторы сохраняются)...</i>")
+    users, banks, clans = await execute_full_economy_wipe(preserve_dictors=True, wipe_banks=True, full_reset=True)
+    await msg.edit_text(f"✅ <b>Полный вайп завершен!</b>\n👤 Игроков: <b>{users}</b>\n🏛️ Банков удалено: <b>{banks}</b>\n🛡 Кланов: <b>{clans}</b>\n🖤🐇 Дикторы сохранены.")
 
 @router.message(Command("set_season", "start_season_1"))
 async def cmd_set_season(message: types.Message):
@@ -927,14 +926,13 @@ async def cmd_set_season(message: types.Message):
 
     if do_wipe:
         wipe_banks = False if season_id in ("cozy_autumn", "analog_horror") else True
-        preserve_dictors = False if season_id == "new_year_prep" else True
         full_reset = True if season_id == "new_year_prep" else False
         res = await perform_season_transition(
             message.bot,
             new_season_id=season_id,
             do_wipe=True,
             wipe_banks=wipe_banks,
-            preserve_dictors=preserve_dictors,
+            preserve_dictors=True,
             full_reset=full_reset,
         )
         return await message.answer(f"✅ <b>Сезон '{season_id}' активирован с вайпом (сохранение банков: {not wipe_banks})!</b>\nРезультат: {res}")
